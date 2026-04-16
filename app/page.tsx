@@ -507,6 +507,8 @@ function toTemplateRow(
 export default function Home() {
   const [tab, setTab] = useState<TabType>("출고등록");
 
+  const today = new Date().toLocaleDateString("ko-KR"); 
+
   const receiverUploadRef = useRef<HTMLInputElement | null>(null);
   const senderUploadRef = useRef<HTMLInputElement | null>(null);
   const branchUploadRef = useRef<HTMLInputElement | null>(null);
@@ -1365,7 +1367,24 @@ export default function Home() {
   return (
     <main style={page}>
       <div style={card}>
-        <h1 style={title}>🚚 화물 출고 입력</h1>
+        <div style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: "20px"
+        }}>
+          <h1 style={title}>🚚 화물 출고 입력</h1>
+
+          <div style={{
+            padding: "5px 12px",
+            borderRadius: "8px",
+            background: "#f5f7fa",
+            fontWeight: "bold",
+            color: "#333"
+          }}>
+            {`${today}`}
+          </div>
+        </div>
 
         <div style={tabWrap}>
           {(["출고등록", "출고목록", "마스터관리"] as TabType[]).map((item) => (
@@ -1575,6 +1594,12 @@ export default function Home() {
         {tab === "출고목록" && (
           <div style={{ marginTop: 8 }}>
             <h2 style={listTitle}>출고목록</h2>
+
+            <div style={{ marginBottom: "10px", fontWeight: "bold", color: "#555"}}>
+              {listScope === "today"
+                ? `📅 기준일자: 금일 (${today})`
+                : "📅 기준일자: 전체"}
+            </div>
 
             <div style={scopeBar}>
               <div style={scopeToggleWrap}>
