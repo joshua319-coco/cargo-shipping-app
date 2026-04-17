@@ -627,6 +627,46 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    const loadShipmentsFromDb = async () => {
+      const { data, error } = await supabase
+        .from("shipments")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error("DB 조회 실패", error);
+        return;
+      }
+
+      const normalized: SavedShipment[] = (data ?? []).map((row: any) => ({
+        id: String(row.id),
+        receiver: row.receiver ?? "",
+        receiverPhone: row.receiver_phone ?? "",
+        address: row.address ?? "",
+        branch: row.branch ?? "",
+        postalCode: row.postal_code ?? "",
+        sender: row.sender ?? "",
+        senderPhone: row.sender_phone ?? "",
+        item: row.item ?? "",
+        pack: row.pack ?? "",
+        pay: row.pay === "선불" ? "선불" : "착불",
+        delivery: row.delivery === "정기" ? "정기" : "택배",
+        qty: String(row.qty ?? "1"),
+        fare: String(row.fare ?? "0"),
+        memo: row.memo ?? "",
+        note: row.note ?? "",
+        createdAt: row.created_at ?? new Date().toISOString(),
+        checklist: createEmptyChecklist(),
+      }));
+
+      persistShipments(normalized);
+    };
+
+    loadShipmentsFromDb();
+  }, []);
+
+
+  useEffect(() => {
     localStorage.setItem(RECEIVER_MASTER_KEY, JSON.stringify(receiverMaster));
   }, [receiverMaster]);
 
@@ -911,9 +951,23 @@ export default function Home() {
     resetForm();
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
+    const numericId = Number(id);
+
+    const { error } = await supabase
+      .from("shipments")
+      .delete()
+      .eq("id", numericId);
+
+    if (error) {
+      console.error(error);
+      alert("삭제 실패: " + error.message);
+      return;
+    }
+
     persistShipments(savedShipments.filter((item) => item.id !== id));
     setSelectedIds((prev) => prev.filter((item) => item !== id));
+
     if (detailShipmentId === id) closeDetail();
   };
 
