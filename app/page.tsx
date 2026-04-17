@@ -736,6 +736,7 @@ export default function Home() {
         matchesPda
       );
     });
+  
   }, [
     savedShipments,
     filterKeyword,
@@ -746,6 +747,14 @@ export default function Home() {
     pdaUncheckedOnly,
     listScope,
   ]);
+
+  const sortedShipments = useMemo(
+    () =>
+      [...filteredShipments].sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      ),
+    [filteredShipments]
+  );
 
   const summaryCount = filteredShipments.length;
   const summaryQty = filteredShipments.reduce(
@@ -1749,6 +1758,7 @@ export default function Home() {
                         />
                       </div>
 
+                      <div style={ovDate}>출고일</div>
                       <div style={ovCompany}>업체명</div>
                       <div style={ovPay}>지불</div>
                       <div style={ovDelivery}>운송</div>
@@ -1763,85 +1773,100 @@ export default function Home() {
                       <div style={ovDelete}>삭제</div>
                     </div>
 
-                    {filteredShipments.map((shipment) => (
-                      <div key={shipment.id} style={overviewRow}>
-                        <div style={ovSelect}>
-                          <input
-                            type="checkbox"
-                            checked={selectedIds.includes(shipment.id)}
-                            onChange={() => toggleSelectOne(shipment.id)}
-                          />
-                        </div>
+                    {sortedShipments.map((shipment) => {
+                      const isToday =
+                        new Date(shipment.createdAt).toDateString() === new Date().toDateString();
 
-                        <div style={ovCompany}>
-                          <button
-                            type="button"
-                            style={companyLinkBtn}
-                            onClick={() => openDetail(shipment)}
+                      return (
+                        <div key={shipment.id} style={overviewRow}>
+                          <div style={ovSelect}>
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.includes(shipment.id)}
+                              onChange={() => toggleSelectOne(shipment.id)}
+                            />
+                          </div>
+
+                          <div
+                            style={{
+                              ...ovDate,
+                              color: isToday ? "#2563eb" : "#6b7280",
+                              fontWeight: isToday ? "bold" : "normal",
+                            }}
                           >
-                            {displayReceiverName(shipment.sender, shipment.receiver)}
-                          </button>
-                        </div>
+                            {new Date(shipment.createdAt).toLocaleDateString("ko-KR")}
+                          </div>
 
-                        <div style={ovPay}>{shipment.pay}</div>
-                        <div style={ovDelivery}>{displayDelivery(shipment.delivery)}</div>
-                        <div style={ovQty}>{ceilQuantityDisplay(shipment.qty, shipment.pack)}</div>
-                        <div style={ovFare}>{formatFare(shipment.fare)}</div>
+                          <div style={ovCompany}>
+                            <button
+                              type="button"
+                              style={companyLinkBtn}
+                              onClick={() => openDetail(shipment)}
+                            >
+                              {displayReceiverName(shipment.sender, shipment.receiver)}
+                            </button>
+                          </div>
 
-                        <div style={{ ...ovCheck, ...checkStartBorder }}>
-                          <input
-                            type="checkbox"
-                            style={checkboxStyle}
-                            checked={shipment.checklist.orderSheet}
-                            onChange={() => handleChecklistToggle(shipment.id, "orderSheet")}
-                          />
-                        </div>
+                          <div style={ovPay}>{shipment.pay}</div>
+                          <div style={ovDelivery}>{displayDelivery(shipment.delivery)}</div>
+                          <div style={ovQty}>{ceilQuantityDisplay(shipment.qty, shipment.pack)}</div>
+                          <div style={ovFare}>{formatFare(shipment.fare)}</div>
 
-                        <div style={ovCheck}>
-                          <input
-                            type="checkbox"
-                            style={checkboxStyle}
-                            checked={shipment.checklist.salesSlip}
-                            onChange={() => handleChecklistToggle(shipment.id, "salesSlip")}
-                          />
-                        </div>
+                          <div style={{ ...ovCheck, ...checkStartBorder }}>
+                            <input
+                              type="checkbox"
+                              style={checkboxStyle}
+                              checked={shipment.checklist.orderSheet}
+                              onChange={() => handleChecklistToggle(shipment.id, "orderSheet")}
+                            />
+                          </div>
 
-                        <div style={ovCheck}>
-                          <input
-                            type="checkbox"
-                            style={checkboxStyle}
-                            checked={shipment.checklist.pda}
-                            onChange={() => handleChecklistToggle(shipment.id, "pda")}
-                          />
-                        </div>
+                          <div style={ovCheck}>
+                            <input
+                              type="checkbox"
+                              style={checkboxStyle}
+                              checked={shipment.checklist.salesSlip}
+                              onChange={() => handleChecklistToggle(shipment.id, "salesSlip")}
+                            />
+                          </div>
 
-                        <div style={ovCheck}>
-                          <input
-                            type="checkbox"
-                            style={checkboxStyle}
-                            checked={shipment.checklist.waybill}
-                            onChange={() => handleChecklistToggle(shipment.id, "waybill")}
-                          />
-                        </div>
+                          <div style={ovCheck}>
+                            <input
+                              type="checkbox"
+                              style={checkboxStyle}
+                              checked={shipment.checklist.pda}
+                              onChange={() => handleChecklistToggle(shipment.id, "pda")}
+                            />
+                          </div>
 
-                        <div style={ovDelete}>
-                          <button type="button" style={deleteBtn} onClick={() => handleDelete(shipment.id)}>
-                            삭제
-                          </button>
+                          <div style={ovCheck}>
+                            <input
+                              type="checkbox"
+                              style={checkboxStyle}
+                              checked={shipment.checklist.waybill}
+                              onChange={() => handleChecklistToggle(shipment.id, "waybill")}
+                            />
+                          </div>
+
+                          <div style={ovDelete}>
+                            <button type="button" style={deleteBtn} onClick={() => handleDelete(shipment.id)}>
+                              삭제
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
+                    </div>
                   </div>
-                </div>
 
-                <div style={summaryBar}>
-                  <span>건수: {summaryCount}건</span>
-                  <span>총수량: {summaryQty}</span>
-                </div>
-              </>
-            )}
-          </div>
-        )}
+                  <div style={summaryBar}>
+                    <span>건수: {summaryCount}건</span>
+                    <span>총수량: {summaryQty}</span>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
 
         {tab === "마스터관리" && (
           <div style={{ marginTop: 8 }}>
@@ -3069,7 +3094,7 @@ const overviewWrap: CSSProperties = {
 
 const groupHeaderRow: CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "52px 3fr 1fr 1fr 1.1fr 1.2fr 80px 90px 70px 80px 88px",
+  gridTemplateColumns: "52px 1.5fr 3fr 1fr 1fr 1.1fr 1.2fr 80px 90px 70px 80px 88px",
   gap: 10,
   alignItems: "center",
   fontSize: 13,
@@ -3098,7 +3123,7 @@ const groupAction: CSSProperties = {
 
 const overviewRow: CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "52px 3fr 1fr 1fr 1.1fr 1.2fr 80px 90px 70px 80px 88px",
+  gridTemplateColumns: "52px 1.5fr 3fr 1fr 1fr 1.1fr 1.2fr 80px 90px 70px 80px 88px",
   gap: 10,
   alignItems: "center",
   padding: "16px 14px",
@@ -3407,6 +3432,12 @@ const masterListItem: CSSProperties = {
   padding: "10px 12px",
   cursor: "pointer",
   textAlign: "left",
+};
+
+const ovDate: CSSProperties = {
+  textAlign: "center",
+  fontSize: 13,
+  color: "#6b7280",
 };
 
 const masterListName: CSSProperties = {
