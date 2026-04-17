@@ -1035,22 +1035,44 @@ export default function Home() {
     setPdaUncheckedOnly(false);
   };
 
-  const clearTodayShipments = () => {
+  const clearTodayShipments = async () => {
     const todayKey = getTodaySeoulDateKey();
 
-    const updated = savedShipments.filter(
-      (item) => getSeoulDateKey(item.createdAt) !== todayKey
-    );
+    const todayIds = savedShipments
+      .filter((item) => getSeoulDateKey(item.createdAt) === todayKey)
+      .map((item) => Number(item.id))
+      .filter((id) => !Number.isNaN(id));
 
-    persistShipments(updated);
+    if (todayIds.length === 0) {
+      alert("오늘 삭제할 목록이 없습니다.");
+      return;
+    }
+
+    const { error } = await supabase
+      .from("shipments")
+      .delete()
+      .in("id", todayIds);
+
+    if (error) {
+      console.error(error);
+      alert("오늘 목록 비우기 실패: " + error.message);
+      return;
+    }
+
+    await loadShipmentsFromDb();
 
     setSelectedIds((prev) =>
-      prev.filter((id) => updated.some((item) => item.id === id))
+      prev.filter((id) => !todayIds.includes(Number(id)))
     );
 
-    if (detailShipmentId && !updated.some((item) => item.id === detailShipmentId)) {
+    if (
+      detailShipmentId &&
+      todayIds.includes(Number(detailShipmentId))
+    ) {
       closeDetail();
     }
+
+    alert("오늘 목록을 비웠습니다.");
   };
 
   const toggleSelectOne = (id: string) => {
