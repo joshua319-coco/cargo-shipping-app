@@ -54,9 +54,10 @@ type SavedShipment = {
   checklist: Checklist;
 };
 
-const RECEIVER_MASTER_KEY = "receiver_master_v1";
-const SENDER_MASTER_KEY = "sender_master_v1";
-const BRANCH_MASTER_KEY = "branch_master_v1";
+const LEGACY_RECEIVER_MASTER_KEY = "receiver_master_v1";
+const LEGACY_SENDER_MASTER_KEY = "sender_master_v1";
+const LEGACY_BRANCH_MASTER_KEY = "branch_master_v1";
+const MASTER_DB_MIGRATION_KEY = "master_db_migrated_v1";
 
 const TEMPLATE_SHEET_NAME = "업로드_양식 값붙여넣기(우클릭+V)";
 const TEMPLATE_HEADERS = [
@@ -240,6 +241,61 @@ function normalizeShipment(raw: any): SavedShipment {
       }
     ),
   };
+}
+
+
+function normalizeReceiverMasterRows(rows: any[]): Party[] {
+  return (rows ?? []).map((row) => ({
+    name: row?.name ?? "",
+    aliases: Array.isArray(row?.aliases) ? row.aliases : [],
+    phone: row?.phone ?? "",
+    address: row?.address ?? "",
+    branch: row?.branch ?? "",
+    note: row?.note ?? "",
+    postalCode: row?.postal_code ?? "",
+  }));
+}
+
+function normalizeSenderMasterRows(rows: any[]): Party[] {
+  return (rows ?? []).map((row) => ({
+    name: row?.name ?? "",
+    aliases: Array.isArray(row?.aliases) ? row.aliases : [],
+    phone: row?.phone ?? "",
+  }));
+}
+
+function normalizeBranchMasterRows(rows: any[]): BranchPostalItem[] {
+  return (rows ?? []).map((row) => ({
+    branch: row?.branch ?? "",
+    postalCode: row?.postal_code ?? "",
+  }));
+}
+
+function toReceiverMasterRows(items: Party[]) {
+  return items.map((item) => ({
+    name: item.name,
+    aliases: item.aliases ?? [],
+    phone: item.phone ?? "",
+    address: item.address ?? "",
+    branch: item.branch ?? "",
+    note: item.note ?? "",
+    postal_code: item.postalCode ?? "",
+  }));
+}
+
+function toSenderMasterRows(items: Party[]) {
+  return items.map((item) => ({
+    name: item.name,
+    aliases: item.aliases ?? [],
+    phone: item.phone ?? "",
+  }));
+}
+
+function toBranchMasterRows(items: BranchPostalItem[]) {
+  return items.map((item) => ({
+    branch: item.branch,
+    postal_code: item.postalCode ?? "",
+  }));
 }
 
 function matchesParty(item: Party, keyword: string) {
@@ -601,37 +657,6 @@ export default function Home() {
   const [senderAliasesInput, setSenderAliasesInput] = useState("");
   const [addrSearched, setAddrSearched] = useState(false);
 
-  useEffect(() => {
-    try {
-      const rawReceiver = localStorage.getItem(RECEIVER_MASTER_KEY);
-      const rawSender = localStorage.getItem(SENDER_MASTER_KEY);
-      const rawBranch = localStorage.getItem(BRANCH_MASTER_KEY);
-
-      setReceiverMaster(rawReceiver ? JSON.parse(rawReceiver) : initialReceiverList);
-      setSenderMaster(rawSender ? JSON.parse(rawSender) : initialSenderList);
-
-      if (rawBranch) {
-        setBranchMaster(JSON.parse(rawBranch));
-      } else {
-        setBranchMaster(
-          Object.entries(initialBranchPostalMap).map(([branch, postalCode]) => ({
-            branch,
-            postalCode,
-          }))
-        );
-      }
-    } catch {
-      setReceiverMaster(initialReceiverList);
-      setSenderMaster(initialSenderList);
-      setBranchMaster(
-        Object.entries(initialBranchPostalMap).map(([branch, postalCode]) => ({
-          branch,
-          postalCode,
-        }))
-      );
-    }
-  }, []);
-
   const loadShipmentsFromDb = async () => {
     const { data, error } = await supabase
       .from("shipments")
@@ -647,21 +672,223 @@ export default function Home() {
     persistShipments(normalized);
   };
 
+  const loadReceiverMasterFromDb = async () => {
+    const { data, error } = await supabase
+      .from("receiver_master")
+      .select("*")
+      .order("name", { ascending: true });
+
+    if (error) {
+      console.error("수화주 마스터 조회 실패", error);
+      return;
+    }
+
+    setReceiverMaster(normalizeReceiverMasterRows(data ?? []));
+  };
+
+  const loadSenderMasterFromDb = async () => {
+    const { data, error } = await supabase
+      .from("sender_master")
+      .select("*")
+      .order("name", { ascending: true });
+
+    if (error) {
+      console.error("발화주 마스터 조회 실패", error);
+      return;
+    }
+
+    setSenderMaster(normalizeSenderMasterRows(data ?? []));
+  };
+
+  const loadBranchMasterFromDb = async () => {
+    const { data, error } = await supabase
+      .from("branch_master")
+      .select("*")
+      .order("branch", { ascending: true });
+
+    if (error) {
+      console.error("영업소 마스터 조회 실패", error);
+      return;
+    }
+
+    setBranchMaster(normalizeBranchMasterRows(data ?? []));
+  };
+
+  const loadAllMastersFromDb = async () => {
+    await Promise.all([
+      loadReceiverMasterFromDb(),
+      loadSenderMasterFromDb(),
+      loadBranchMasterFromDb(),
+    ]);
+  };
+
+  const ensureMasterSeedData = async () => {
+    const [
+      receiverCountResult,
+      senderCountResult,
+      branchCountResult,
+    ] = await Promise.all([
+      supabase.from("receiver_master").select("*", { count: "exact", head: true }),
+      supabase.from("sender_master").select("*", { count: "exact", head: true }),
+      supabase.from("branch_master").select("*", { count: "exact", head: true }),
+    ]);
+
+    if (receiverCountResult.error) {
+      console.error("receiver_master count 조회 실패", receiverCountResult.error);
+    } else if ((receiverCountResult.count ?? 0) === 0) {
+      const { error } = await supabase
+        .from("receiver_master")
+        .upsert(toReceiverMasterRows(initialReceiverList), { onConflict: "name" });
+
+      if (error) {
+        console.error("receiver_master 초기 데이터 반영 실패", error);
+      }
+    }
+
+    if (senderCountResult.error) {
+      console.error("sender_master count 조회 실패", senderCountResult.error);
+    } else if ((senderCountResult.count ?? 0) === 0) {
+      const { error } = await supabase
+        .from("sender_master")
+        .upsert(toSenderMasterRows(initialSenderList), { onConflict: "name" });
+
+      if (error) {
+        console.error("sender_master 초기 데이터 반영 실패", error);
+      }
+    }
+
+    if (branchCountResult.error) {
+      console.error("branch_master count 조회 실패", branchCountResult.error);
+    } else if ((branchCountResult.count ?? 0) === 0) {
+      const { error } = await supabase
+        .from("branch_master")
+        .upsert(
+          toBranchMasterRows(
+            Object.entries(initialBranchPostalMap).map(([branch, postalCode]) => ({
+              branch,
+              postalCode,
+            }))
+          ),
+          { onConflict: "branch" }
+        );
+
+      if (error) {
+        console.error("branch_master 초기 데이터 반영 실패", error);
+      }
+    }
+  };
+
+  const migrateLegacyLocalMastersToDbIfNeeded = async () => {
+    if (typeof window === "undefined") return;
+
+    const alreadyMigrated = localStorage.getItem(MASTER_DB_MIGRATION_KEY);
+    if (alreadyMigrated === "done") return;
+
+    try {
+      const [
+        receiverCountResult,
+        senderCountResult,
+        branchCountResult,
+      ] = await Promise.all([
+        supabase.from("receiver_master").select("*", { count: "exact", head: true }),
+        supabase.from("sender_master").select("*", { count: "exact", head: true }),
+        supabase.from("branch_master").select("*", { count: "exact", head: true }),
+      ]);
+
+      const rawReceiver = localStorage.getItem(LEGACY_RECEIVER_MASTER_KEY);
+      const rawSender = localStorage.getItem(LEGACY_SENDER_MASTER_KEY);
+      const rawBranch = localStorage.getItem(LEGACY_BRANCH_MASTER_KEY);
+
+      const parsedReceiver: Party[] = rawReceiver ? JSON.parse(rawReceiver) : [];
+      const parsedSender: Party[] = rawSender ? JSON.parse(rawSender) : [];
+      const parsedBranch: BranchPostalItem[] = rawBranch ? JSON.parse(rawBranch) : [];
+
+      if ((receiverCountResult.count ?? 0) === 0 && parsedReceiver.length > 0) {
+        const { error } = await supabase
+          .from("receiver_master")
+          .upsert(toReceiverMasterRows(parsedReceiver), { onConflict: "name" });
+
+        if (error) {
+          console.error("기존 수화주 localStorage 마이그레이션 실패", error);
+        }
+      }
+
+      if ((senderCountResult.count ?? 0) === 0 && parsedSender.length > 0) {
+        const { error } = await supabase
+          .from("sender_master")
+          .upsert(toSenderMasterRows(parsedSender), { onConflict: "name" });
+
+        if (error) {
+          console.error("기존 발화주 localStorage 마이그레이션 실패", error);
+        }
+      }
+
+      if ((branchCountResult.count ?? 0) === 0 && parsedBranch.length > 0) {
+        const { error } = await supabase
+          .from("branch_master")
+          .upsert(toBranchMasterRows(parsedBranch), { onConflict: "branch" });
+
+        if (error) {
+          console.error("기존 영업소 localStorage 마이그레이션 실패", error);
+        }
+      }
+    } catch (error) {
+      console.error("기존 localStorage 마스터 마이그레이션 실패", error);
+    } finally {
+      localStorage.setItem(MASTER_DB_MIGRATION_KEY, "done");
+    }
+  };
+
   useEffect(() => {
-    void loadShipmentsFromDb();
+    const initialize = async () => {
+      await migrateLegacyLocalMastersToDbIfNeeded();
+      await ensureMasterSeedData();
+      await Promise.all([loadShipmentsFromDb(), loadAllMastersFromDb()]);
+    };
+
+    void initialize();
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(RECEIVER_MASTER_KEY, JSON.stringify(receiverMaster));
-  }, [receiverMaster]);
+    if (tab === "출고등록" || tab === "마스터관리") {
+      void loadAllMastersFromDb();
+    }
+
+    if (tab === "출고목록") {
+      void loadShipmentsFromDb();
+    }
+  }, [tab]);
 
   useEffect(() => {
-    localStorage.setItem(SENDER_MASTER_KEY, JSON.stringify(senderMaster));
-  }, [senderMaster]);
+    const channel = supabase
+      .channel("master-sync")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "receiver_master" },
+        () => {
+          void loadReceiverMasterFromDb();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "sender_master" },
+        () => {
+          void loadSenderMasterFromDb();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "branch_master" },
+        () => {
+          void loadBranchMasterFromDb();
+        }
+      )
+      .subscribe();
 
-  useEffect(() => {
-    localStorage.setItem(BRANCH_MASTER_KEY, JSON.stringify(branchMaster));
-  }, [branchMaster]);
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, []);
 
   const persistShipments = (items: SavedShipment[]) => {
     setSavedShipments(items);
@@ -1231,14 +1458,14 @@ export default function Home() {
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" }) as Record<string, unknown>[];
 
-      const parsed: Party[] = rows
+      const parsed = rows
         .map((row) => ({
           name: getRowValue(row, ["name", "수화주명", "업체명"]),
           aliases: parseAliases(getRowValue(row, ["aliases", "검색명", "별칭"])),
           phone: getRowValue(row, ["phone", "전화번호", "수화주전화", "수화주전화1"]),
           address: getRowValue(row, ["address", "주소"]),
           branch: getRowValue(row, ["branch", "도착영업소", "영업소"]),
-          postalCode: getRowValue(row, ["postalCode", "우편번호"]),
+          postal_code: getRowValue(row, ["postalCode", "우편번호"]),
           note: getRowValue(row, ["note", "특기사항"]),
         }))
         .filter((item) => item.name);
@@ -1248,8 +1475,17 @@ export default function Home() {
         return;
       }
 
-      setReceiverMaster((prev) => mergeByName(prev, parsed));
-      alert(`수화주 마스터 ${parsed.length}건 반영이 완료되었습니다.`);
+      const { error } = await supabase
+        .from("receiver_master")
+        .upsert(parsed, { onConflict: "name" });
+
+      if (error) {
+        alert("수화주 업로드 실패: " + error.message);
+        return;
+      }
+
+      await loadReceiverMasterFromDb();
+      alert(`수화주 마스터 ${parsed.length}건 반영 완료`);
     } catch (error) {
       console.error(error);
       alert("수화주 엑셀 업로드 중 오류가 발생했습니다.");
@@ -1264,7 +1500,7 @@ export default function Home() {
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" }) as Record<string, unknown>[];
 
-      const parsed: Party[] = rows
+      const parsed = rows
         .map((row) => ({
           name: getRowValue(row, ["name", "발화주명", "업체명"]),
           aliases: parseAliases(getRowValue(row, ["aliases", "검색명", "별칭"])),
@@ -1277,8 +1513,17 @@ export default function Home() {
         return;
       }
 
-      setSenderMaster((prev) => mergeByName(prev, parsed));
-      alert(`발화주 마스터 ${parsed.length}건 반영이 완료되었습니다.`);
+      const { error } = await supabase
+        .from("sender_master")
+        .upsert(parsed, { onConflict: "name" });
+
+      if (error) {
+        alert("발화주 업로드 실패: " + error.message);
+        return;
+      }
+
+      await loadSenderMasterFromDb();
+      alert(`발화주 마스터 ${parsed.length}건 반영 완료`);
     } catch (error) {
       console.error(error);
       alert("발화주 엑셀 업로드 중 오류가 발생했습니다.");
@@ -1293,10 +1538,10 @@ export default function Home() {
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" }) as Record<string, unknown>[];
 
-      const parsed: BranchPostalItem[] = rows
+      const parsed = rows
         .map((row) => ({
           branch: getRowValue(row, ["branch", "영업소", "도착영업소"]),
-          postalCode: getRowValue(row, ["postalCode", "우편번호"]),
+          postal_code: getRowValue(row, ["postalCode", "우편번호"]),
         }))
         .filter((item) => item.branch);
 
@@ -1305,8 +1550,17 @@ export default function Home() {
         return;
       }
 
-      setBranchMaster((prev) => mergeByBranch(prev, parsed));
-      alert(`영업소 우편번호 ${parsed.length}건 반영이 완료되었습니다.`);
+      const { error } = await supabase
+        .from("branch_master")
+        .upsert(parsed, { onConflict: "branch" });
+
+      if (error) {
+        alert("영업소 업로드 실패: " + error.message);
+        return;
+      }
+
+      await loadBranchMasterFromDb();
+      alert(`영업소 우편번호 ${parsed.length}건 반영 완료`);
     } catch (error) {
       console.error(error);
       alert("영업소 엑셀 업로드 중 오류가 발생했습니다.");
@@ -1348,7 +1602,7 @@ export default function Home() {
     setSelectedBranchMasterName("");
   };
 
-  const saveReceiverMaster = () => {
+  const saveReceiverMaster = async () => {
     const normalizedReceiverForm = {
       ...receiverForm,
       aliases: parseAliases(receiverAliasesInput),
@@ -1359,25 +1613,42 @@ export default function Home() {
       return;
     }
 
+    const payload = {
+      name: normalizedReceiverForm.name.trim(),
+      aliases: normalizedReceiverForm.aliases ?? [],
+      phone: normalizedReceiverForm.phone ?? "",
+      address: normalizedReceiverForm.address ?? "",
+      branch: normalizedReceiverForm.branch ?? "",
+      note: normalizedReceiverForm.note ?? "",
+      postal_code: normalizedReceiverForm.postalCode ?? "",
+    };
+
     if (receiverMasterMode === "edit" && selectedReceiverMasterName) {
-      setReceiverMaster((prev) =>
-        prev.map((item) =>
-          item.name === selectedReceiverMasterName ? normalizedReceiverForm : item
-        )
-      );
-    } else {
-      const exists = receiverMaster.some((item) => item.name === normalizedReceiverForm.name);
-      if (exists) {
-        alert("같은 수화주명이 이미 있습니다.");
+      const { error } = await supabase
+        .from("receiver_master")
+        .update(payload)
+        .eq("name", selectedReceiverMasterName);
+
+      if (error) {
+        alert("수화주 수정 실패: " + error.message);
         return;
       }
-      setReceiverMaster((prev) => [...prev, normalizedReceiverForm]);
+    } else {
+      const { error } = await supabase
+        .from("receiver_master")
+        .insert([payload]);
+
+      if (error) {
+        alert("수화주 저장 실패: " + error.message);
+        return;
+      }
     }
 
+    await loadReceiverMasterFromDb();
     resetReceiverForm();
   };
 
-  const saveSenderMaster = () => {
+  const saveSenderMaster = async () => {
     const normalizedSenderForm = {
       ...senderForm,
       aliases: parseAliases(senderAliasesInput),
@@ -1388,73 +1659,126 @@ export default function Home() {
       return;
     }
 
+    const payload = {
+      name: normalizedSenderForm.name.trim(),
+      aliases: normalizedSenderForm.aliases ?? [],
+      phone: normalizedSenderForm.phone ?? "",
+    };
+
     if (senderMasterMode === "edit" && selectedSenderMasterName) {
-      setSenderMaster((prev) =>
-        prev.map((item) =>
-          item.name === selectedSenderMasterName ? normalizedSenderForm : item
-        )
-      );
-    } else {
-      const exists = senderMaster.some((item) => item.name === normalizedSenderForm.name);
-      if (exists) {
-        alert("같은 발화주명이 이미 있습니다.");
+      const { error } = await supabase
+        .from("sender_master")
+        .update(payload)
+        .eq("name", selectedSenderMasterName);
+
+      if (error) {
+        alert("발화주 수정 실패: " + error.message);
         return;
       }
-      setSenderMaster((prev) => [...prev, normalizedSenderForm]);
+    } else {
+      const { error } = await supabase
+        .from("sender_master")
+        .insert([payload]);
+
+      if (error) {
+        alert("발화주 저장 실패: " + error.message);
+        return;
+      }
     }
 
+    await loadSenderMasterFromDb();
     resetSenderForm();
   };
 
-  const saveBranchMaster = () => {
+  const saveBranchMaster = async () => {
     if (!branchForm.branch.trim()) {
       alert("영업소명을 입력해 주세요.");
       return;
     }
+
     if (!branchForm.postalCode.trim()) {
       alert("우편번호를 입력해 주세요.");
       return;
     }
 
+    const payload = {
+      branch: branchForm.branch.trim(),
+      postal_code: branchForm.postalCode.trim(),
+    };
+
     if (branchMasterMode === "edit" && selectedBranchMasterName) {
-      setBranchMaster((prev) =>
-        prev.map((item) =>
-          item.branch === selectedBranchMasterName ? { ...branchForm } : item
-        )
-      );
-    } else {
-      const exists = branchMaster.some((item) => item.branch === branchForm.branch);
-      if (exists) {
-        alert("같은 영업소명이 이미 있습니다.");
+      const { error } = await supabase
+        .from("branch_master")
+        .update(payload)
+        .eq("branch", selectedBranchMasterName);
+
+      if (error) {
+        alert("영업소 수정 실패: " + error.message);
         return;
       }
-      setBranchMaster((prev) => [...prev, { ...branchForm }]);
+    } else {
+      const { error } = await supabase
+        .from("branch_master")
+        .insert([payload]);
+
+      if (error) {
+        alert("영업소 저장 실패: " + error.message);
+        return;
+      }
     }
 
+    await loadBranchMasterFromDb();
     resetBranchForm();
   };
 
-  const deleteReceiverMaster = () => {
+  const deleteReceiverMaster = async () => {
     if (!selectedReceiverMasterName) return;
-    setReceiverMaster((prev) =>
-      prev.filter((item) => item.name !== selectedReceiverMasterName)
-    );
+
+    const { error } = await supabase
+      .from("receiver_master")
+      .delete()
+      .eq("name", selectedReceiverMasterName);
+
+    if (error) {
+      alert("수화주 삭제 실패: " + error.message);
+      return;
+    }
+
+    await loadReceiverMasterFromDb();
     resetReceiverForm();
   };
 
-  const deleteSenderMaster = () => {
+  const deleteSenderMaster = async () => {
     if (!selectedSenderMasterName) return;
-    setSenderMaster((prev) =>
-      prev.filter((item) => item.name !== selectedSenderMasterName)
-    );
+
+    const { error } = await supabase
+      .from("sender_master")
+      .delete()
+      .eq("name", selectedSenderMasterName);
+
+    if (error) {
+      alert("발화주 삭제 실패: " + error.message);
+      return;
+    }
+
+    await loadSenderMasterFromDb();
     resetSenderForm();
   };
 
-  const deleteBranchMaster = () => {
+  const deleteBranchMaster = async () => {
     if (!selectedBranchMasterName) return;
-    setBranchMaster((prev) =>
-      prev.filter((item) => item.branch !== selectedBranchMasterName)
-    );
+
+    const { error } = await supabase
+      .from("branch_master")
+      .delete()
+      .eq("branch", selectedBranchMasterName);
+
+    if (error) {
+      alert("영업소 삭제 실패: " + error.message);
+      return;
+    }
+
+    await loadBranchMasterFromDb();
     resetBranchForm();
   };
 
