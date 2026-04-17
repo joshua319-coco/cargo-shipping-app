@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
+import { supabase } from "@/lib/supabase";
 
 type Party = {
   name: string;
@@ -872,39 +873,41 @@ export default function Home() {
     setSenderFocused(false);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!receiver.trim()) return alert("수화주명을 입력해 주세요.");
     if (!sender.trim()) return alert("발화주명을 입력해 주세요.");
     if (!qty.trim()) return alert("수량을 입력해 주세요.");
     if (!fare.trim()) return alert("운임을 입력해 주세요.");
 
-    const newItem: SavedShipment = {
-      id: `${Date.now()}`,
+    const payload = {
       receiver,
-      receiverPhone,
+      receiver_phone: receiverPhone,
       address,
       branch,
-      postalCode: resolvePostalCodeValue({
-        delivery,
-        receiver,
-        branch,
-        currentPostalCode: postalCode,
-      }),
+      postal_code: postalCode,
       sender,
-      senderPhone,
+      sender_phone: senderPhone,
       item,
       pack,
       pay,
       delivery,
-      qty,
-      fare,
+      qty: Number(qty),
+      fare: Number(fare.replace(/,/g, "")),
       memo,
       note,
-      createdAt: new Date().toISOString(),
-      checklist: createEmptyChecklist(),
     };
 
-    persistShipments([newItem, ...savedShipments]);
+    const { error } = await supabase
+      .from("shipments")
+      .insert([payload]);
+
+    if (error) {
+      alert("DB 저장 실패: " + error.message);
+      return;
+    }
+
+    alert("DB 저장 완료");
+
     resetForm();
   };
 
