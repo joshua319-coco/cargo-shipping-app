@@ -54,7 +54,6 @@ type SavedShipment = {
   checklist: Checklist;
 };
 
-const STORAGE_KEY = "savedShipments_v11";
 const RECEIVER_MASTER_KEY = "receiver_master_v1";
 const SENDER_MASTER_KEY = "sender_master_v1";
 const BRANCH_MASTER_KEY = "branch_master_v1";
@@ -217,22 +216,29 @@ function normalizeShipment(raw: any): SavedShipment {
   return {
     id: String(raw?.id ?? Date.now()),
     receiver: raw?.receiver ?? "",
-    receiverPhone: raw?.receiverPhone ?? "",
+    receiverPhone: raw?.receiverPhone ?? raw?.receiver_phone ?? "",
     address: raw?.address ?? "",
     branch: raw?.branch ?? "",
-    postalCode: raw?.postalCode ?? "",
+    postalCode: raw?.postalCode ?? raw?.postal_code ?? "",
     sender: raw?.sender ?? "상화시스템",
-    senderPhone: raw?.senderPhone ?? "0318059618",
+    senderPhone: raw?.senderPhone ?? raw?.sender_phone ?? "0318059618",
     item: raw?.item ?? "부품",
     pack: raw?.pack ?? "박스",
     pay: raw?.pay === "선불" ? "선불" : "착불",
     delivery: raw?.delivery === "정기" ? "정기" : "택배",
-    qty: raw?.qty ?? "1",
-    fare: raw?.fare ?? "5500",
+    qty: String(raw?.qty ?? "1"),
+    fare: String(raw?.fare ?? "5500"),
     memo: raw?.memo ?? "",
     note: raw?.note ?? "",
-    createdAt: raw?.createdAt ?? new Date().toISOString(),
-    checklist: normalizeChecklist(raw?.checklist),
+    createdAt: raw?.createdAt ?? raw?.created_at ?? new Date().toISOString(),
+    checklist: normalizeChecklist(
+      raw?.checklist ?? {
+        orderSheet: raw?.order_sheet,
+        salesSlip: raw?.sales_slip,
+        pda: raw?.pda,
+        waybill: raw?.waybill,
+      }
+    ),
   };
 }
 
@@ -637,32 +643,12 @@ export default function Home() {
       return;
     }
 
-    const normalized: SavedShipment[] = (data ?? []).map((row: any) => ({
-      id: String(row.id),
-      receiver: row.receiver ?? "",
-      receiverPhone: row.receiver_phone ?? "",
-      address: row.address ?? "",
-      branch: row.branch ?? "",
-      postalCode: row.postal_code ?? "",
-      sender: row.sender ?? "",
-      senderPhone: row.sender_phone ?? "",
-      item: row.item ?? "",
-      pack: row.pack ?? "",
-      pay: row.pay === "선불" ? "선불" : "착불",
-      delivery: row.delivery === "정기" ? "정기" : "택배",
-      qty: String(row.qty ?? "1"),
-      fare: String(row.fare ?? "0"),
-      memo: row.memo ?? "",
-      note: row.note ?? "",
-      createdAt: row.created_at ?? new Date().toISOString(),
-      checklist: createEmptyChecklist(),
-    }));
-
+    const normalized: SavedShipment[] = (data ?? []).map(normalizeShipment);
     persistShipments(normalized);
   };
 
   useEffect(() => {
-    loadShipmentsFromDb();
+    void loadShipmentsFromDb();
   }, []);
 
   useEffect(() => {
@@ -677,40 +663,8 @@ export default function Home() {
     localStorage.setItem(BRANCH_MASTER_KEY, JSON.stringify(branchMaster));
   }, [branchMaster]);
 
-  useEffect(() => {
-    const keysToTry = [
-      STORAGE_KEY,
-      "savedShipments_v10",
-      "savedShipments_v9",
-      "savedShipments_v8",
-      "savedShipments_v7",
-      "savedShipments_v6",
-      "savedShipments_v5",
-      "savedShipments_v4",
-      "savedShipments_v3",
-      "savedShipments_v2",
-      "savedShipments",
-    ];
-
-    for (const key of keysToTry) {
-      const raw = localStorage.getItem(key);
-      if (!raw) continue;
-
-      try {
-        const parsed = JSON.parse(raw) as any[];
-        const normalized = parsed.map(normalizeShipment);
-        setSavedShipments(normalized);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
-        break;
-      } catch {
-        // ignore
-      }
-    }
-  }, []);
-
   const persistShipments = (items: SavedShipment[]) => {
     setSavedShipments(items);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
   };
 
   const resolvePostalCodeValue = (params: {
@@ -923,7 +877,12 @@ export default function Home() {
       receiver_phone: receiverPhone,
       address,
       branch,
-      postal_code: postalCode,
+      postal_code: resolvePostalCodeValue({
+        delivery,
+        receiver,
+        branch,
+        currentPostalCode: postalCode,
+      }),
       sender,
       sender_phone: senderPhone,
       item,
@@ -931,9 +890,13 @@ export default function Home() {
       pay,
       delivery,
       qty: Number(qty),
-      fare: Number(fare.replace(/,/g, "")),
+      fare: Number(String(fare).replace(/,/g, "")),
       memo,
       note,
+      order_sheet: false,
+      sales_slip: false,
+      pda: false,
+      waybill: false,
     };
 
     const { error } = await supabase
@@ -945,14 +908,12 @@ export default function Home() {
       return;
     }
 
-    alert("DB 저장 완료");
-
     await loadShipmentsFromDb();
-
     resetForm();
+    alert("DB 저장 완료");
   };
 
-  const handleDelete = async (id: string) => {
+    const handleDelete = async (id: string) => {
     const numericId = Number(id);
 
     const { error } = await supabase
@@ -966,26 +927,40 @@ export default function Home() {
       return;
     }
 
-    persistShipments(savedShipments.filter((item) => item.id !== id));
+    await loadShipmentsFromDb();
     setSelectedIds((prev) => prev.filter((item) => item !== id));
 
     if (detailShipmentId === id) closeDetail();
   };
 
-  const handleChecklistToggle = (shipmentId: string, key: keyof Checklist) => {
-    const updated = savedShipments.map((item) => {
-      if (item.id !== shipmentId) return item;
-      return {
-        ...item,
-        checklist: {
-          ...item.checklist,
-          [key]: !item.checklist[key],
-        },
-      };
-    });
-    persistShipments(updated);
+  
+  const handleChecklistToggle = async (shipmentId: string, key: keyof Checklist) => {
+    const current = savedShipments.find((item) => item.id === shipmentId);
+    if (!current) return;
+
+    const nextValue = !current.checklist[key];
+    const columnMap: Record<keyof Checklist, string> = {
+      orderSheet: "order_sheet",
+      salesSlip: "sales_slip",
+      pda: "pda",
+      waybill: "waybill",
+    };
+
+    const { error } = await supabase
+      .from("shipments")
+      .update({ [columnMap[key]]: nextValue })
+      .eq("id", Number(shipmentId));
+
+    if (error) {
+      console.error(error);
+      alert("체크리스트 저장 실패: " + error.message);
+      return;
+    }
+
+    await loadShipmentsFromDb();
   };
 
+  
   const openDetail = (shipment: SavedShipment) => {
     setDetailShipmentId(shipment.id);
     setEditForm({ ...shipment, checklist: { ...shipment.checklist } });
@@ -1005,27 +980,57 @@ export default function Home() {
     });
   };
 
-  const handleSaveDetail = () => {
+  const handleSaveDetail = async () => {
     if (!editForm) return;
     if (!editForm.receiver.trim()) return alert("수화주명을 입력해 주세요.");
     if (!editForm.sender.trim()) return alert("발화주명을 입력해 주세요.");
     if (!editForm.qty.trim()) return alert("수량을 입력해 주세요.");
     if (!editForm.fare.trim()) return alert("운임을 입력해 주세요.");
 
-    const normalized: SavedShipment = {
-      ...editForm,
-      postalCode: resolvePostalCodeValue({
+    const payload = {
+      receiver: editForm.receiver,
+      receiver_phone: editForm.receiverPhone,
+      address: editForm.address,
+      branch: editForm.branch,
+      postal_code: resolvePostalCodeValue({
         delivery: editForm.delivery,
         receiver: editForm.receiver,
         branch: editForm.branch,
         currentPostalCode: editForm.postalCode,
       }),
+      sender: editForm.sender,
+      sender_phone: editForm.senderPhone,
+      item: editForm.item,
+      pack: editForm.pack,
+      pay: editForm.pay,
+      delivery: editForm.delivery,
+      qty: Number(editForm.qty),
+      fare: Number(String(editForm.fare).replace(/,/g, "")),
+      memo: editForm.memo,
+      note: editForm.note,
+      order_sheet: editForm.checklist.orderSheet,
+      sales_slip: editForm.checklist.salesSlip,
+      pda: editForm.checklist.pda,
+      waybill: editForm.checklist.waybill,
     };
 
-    persistShipments(savedShipments.map((item) => (item.id === normalized.id ? normalized : item)));
+    const { error } = await supabase
+      .from("shipments")
+      .update(payload)
+      .eq("id", Number(editForm.id));
+
+    if (error) {
+      console.error(error);
+      alert("상세정보 저장 실패: " + error.message);
+      return;
+    }
+
+    await loadShipmentsFromDb();
     closeDetail();
+    alert("상세정보 저장 완료");
   };
 
+  
   const resetFilters = () => {
     setFilterKeyword("");
     setPayFilter("전체");
