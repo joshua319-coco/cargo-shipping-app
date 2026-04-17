@@ -2186,8 +2186,21 @@ export default function Home() {
                       const isToday =
                         new Date(shipment.createdAt).toDateString() === new Date().toDateString();
 
+                      const completedAll =
+                        shipment.checklist.orderSheet &&
+                        shipment.checklist.salesSlip &&
+                        shipment.checklist.pda &&
+                        shipment.checklist.waybill;
+
                       return (
-                        <div key={shipment.id} style={overviewRow}>
+                        <div
+                          key={shipment.id}
+                          style={{
+                            ...overviewRow,
+                            background: completedAll ? "#f3f4f6" : "#fff",
+                            opacity: completedAll ? 0.72 : 1,
+                          }}
+                        >
                           <div style={ovSelect}>
                             <input
                               type="checkbox"
@@ -2199,8 +2212,12 @@ export default function Home() {
                           <div
                             style={{
                               ...ovDate,
-                              color: isToday ? "#2563eb" : "#6b7280",
-                              fontWeight: isToday ? "bold" : "normal",
+                              color: completedAll
+                                ? "#9ca3af"
+                                : isToday
+                                  ? "#2563eb"
+                                  : "#6b7280",
+                              fontWeight: completedAll ? "normal" : isToday ? "bold" : "normal",
                             }}
                           >
                             {new Date(shipment.createdAt).toLocaleDateString("ko-KR")}
@@ -2209,7 +2226,10 @@ export default function Home() {
                           <div style={ovCompany}>
                             <button
                               type="button"
-                              style={companyLinkBtn}
+                              style={{
+                                ...companyLinkBtn,
+                                color: completedAll ? "#6b7280" : "#1d4ed8",
+                              }}
                               onClick={() => openDetail(shipment)}
                             >
                               {displayReceiverName(shipment.sender, shipment.receiver)}
