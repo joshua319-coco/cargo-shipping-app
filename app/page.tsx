@@ -17,7 +17,7 @@ type Party = {
 
 type PayType = "착불" | "선불";
 type DeliveryType = "정기" | "택배";
-type TabType = "출고등록" | "출고목록" | "마스터관리";
+type TabType = "출고등록" | "출고목록" | "발송검증" | "운송장문구" | "마스터관리";
 
 type BranchPostalItem = {
   branch: string;
@@ -52,6 +52,36 @@ type SavedShipment = {
   note: string;
   createdAt: string;
   checklist: Checklist;
+};
+
+type WaybillUploadRow = {
+  id: string;
+  sender: string;
+  receiver: string;
+  receiverPhone: string;
+  address: string;
+  qty: number;
+  fare: number;
+  delivery: DeliveryType;
+  pay: PayType;
+  branch: string;
+  waybillNo: string;
+  raw: Record<string, unknown>;
+};
+
+type WaybillVerificationStatus = "일치" | "확인필요" | "출고목록만" | "발송데이터만";
+
+type WaybillVerificationRow = {
+  id: string;
+  status: WaybillVerificationStatus;
+  shipmentListName: string;
+  uploadListName: string;
+  qtyText: string;
+  deliveryText: string;
+  payText: string;
+  fareText: string;
+  waybillNo: string;
+  reasons: string[];
 };
 
 const LEGACY_RECEIVER_MASTER_KEY = "receiver_master_v1";
@@ -327,6 +357,344 @@ function displayReceiverName(sender: string, receiver: string) {
   return sender !== "상화시스템" ? `${sender}-${receiver}` : receiver;
 }
 
+function parseNumberValue(value: unknown) {
+  const text = asString(value).replace(/,/g, "").replace(/원/g, "").replace(/[^0-9.\-]/g, "");
+  if (!text) return 0;
+  const num = Number(text);
+  return Number.isFinite(num) ? num : 0;
+}
+
+function normalizeDigits(value: string) {
+  return asString(value).replace(/\D/g, "");
+}
+
+function normalizeLooseText(value: string) {
+  return asString(value)
+    .toLowerCase()
+    .replace(/상화\s*\/\s*/g, "")
+    .replace(/\s+/g, "")
+    .replace(/[\[\]\(\){}.,\-_/]/g, "")
+    .replace(/주식회사/g, "")
+    .replace(/님/g, "");
+}
+
+function normalizeAddressText(value: string) {
+  return asString(value)
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/[\[\]\(\){}.,\-_/]/g, "");
+}
+
+function valuesClose(a: string, b: string) {
+  const na = normalizeLooseText(a);
+  const nb = normalizeLooseText(b);
+  if (!na || !nb) return false;
+  return na === nb || na.includes(nb) || nb.includes(na);
+}
+
+function addressesClose(a: string, b: string) {
+  const na = normalizeAddressText(a);
+  const nb = normalizeAddressText(b);
+  if (!na || !nb) return false;
+  return na === nb || na.includes(nb) || nb.includes(na);
+}
+
+function simplifyWaybillSenderName(sender: string) {
+  return asString(sender).replace(/^상화\s*\/\s*/g, "").trim();
+}
+
+function isMainSenderName(sender: string) {
+  const normalized = normalizeLooseText(simplifyWaybillSenderName(sender));
+  return !normalized || normalized === normalizeLooseText("상화") || normalized === normalizeLooseText("상화시스템");
+}
+
+function buildWaybillListName(sender: string, receiver: string) {
+  const safeReceiver = asString(receiver);
+  const simplifiedSender = simplifyWaybillSenderName(sender);
+
+  if (!safeReceiver) return "";
+  if (isMainSenderName(simplifiedSender)) return safeReceiver;
+  return `${simplifiedSender}-${safeReceiver}`;
+}
+
+function normalizeWaybillDelivery(value: string): DeliveryType {
+  const text = asString(value);
+  return text.includes("정기") || text.includes("화물") ? "정기" : "택배";
+}
+
+function normalizeWaybillPay(value: string): PayType {
+  const text = asString(value).replace(/\s/g, "");
+  return text === "현불" || text === "선불" ? "선불" : "착불";
+}
+
+function buildWaybillMessageText(params: {
+  receiver: string;
+  delivery: DeliveryType;
+  pay: PayType;
+  branch?: string;
+  waybillNo: string;
+}) {
+  const receiverName = asString(params.receiver);
+  const waybillNo = asString(params.waybillNo);
+  if (!receiverName || !waybillNo) return "";
+
+  const payText = params.pay === "선불" ? "선불 " : "";
+
+  if (params.delivery === "정기") {
+    return `[${receiverName}]님 대신화물 ${payText}${asString(params.branch)} 운송장번호 - ${waybillNo}`
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  return `[${receiverName}]님 대신택배 ${payText}운송장번호 - ${waybillNo}`
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function parseWaybillUploadRows(rows: Record<string, unknown>[]): WaybillUploadRow[] {
+  return rows
+    .map((row, index) => {
+      const sender = getRowValue(row, ["발화주명", "발송인명", "보내는분", "보내는분명", "발송업체명"]);
+      const receiver = getRowValue(row, ["수화주명", "받는분", "수취인명", "수하인명"]);
+      const receiverPhone = normalizeDigits(
+        getRowValue(row, ["수화주전화", "수화주전화1", "수화주전화번호", "받는분전화", "받는분전화번호"])
+      );
+      const address = getRowValue(row, ["수화주주소", "주소", "받는분주소"]);
+      const qty = parseNumberValue(getRowValue(row, ["수량", "박스수량", "건수"]));
+      const fare = parseNumberValue(getRowValue(row, ["총운임", "운임", "총배송비"]));
+      const delivery = normalizeWaybillDelivery(getRowValue(row, ["운송상품", "운송상품명", "운송방법"]));
+      const pay = normalizeWaybillPay(getRowValue(row, ["지불방법", "운임구분"]));
+      const branch = getRowValue(row, ["도착지", "도착영업소", "도착지점", "도착영업소명"]);
+      const waybillNo = normalizeDigits(
+        getRowValue(row, ["운송장번호", "송장번호", "운송장", "운송장No", "운송장 NO"])
+      );
+
+      return {
+        id: `upload-${index + 1}`,
+        sender,
+        receiver,
+        receiverPhone,
+        address,
+        qty,
+        fare,
+        delivery,
+        pay,
+        branch,
+        waybillNo,
+        raw: row,
+      };
+    })
+    .filter(
+      (item) =>
+        item.receiver ||
+        item.sender ||
+        item.receiverPhone ||
+        item.address ||
+        item.qty > 0 ||
+        item.fare > 0 ||
+        item.waybillNo
+    );
+}
+
+function scoreWaybillPair(shipment: SavedShipment, upload: WaybillUploadRow) {
+  const shipmentQty = Number(shipment.qty) || 0;
+  const shipmentFare = Number(String(shipment.fare).replace(/,/g, "")) || 0;
+  const shipmentPhone = normalizeDigits(shipment.receiverPhone);
+  const shipmentListName = displayReceiverName(shipment.sender, shipment.receiver);
+  const uploadListName = buildWaybillListName(upload.sender, upload.receiver);
+
+  let score = 0;
+
+  if (shipment.delivery === upload.delivery) score += 3;
+  else score -= 4;
+
+  if (shipment.pay === upload.pay) score += 2;
+  else score -= 1;
+
+  if (shipmentQty === upload.qty) score += 3;
+  else if (Math.abs(shipmentQty - upload.qty) <= 0.5) score += 1;
+  else score -= 2;
+
+  if (shipmentFare === upload.fare) score += 3;
+  else if (shipmentFare > 0 && upload.fare > 0 && Math.abs(shipmentFare - upload.fare) <= 100) score += 1;
+
+  if (valuesClose(shipment.receiver, upload.receiver)) score += 7;
+  if (valuesClose(shipment.sender, upload.sender) || valuesClose(shipment.sender, simplifyWaybillSenderName(upload.sender))) score += 4;
+  if (valuesClose(shipmentListName, uploadListName)) score += 6;
+
+  if (shipmentPhone && upload.receiverPhone && shipmentPhone === upload.receiverPhone) score += 4;
+
+  if (shipment.delivery === "정기" && shipment.branch && upload.branch && valuesClose(shipment.branch, upload.branch)) {
+    score += 4;
+  }
+
+  if (shipment.delivery === "택배" && shipment.address && upload.address && addressesClose(shipment.address, upload.address)) {
+    score += 4;
+  }
+
+  return score;
+}
+
+function buildWaybillVerificationRows(
+  shipments: SavedShipment[],
+  uploads: WaybillUploadRow[]
+): WaybillVerificationRow[] {
+  const scoredPairs: Array<{ shipmentIndex: number; uploadIndex: number; score: number }> = [];
+
+  shipments.forEach((shipment, shipmentIndex) => {
+    uploads.forEach((upload, uploadIndex) => {
+      const score = scoreWaybillPair(shipment, upload);
+      if (score >= 8) {
+        scoredPairs.push({ shipmentIndex, uploadIndex, score });
+      }
+    });
+  });
+
+  scoredPairs.sort((a, b) => b.score - a.score);
+
+  const matchedShipmentIndexes = new Set<number>();
+  const matchedUploadIndexes = new Set<number>();
+  const matchedPairs: Array<{ shipment: SavedShipment; upload: WaybillUploadRow }> = [];
+
+  for (const pair of scoredPairs) {
+    if (matchedShipmentIndexes.has(pair.shipmentIndex) || matchedUploadIndexes.has(pair.uploadIndex)) {
+      continue;
+    }
+
+    matchedShipmentIndexes.add(pair.shipmentIndex);
+    matchedUploadIndexes.add(pair.uploadIndex);
+    matchedPairs.push({
+      shipment: shipments[pair.shipmentIndex],
+      upload: uploads[pair.uploadIndex],
+    });
+  }
+
+  const rows: WaybillVerificationRow[] = [];
+
+  matchedPairs.forEach(({ shipment, upload }, index) => {
+    const reasons: string[] = [];
+    const shipmentQty = Number(shipment.qty) || 0;
+    const shipmentFare = Number(String(shipment.fare).replace(/,/g, "")) || 0;
+
+    if (!valuesClose(shipment.receiver, upload.receiver)) {
+      reasons.push("수화주명 확인");
+    }
+
+    if (shipment.sender !== "상화시스템" && !valuesClose(shipment.sender, simplifyWaybillSenderName(upload.sender))) {
+      reasons.push("발화주명 확인");
+    }
+
+    if (shipmentQty !== upload.qty) {
+      reasons.push("수량 확인");
+    }
+
+    if (shipment.delivery !== upload.delivery) {
+      reasons.push("운송상품 확인");
+    }
+
+    if (shipment.pay !== upload.pay) {
+      reasons.push("지불방법 확인");
+    }
+
+    if (shipmentFare !== upload.fare) {
+      reasons.push("총운임 확인");
+    }
+
+    if (shipment.delivery === "정기" && shipment.branch && upload.branch && !valuesClose(shipment.branch, upload.branch)) {
+      reasons.push("도착지 확인");
+    }
+
+    if (shipment.delivery === "택배" && shipment.address && upload.address && !addressesClose(shipment.address, upload.address)) {
+      reasons.push("주소 확인");
+    }
+
+    if (!upload.waybillNo) {
+      reasons.push("운송장번호 없음");
+    }
+
+    rows.push({
+      id: `matched-${index + 1}-${shipment.id}-${upload.id}`,
+      status: reasons.length === 0 ? "일치" : "확인필요",
+      shipmentListName: displayReceiverName(shipment.sender, shipment.receiver),
+      uploadListName: buildWaybillListName(upload.sender, upload.receiver),
+      qtyText: `${shipmentQty} / ${upload.qty || 0}`,
+      deliveryText: `${displayDelivery(shipment.delivery)} / ${displayDelivery(upload.delivery)}`,
+      payText: `${shipment.pay} / ${upload.pay}`,
+      fareText: `${shipmentFare.toLocaleString("ko-KR")} / ${upload.fare.toLocaleString("ko-KR")}`,
+      waybillNo: upload.waybillNo,
+      reasons,
+    });
+  });
+
+  shipments.forEach((shipment, shipmentIndex) => {
+    if (matchedShipmentIndexes.has(shipmentIndex)) return;
+
+    rows.push({
+      id: `shipment-only-${shipment.id}`,
+      status: "출고목록만",
+      shipmentListName: displayReceiverName(shipment.sender, shipment.receiver),
+      uploadListName: "",
+      qtyText: String(Number(shipment.qty) || 0),
+      deliveryText: displayDelivery(shipment.delivery),
+      payText: shipment.pay,
+      fareText: (Number(String(shipment.fare).replace(/,/g, "")) || 0).toLocaleString("ko-KR"),
+      waybillNo: "",
+      reasons: ["발송데이터에 없음"],
+    });
+  });
+
+  uploads.forEach((upload, uploadIndex) => {
+    if (matchedUploadIndexes.has(uploadIndex)) return;
+
+    rows.push({
+      id: `upload-only-${upload.id}`,
+      status: "발송데이터만",
+      shipmentListName: "",
+      uploadListName: buildWaybillListName(upload.sender, upload.receiver),
+      qtyText: String(upload.qty || 0),
+      deliveryText: displayDelivery(upload.delivery),
+      payText: upload.pay,
+      fareText: upload.fare.toLocaleString("ko-KR"),
+      waybillNo: upload.waybillNo,
+      reasons: ["출고목록에 없음"],
+    });
+  });
+
+  return rows;
+}
+
+async function copyTextSilently(text: string) {
+  const safeText = asString(text);
+  if (!safeText) return false;
+
+  try {
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(safeText);
+      return true;
+    }
+  } catch (error) {
+    console.error("클립보드 복사 실패", error);
+  }
+
+  try {
+    if (typeof document === "undefined") return false;
+    const textarea = document.createElement("textarea");
+    textarea.value = safeText;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    textarea.style.pointerEvents = "none";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(textarea);
+    return ok;
+  } catch (error) {
+    console.error("대체 복사 실패", error);
+    return false;
+  }
+}
+
 function displayDelivery(delivery: DeliveryType) {
   return delivery === "정기" ? "화물" : "택배";
 }
@@ -575,6 +943,7 @@ export default function Home() {
   const receiverUploadRef = useRef<HTMLInputElement | null>(null);
   const senderUploadRef = useRef<HTMLInputElement | null>(null);
   const branchUploadRef = useRef<HTMLInputElement | null>(null);
+  const waybillUploadRef = useRef<HTMLInputElement | null>(null);
 
   const [receiverMaster, setReceiverMaster] = useState<Party[]>([]);
   const [senderMaster, setSenderMaster] = useState<Party[]>([]);
@@ -656,6 +1025,12 @@ export default function Home() {
   const [receiverAliasesInput, setReceiverAliasesInput] = useState("");
   const [senderAliasesInput, setSenderAliasesInput] = useState("");
   const [addrSearched, setAddrSearched] = useState(false);
+
+  const [waybillUploadFileName, setWaybillUploadFileName] = useState("");
+  const [waybillUploadRows, setWaybillUploadRows] = useState<WaybillUploadRow[]>([]);
+  const [verificationKeyword, setVerificationKeyword] = useState("");
+  const [verificationMismatchOnly, setVerificationMismatchOnly] = useState(false);
+  const [copiedWaybillMessageId, setCopiedWaybillMessageId] = useState("");
 
   const loadShipmentsFromDb = async () => {
     const { data, error } = await supabase
@@ -854,7 +1229,7 @@ export default function Home() {
       void loadAllMastersFromDb();
     }
 
-    if (tab === "출고목록") {
+    if (tab === "출고목록" || tab === "발송검증" || tab === "운송장문구") {
       void loadShipmentsFromDb();
     }
   }, [tab]);
@@ -1782,6 +2157,151 @@ export default function Home() {
     resetBranchForm();
   };
 
+  const handleWaybillUpload = async (file: File) => {
+    try {
+      const XLSX = await import("xlsx");
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: "array" });
+      const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(firstSheet, { defval: "" }) as Record<string, unknown>[];
+      const parsedRows = parseWaybillUploadRows(rows);
+
+      if (parsedRows.length === 0) {
+        alert("읽을 수 있는 대신 발송데이터가 없습니다.");
+        return;
+      }
+
+      setWaybillUploadRows(parsedRows);
+      setWaybillUploadFileName(file.name);
+      setVerificationKeyword("");
+      setVerificationMismatchOnly(false);
+      setCopiedWaybillMessageId("");
+    } catch (error) {
+      console.error(error);
+      alert("대신 발송데이터 업로드 중 오류가 발생했습니다.");
+    }
+  };
+
+  const resetWaybillUpload = () => {
+    setWaybillUploadRows([]);
+    setWaybillUploadFileName("");
+    setVerificationKeyword("");
+    setVerificationMismatchOnly(false);
+    setCopiedWaybillMessageId("");
+  };
+
+  const todayShipments = useMemo(() => {
+    const todayKey = getTodaySeoulDateKey();
+    return savedShipments.filter((shipment) => getSeoulDateKey(shipment.createdAt) === todayKey);
+  }, [savedShipments]);
+
+  const waybillVerificationRows = useMemo(
+    () => buildWaybillVerificationRows(todayShipments, waybillUploadRows),
+    [todayShipments, waybillUploadRows]
+  );
+
+  const filteredWaybillVerificationRows = useMemo(() => {
+    const keyword = verificationKeyword.trim().toLowerCase();
+
+    return waybillVerificationRows.filter((row) => {
+      const matchesMismatch = verificationMismatchOnly ? row.status !== "일치" : true;
+      const haystack = [
+        row.shipmentListName,
+        row.uploadListName,
+        row.qtyText,
+        row.deliveryText,
+        row.payText,
+        row.fareText,
+        row.waybillNo,
+        row.reasons.join(" "),
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      return matchesMismatch && (!keyword || haystack.includes(keyword));
+    });
+  }, [waybillVerificationRows, verificationKeyword, verificationMismatchOnly]);
+
+  const waybillVerificationSummary = useMemo(() => {
+    return {
+      shipmentCount: todayShipments.length,
+      uploadCount: waybillUploadRows.length,
+      matchedCount: waybillVerificationRows.filter((row) => row.status === "일치").length,
+      warningCount: waybillVerificationRows.filter((row) => row.status === "확인필요").length,
+      shipmentOnlyCount: waybillVerificationRows.filter((row) => row.status === "출고목록만").length,
+      uploadOnlyCount: waybillVerificationRows.filter((row) => row.status === "발송데이터만").length,
+    };
+  }, [todayShipments, waybillUploadRows, waybillVerificationRows]);
+
+  const waybillMessageRows = useMemo(() => {
+    return waybillUploadRows
+      .filter((row) => row.waybillNo)
+      .map((row) => ({
+        id: row.id,
+        listName: buildWaybillListName(row.sender, row.receiver),
+        message: buildWaybillMessageText({
+          receiver: row.receiver,
+          delivery: row.delivery,
+          pay: row.pay,
+          branch: row.branch,
+          waybillNo: row.waybillNo,
+        }),
+      }))
+      .filter((row) => row.message);
+  }, [waybillUploadRows]);
+
+  const handleCopyWaybillMessage = async (id: string, text: string) => {
+    const copied = await copyTextSilently(text);
+    if (!copied) return;
+
+    setCopiedWaybillMessageId(id);
+    window.setTimeout(() => {
+      setCopiedWaybillMessageId((prev) => (prev === id ? "" : prev));
+    }, 1200);
+  };
+
+  const waybillUploadControls = (
+    <div style={verifyUploadBar}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+        <button
+          type="button"
+          style={smallBlueBtn}
+          onClick={() => waybillUploadRef.current?.click()}
+        >
+          대신 발송데이터 업로드
+        </button>
+
+        <button
+          type="button"
+          style={smallGrayBtn}
+          onClick={resetWaybillUpload}
+          disabled={waybillUploadRows.length === 0}
+        >
+          업로드 초기화
+        </button>
+
+        <input
+          ref={waybillUploadRef}
+          type="file"
+          accept=".xls,.xlsx"
+          style={{ display: "none" }}
+          onChange={async (e) => {
+            const input = e.target as HTMLInputElement;
+            const file = input.files?.[0];
+            if (file) await handleWaybillUpload(file);
+            input.value = "";
+          }}
+        />
+      </div>
+
+      <div style={verifyUploadFileName}>
+        {waybillUploadFileName
+          ? `업로드 파일: ${waybillUploadFileName}`
+          : "업로드 파일 없음"}
+      </div>
+    </div>
+  );
+
   return (
     <main style={page}>
       <div style={card}>
@@ -1805,7 +2325,7 @@ export default function Home() {
         </div>
 
         <div style={tabWrap}>
-          {(["출고등록", "출고목록", "마스터관리"] as TabType[]).map((item) => (
+          {(["출고등록", "출고목록", "발송검증", "운송장문구", "마스터관리"] as TabType[]).map((item) => (
             <button
               key={item}
               type="button"
@@ -2186,21 +2706,8 @@ export default function Home() {
                       const isToday =
                         new Date(shipment.createdAt).toDateString() === new Date().toDateString();
 
-                      const completedAll =
-                        shipment.checklist.orderSheet &&
-                        shipment.checklist.salesSlip &&
-                        shipment.checklist.pda &&
-                        shipment.checklist.waybill;
-
                       return (
-                        <div
-                          key={shipment.id}
-                          style={{
-                            ...overviewRow,
-                            background: completedAll ? "#f3f4f6" : "#fff",
-                            opacity: completedAll ? 0.72 : 1,
-                          }}
-                        >
+                        <div key={shipment.id} style={overviewRow}>
                           <div style={ovSelect}>
                             <input
                               type="checkbox"
@@ -2212,12 +2719,8 @@ export default function Home() {
                           <div
                             style={{
                               ...ovDate,
-                              color: completedAll
-                                ? "#9ca3af"
-                                : isToday
-                                  ? "#2563eb"
-                                  : "#6b7280",
-                              fontWeight: completedAll ? "normal" : isToday ? "bold" : "normal",
+                              color: isToday ? "#2563eb" : "#6b7280",
+                              fontWeight: isToday ? "bold" : "normal",
                             }}
                           >
                             {new Date(shipment.createdAt).toLocaleDateString("ko-KR")}
@@ -2226,10 +2729,7 @@ export default function Home() {
                           <div style={ovCompany}>
                             <button
                               type="button"
-                              style={{
-                                ...companyLinkBtn,
-                                color: completedAll ? "#6b7280" : "#1d4ed8",
-                              }}
+                              style={companyLinkBtn}
                               onClick={() => openDetail(shipment)}
                             >
                               {displayReceiverName(shipment.sender, shipment.receiver)}
@@ -2296,6 +2796,199 @@ export default function Home() {
               )}
             </div>
           )}
+
+        {tab === "발송검증" && (
+          <div style={{ marginTop: 8 }}>
+            <h2 style={listTitle}>발송검증</h2>
+
+            <div style={verifyInfoText}>
+              오늘 등록된 출고목록과 대신택배 발송데이터를 비교해. 정렬은 무시하고 내용 기준으로 맞춰준다.
+            </div>
+
+            {waybillUploadControls}
+
+            <div style={verifySummaryGrid}>
+              <div style={verifySummaryItem}>
+                <div style={verifySummaryLabel}>오늘 출고목록</div>
+                <div style={verifySummaryValue}>{waybillVerificationSummary.shipmentCount}건</div>
+              </div>
+              <div style={verifySummaryItem}>
+                <div style={verifySummaryLabel}>발송데이터</div>
+                <div style={verifySummaryValue}>{waybillVerificationSummary.uploadCount}건</div>
+              </div>
+              <div style={verifySummaryItem}>
+                <div style={verifySummaryLabel}>일치</div>
+                <div style={{ ...verifySummaryValue, color: "#15803d" }}>
+                  {waybillVerificationSummary.matchedCount}건
+                </div>
+              </div>
+              <div style={verifySummaryItem}>
+                <div style={verifySummaryLabel}>확인필요</div>
+                <div style={{ ...verifySummaryValue, color: "#b45309" }}>
+                  {waybillVerificationSummary.warningCount}건
+                </div>
+              </div>
+              <div style={verifySummaryItem}>
+                <div style={verifySummaryLabel}>출고목록만</div>
+                <div style={{ ...verifySummaryValue, color: "#dc2626" }}>
+                  {waybillVerificationSummary.shipmentOnlyCount}건
+                </div>
+              </div>
+              <div style={verifySummaryItem}>
+                <div style={verifySummaryLabel}>발송데이터만</div>
+                <div style={{ ...verifySummaryValue, color: "#7c3aed" }}>
+                  {waybillVerificationSummary.uploadOnlyCount}건
+                </div>
+              </div>
+            </div>
+
+            <div style={verifyFilterBar}>
+              <div style={{ ...filterFieldWide, minWidth: 260 }}>
+                <div style={filterLabel}>검색</div>
+                <input
+                  style={filterInput}
+                  value={verificationKeyword}
+                  onChange={(e) => setVerificationKeyword(e.target.value)}
+                  placeholder="업체명, 운송장번호, 확인사항 검색"
+                />
+              </div>
+
+              <label style={{ ...filterCheckLabel, paddingBottom: 0 }}>
+                <input
+                  type="checkbox"
+                  checked={verificationMismatchOnly}
+                  onChange={(e) => setVerificationMismatchOnly(e.target.checked)}
+                />
+                불일치만 보기
+              </label>
+
+              <button
+                type="button"
+                style={smallGrayBtn}
+                onClick={() => setTab("운송장문구")}
+                disabled={waybillUploadRows.length === 0}
+              >
+                운송장문구 보기
+              </button>
+            </div>
+
+            {waybillUploadRows.length === 0 ? (
+              <div style={emptyText}>대신 발송데이터를 업로드하면 여기서 바로 검증 결과가 보인다.</div>
+            ) : filteredWaybillVerificationRows.length === 0 ? (
+              <div style={emptyText}>조건에 맞는 검증 결과가 없습니다.</div>
+            ) : (
+              <div style={verifyTableWrap}>
+                <table style={verifyTable}>
+                  <thead>
+                    <tr>
+                      <th style={verifyHeaderCell}>상태</th>
+                      <th style={verifyHeaderCell}>출고목록</th>
+                      <th style={verifyHeaderCell}>발송데이터</th>
+                      <th style={verifyHeaderCell}>수량</th>
+                      <th style={verifyHeaderCell}>운송</th>
+                      <th style={verifyHeaderCell}>지불</th>
+                      <th style={verifyHeaderCell}>총운임</th>
+                      <th style={verifyHeaderCell}>운송장번호</th>
+                      <th style={verifyHeaderCell}>확인사항</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredWaybillVerificationRows.map((row) => (
+                      <tr key={row.id}>
+                        <td style={verifyCell}>
+                          <span
+                            style={{
+                              ...verifyBadge,
+                              background:
+                                row.status === "일치"
+                                  ? "#dcfce7"
+                                  : row.status === "확인필요"
+                                    ? "#fef3c7"
+                                    : row.status === "출고목록만"
+                                      ? "#fee2e2"
+                                      : "#ede9fe",
+                              color:
+                                row.status === "일치"
+                                  ? "#166534"
+                                  : row.status === "확인필요"
+                                    ? "#92400e"
+                                    : row.status === "출고목록만"
+                                      ? "#b91c1c"
+                                      : "#6d28d9",
+                            }}
+                          >
+                            {row.status}
+                          </span>
+                        </td>
+                        <td style={verifyCell}>{row.shipmentListName || "-"}</td>
+                        <td style={verifyCell}>{row.uploadListName || "-"}</td>
+                        <td style={verifyCell}>{row.qtyText || "-"}</td>
+                        <td style={verifyCell}>{row.deliveryText || "-"}</td>
+                        <td style={verifyCell}>{row.payText || "-"}</td>
+                        <td style={verifyCell}>{row.fareText || "-"}</td>
+                        <td style={verifyCell}>{row.waybillNo || "-"}</td>
+                        <td style={verifyCell}>{row.reasons.join(", ") || "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {tab === "운송장문구" && (
+          <div style={{ marginTop: 8 }}>
+            <h2 style={listTitle}>운송장문구</h2>
+
+            <div style={verifyInfoText}>
+              문구 셀을 눌러도 복사되고, 오른쪽 복사 버튼을 눌러도 바로 복사된다. 팝업은 안 뜬다.
+            </div>
+
+            {waybillUploadControls}
+
+            {waybillMessageRows.length === 0 ? (
+              <div style={emptyText}>운송장번호가 들어 있는 대신 발송데이터를 업로드하면 문구가 생성된다.</div>
+            ) : (
+              <div style={verifyTableWrap}>
+                <table style={verifyTable}>
+                  <thead>
+                    <tr>
+                      <th style={verifyHeaderCell}>목록</th>
+                      <th style={verifyHeaderCell}>운송장번호 안내문구</th>
+                      <th style={verifyHeaderCell}>복사</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {waybillMessageRows.map((row) => (
+                      <tr key={row.id}>
+                        <td style={verifyCell}>{row.listName}</td>
+                        <td style={verifyCell}>
+                          <button
+                            type="button"
+                            style={messageCellButton}
+                            onClick={() => void handleCopyWaybillMessage(row.id, row.message)}
+                          >
+                            {row.message}
+                          </button>
+                        </td>
+                        <td style={verifyCell}>
+                          <button
+                            type="button"
+                            style={copiedWaybillMessageId === row.id ? smallBlueBtn : smallGrayBtn}
+                            onClick={() => void handleCopyWaybillMessage(row.id, row.message)}
+                          >
+                            {copiedWaybillMessageId === row.id ? "복사됨" : "복사"}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
 
         {tab === "마스터관리" && (
           <div style={{ marginTop: 8 }}>
@@ -3234,6 +3927,124 @@ function ProgressBadge({ checklist }: { checklist: Checklist }) {
   return <div style={progressBadge}>완료율 {progress.percent}%</div>;
 }
 
+
+const verifyUploadBar: CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: 12,
+  flexWrap: "wrap",
+  padding: "14px 16px",
+  background: "#f8fafc",
+  border: "1px solid #e5e7eb",
+  borderRadius: 14,
+  marginBottom: 14,
+};
+
+const verifyUploadFileName: CSSProperties = {
+  fontSize: 13,
+  color: "#6b7280",
+  fontWeight: 700,
+};
+
+const verifyInfoText: CSSProperties = {
+  marginBottom: 12,
+  color: "#475569",
+  fontSize: 14,
+  lineHeight: 1.5,
+};
+
+const verifySummaryGrid: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(6, minmax(120px, 1fr))",
+  gap: 12,
+  marginBottom: 14,
+};
+
+const verifySummaryItem: CSSProperties = {
+  padding: "14px 16px",
+  border: "1px solid #e5e7eb",
+  borderRadius: 14,
+  background: "#fff",
+};
+
+const verifySummaryLabel: CSSProperties = {
+  fontSize: 12,
+  color: "#6b7280",
+  fontWeight: 700,
+  marginBottom: 6,
+};
+
+const verifySummaryValue: CSSProperties = {
+  fontSize: 22,
+  color: "#111827",
+  fontWeight: 800,
+};
+
+const verifyFilterBar: CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  alignItems: "end",
+  gap: 12,
+  marginBottom: 14,
+};
+
+const verifyTableWrap: CSSProperties = {
+  overflowX: "auto",
+  border: "1px solid #e5e7eb",
+  borderRadius: 16,
+};
+
+const verifyTable: CSSProperties = {
+  width: "100%",
+  minWidth: 980,
+  borderCollapse: "separate",
+  borderSpacing: 0,
+  background: "#fff",
+};
+
+const verifyHeaderCell: CSSProperties = {
+  textAlign: "left",
+  padding: "14px 16px",
+  fontSize: 13,
+  fontWeight: 800,
+  color: "#475569",
+  background: "#f8fafc",
+  borderBottom: "1px solid #e5e7eb",
+  whiteSpace: "nowrap",
+};
+
+const verifyCell: CSSProperties = {
+  padding: "14px 16px",
+  fontSize: 14,
+  color: "#111827",
+  borderBottom: "1px solid #f1f5f9",
+  verticalAlign: "top",
+};
+
+const verifyBadge: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  minWidth: 72,
+  padding: "6px 10px",
+  borderRadius: 999,
+  fontSize: 12,
+  fontWeight: 800,
+};
+
+const messageCellButton: CSSProperties = {
+  border: "none",
+  background: "transparent",
+  padding: 0,
+  margin: 0,
+  color: "#111827",
+  textAlign: "left",
+  cursor: "pointer",
+  width: "100%",
+  fontSize: 14,
+  lineHeight: 1.5,
+};
 const page: CSSProperties = {
   background: "#f3f4f6",
   padding: 32,
