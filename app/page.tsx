@@ -350,6 +350,12 @@ function ceilQuantityDisplay(qty: string, pack: string) {
 }
 
 function sumCeilQuantity(qty: string) {
+  const num = Number(qty);
+  if (!num) return 0;
+  return Math.ceil(num);
+}
+
+function normalizeQtyForCompare(value: unknown) {
   const num = Number(value);
   if (!num) return 0;
   return Math.ceil(num);
@@ -637,7 +643,7 @@ function buildWaybillVerificationRows(
       status: "출고목록만",
       shipmentListName: displayReceiverName(shipment.sender, shipment.receiver),
       uploadListName: "",
-      qtyText: String(normalizeQtyForCompare(upload.qty)),
+      qtyText: String(normalizeQtyForCompare(shipment.qty)),
       deliveryText: displayDelivery(shipment.delivery),
       payText: shipment.pay,
       fareText: (Number(String(shipment.fare).replace(/,/g, "")) || 0).toLocaleString("ko-KR"),
@@ -654,7 +660,7 @@ function buildWaybillVerificationRows(
       status: "발송데이터만",
       shipmentListName: "",
       uploadListName: buildWaybillListName(upload.sender, upload.receiver),
-      qtyText: String(upload.qty || 0),
+      qtyText: String(normalizeQtyForCompare(upload.qty)),
       deliveryText: displayDelivery(upload.delivery),
       payText: upload.pay,
       fareText: upload.fare.toLocaleString("ko-KR"),
