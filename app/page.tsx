@@ -88,6 +88,8 @@ const LEGACY_RECEIVER_MASTER_KEY = "receiver_master_v1";
 const LEGACY_SENDER_MASTER_KEY = "sender_master_v1";
 const LEGACY_BRANCH_MASTER_KEY = "branch_master_v1";
 const MASTER_DB_MIGRATION_KEY = "master_db_migrated_v1";
+const WAYBILL_UPLOAD_STORAGE_KEY = "waybill_upload_rows_v1";
+const WAYBILL_UPLOAD_FILE_NAME_KEY = "waybill_upload_file_name_v1";
 
 const TEMPLATE_SHEET_NAME = "업로드_양식 값붙여넣기(우클릭+V)";
 const TEMPLATE_HEADERS = [
@@ -348,7 +350,7 @@ function ceilQuantityDisplay(qty: string, pack: string) {
 }
 
 function sumCeilQuantity(qty: string) {
-  const num = Number(qty);
+  const num = Number(value);
   if (!num) return 0;
   return Math.ceil(num);
 }
@@ -497,7 +499,8 @@ function parseWaybillUploadRows(rows: Record<string, unknown>[]): WaybillUploadR
 }
 
 function scoreWaybillPair(shipment: SavedShipment, upload: WaybillUploadRow) {
-  const shipmentQty = Number(shipment.qty) || 0;
+  const shipmentQty = normalizeQtyForCompare(shipment.qty);
+  const uploadQty = normalizeQtyForCompare(upload.qty);
   const shipmentFare = Number(String(shipment.fare).replace(/,/g, "")) || 0;
   const shipmentPhone = normalizeDigits(shipment.receiverPhone);
   const shipmentListName = displayReceiverName(shipment.sender, shipment.receiver);
@@ -511,8 +514,7 @@ function scoreWaybillPair(shipment: SavedShipment, upload: WaybillUploadRow) {
   if (shipment.pay === upload.pay) score += 2;
   else score -= 1;
 
-  if (shipmentQty === upload.qty) score += 3;
-  else if (Math.abs(shipmentQty - upload.qty) <= 0.5) score += 1;
+  if (shipmentQty === uploadQty) score += 3;
   else score -= 2;
 
   if (shipmentFare === upload.fare) score += 3;
@@ -573,7 +575,8 @@ function buildWaybillVerificationRows(
 
   matchedPairs.forEach(({ shipment, upload }, index) => {
     const reasons: string[] = [];
-    const shipmentQty = Number(shipment.qty) || 0;
+    const shipmentQty = normalizeQtyForCompare(shipment.qty);
+    const uploadQty = normalizeQtyForCompare(upload.qty);
     const shipmentFare = Number(String(shipment.fare).replace(/,/g, "")) || 0;
 
     if (!valuesClose(shipment.receiver, upload.receiver)) {
@@ -584,7 +587,7 @@ function buildWaybillVerificationRows(
       reasons.push("발화주명 확인");
     }
 
-    if (shipmentQty !== upload.qty) {
+    if (shipmentQty !== uploadQty) {
       reasons.push("수량 확인");
     }
 
@@ -617,7 +620,7 @@ function buildWaybillVerificationRows(
       status: reasons.length === 0 ? "일치" : "확인필요",
       shipmentListName: displayReceiverName(shipment.sender, shipment.receiver),
       uploadListName: buildWaybillListName(upload.sender, upload.receiver),
-      qtyText: `${Math.ceil(shipmentQty)} / ${Math.ceil(upload.qty || 0)}`,
+      qtyText: `${shipmentQty} / ${uploadQty}`,
       deliveryText: `${displayDelivery(shipment.delivery)} / ${displayDelivery(upload.delivery)}`,
       payText: `${shipment.pay} / ${upload.pay}`,
       fareText: `${shipmentFare.toLocaleString("ko-KR")} / ${upload.fare.toLocaleString("ko-KR")}`,
@@ -634,7 +637,7 @@ function buildWaybillVerificationRows(
       status: "출고목록만",
       shipmentListName: displayReceiverName(shipment.sender, shipment.receiver),
       uploadListName: "",
-      qtyText: String(Number(shipment.qty) || 0),
+      qtyText: String(normalizeQtyForCompare(upload.qty)),
       deliveryText: displayDelivery(shipment.delivery),
       payText: shipment.pay,
       fareText: (Number(String(shipment.fare).replace(/,/g, "")) || 0).toLocaleString("ko-KR"),
@@ -1223,6 +1226,36 @@ export default function Home() {
 
     void initialize();
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    try {
+      const savedRows = localStorage.getItem(WAYBILL_UPLOAD_STORAGE_KEY);
+      const savedFileName = localStorage.getItem(WAYBILL_UPLOAD_FILE_NAME_KEY);
+
+      if (savedRows) {
+        setWaybillUploadRows(JSON.parse(savedRows));
+      }
+
+      if (savedFileName) {
+        setWaybillUploadFileName(savedFileName);
+      }
+    } catch (error) {
+      console.error("발송데이터 localStorage 복구 실패", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    try {
+      localStorage.setItem(WAYBILL_UPLOAD_STORAGE_KEY, JSON.stringify(waybillUploadRows));
+      localStorage.setItem(WAYBILL_UPLOAD_FILE_NAME_KEY, waybillUploadFileName);
+    } catch (error) {
+      console.error("발송데이터 localStorage 저장 실패", error);
+    }
+  }, [waybillUploadRows, waybillUploadFileName]);
 
   useEffect(() => {
     if (tab === "출고등록" || tab === "마스터관리") {
@@ -2188,6 +2221,11 @@ export default function Home() {
     setVerificationKeyword("");
     setVerificationMismatchOnly(false);
     setCopiedWaybillMessageId("");
+
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(WAYBILL_UPLOAD_STORAGE_KEY);
+      localStorage.removeItem(WAYBILL_UPLOAD_FILE_NAME_KEY);
+    }
   };
 
   const todayShipments = useMemo(() => {
