@@ -617,7 +617,7 @@ function buildWaybillVerificationRows(
       status: reasons.length === 0 ? "일치" : "확인필요",
       shipmentListName: displayReceiverName(shipment.sender, shipment.receiver),
       uploadListName: buildWaybillListName(upload.sender, upload.receiver),
-      qtyText: `${shipmentQty} / ${upload.qty || 0}`,
+      qtyText: `${Math.ceil(shipmentQty)} / ${Math.ceil(upload.qty || 0)}`,
       deliveryText: `${displayDelivery(shipment.delivery)} / ${displayDelivery(upload.delivery)}`,
       payText: `${shipment.pay} / ${upload.pay}`,
       fareText: `${shipmentFare.toLocaleString("ko-KR")} / ${upload.fare.toLocaleString("ko-KR")}`,
