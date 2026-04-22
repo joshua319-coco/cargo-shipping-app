@@ -215,14 +215,6 @@ const initialBranchPostalMap: Record<string, string> = {
   고양식사: "10290",
 };
 
-function createEmptyChecklist(): Checklist {
-  return {
-    pda: false,
-    waybill: false,
-    closedDone: false,
-  };
-}
-
 function normalizeChecklist(raw: any): Checklist {
   return {
     pda: raw?.pda ?? raw?.processPda ?? raw?.pdaRegister ?? false,
@@ -355,7 +347,11 @@ function normalizeQtyForCompare(value: unknown) {
 }
 
 function displayReceiverName(sender: string, receiver: string) {
-  return sender !== "상화시스템" ? `${sender}-${receiver}` : receiver;
+  const safeSender = asString(sender);
+  const safeReceiver = asString(receiver);
+
+  if (!safeReceiver) return safeSender;
+  return safeSender && safeSender !== "상화시스템" ? `${safeSender}-${safeReceiver}` : safeReceiver;
 }
 
 function parseNumberValue(value: unknown) {
@@ -866,22 +862,6 @@ function getRowValue(row: Record<string, unknown>, keys: string[]) {
   return "";
 }
 
-function mergeByName<T extends { name: string }>(prev: T[], incoming: T[]) {
-  const map = new Map(prev.map((item) => [item.name, item]));
-  for (const item of incoming) {
-    map.set(item.name, item);
-  }
-  return Array.from(map.values());
-}
-
-function mergeByBranch(prev: BranchPostalItem[], incoming: BranchPostalItem[]) {
-  const map = new Map(prev.map((item) => [item.branch, item]));
-  for (const item of incoming) {
-    map.set(item.branch, item);
-  }
-  return Array.from(map.values());
-}
-
 function buildReceiverTemplateRows(): Array<Record<string, string>> {
   return [
     {
@@ -976,7 +956,7 @@ function toTemplateRow(
 export default function Home() {
   const [tab, setTab] = useState<TabType>("출고등록");
 
-  const today = new Date().toLocaleDateString("ko-KR"); 
+  const today = new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 
   const receiverUploadRef = useRef<HTMLInputElement | null>(null);
   const senderUploadRef = useRef<HTMLInputElement | null>(null);
@@ -1272,7 +1252,8 @@ export default function Home() {
       const savedFileName = localStorage.getItem(WAYBILL_UPLOAD_FILE_NAME_KEY);
 
       if (savedRows) {
-        setWaybillUploadRows(JSON.parse(savedRows));
+        const parsedRows = JSON.parse(savedRows);
+        setWaybillUploadRows(Array.isArray(parsedRows) ? parsedRows : []);
       }
 
       if (savedFileName) {
@@ -2545,13 +2526,13 @@ export default function Home() {
 
                 <Section title="운송정보">
                   <div style={row2}>
-                    <Toggle
+                    <Toggle<PayType>
                       label="지불방법"
                       value={pay}
                       set={setPay}
                       options={["착불", "선불"]}
                     />
-                    <Toggle
+                    <Toggle<DeliveryType>
                       label="운송형태"
                       value={delivery}
                       set={(v) => {
@@ -2891,7 +2872,9 @@ export default function Home() {
                       <div style={ovQty}>수량</div>
                       <div style={ovFare}>운임</div>
 
-                      <div style={{ ...ovCheck, ...checkStartBorder }}>
+                      <div style={{ ...ovCheck, ...checkStartBorder }}>전체</div>
+
+                      <div style={ovCheck}>
                         <button type="button" style={headerActionBtn} onClick={() => void handleChecklistColumnToggle("pda")}>
                           PDA
                         </button>
@@ -2909,7 +2892,6 @@ export default function Home() {
                       <div style={ovCheck}>!</div>
 
                       <div style={ovDelete}>삭제</div>
-                    </div>
 
                     {sortedShipments.map((shipment) => {
                       const isToday =
@@ -3022,13 +3004,14 @@ export default function Home() {
                     <span>건수: {summaryCount}건</span>
                     <span>총수량: {summaryQty}</span>
                   </div>
-                </>
+                </div>
+              </>
               )}
             </div>
           )}
 
-        {tab === "발송검증" && (
-          <div style={{ marginTop: 8 }}>
+          {tab === "발송검증" && (
+            <div style={{ marginTop: 8 }}>
             <h2 style={listTitle}>발송검증</h2>
 
             <div style={verifyInfoText}>
@@ -3626,13 +3609,13 @@ export default function Home() {
               <div style={{...modalSectionTitle, marginTop: 40}}>운송정보</div>
               
               <div style={{ ...detailEditGrid, marginTop: 10 }}>
-                <Toggle
+                <Toggle<PayType>
                   label="지불방법"
                   value={editForm.pay}
                   set={(v) => updateEditField("pay", v)}
                   options={["착불", "선불"]}
                 />
-                <Toggle
+                <Toggle<DeliveryType>
                   label="운송형태"
                   value={editForm.delivery}
                   set={(v) => {
@@ -4145,23 +4128,6 @@ function Section({
   );
 }
 
-function DetailItem({
-  label,
-  children,
-  full = false,
-}: {
-  label: string;
-  children: ReactNode;
-  full?: boolean;
-}) {
-  return (
-    <div style={full ? detailItemFull : detailItem}>
-      <div style={detailLabel}>{label}</div>
-      <div style={detailValue}>{children}</div>
-    </div>
-  );
-}
-
 async function searchAddress(keyword: string) {
   const confmKey = "U01TX0FVVEgyMDI2MDQxNTIxNDQ0NzExNzkzODk=";
 
@@ -4568,14 +4534,6 @@ const exportBar: CSSProperties = {
   marginBottom: 12,
 };
 
-const selectAllLabel: CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: 8,
-  fontSize: 14,
-  fontWeight: 700,
-};
-
 const exportRight: CSSProperties = {
   display: "flex",
   alignItems: "center",
@@ -4622,7 +4580,7 @@ const overviewWrap: CSSProperties = {
 
 const groupHeaderRow: CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "52px 1.5fr 3fr 1fr 1fr 1.1fr 1.2fr 80px 90px 70px 80px 88px",
+  gridTemplateColumns: "52px 1.5fr 3fr 1fr 1fr 1.1fr 1.2fr 70px 70px 70px 90px 40px 88px",
   gap: 10,
   alignItems: "center",
   fontSize: 13,
@@ -4636,22 +4594,22 @@ const groupSelect: CSSProperties = {
 };
 
 const groupInfo: CSSProperties = {
-  gridColumn: "2 / 7",
+  gridColumn: "2 / 8",
   paddingLeft: 8,
 };
 
 const groupChecklist: CSSProperties = {
-  gridColumn: "7 / 11",
+  gridColumn: "7 / 13",
   paddingLeft: 12,
 };
 
 const groupAction: CSSProperties = {
-  gridColumn: "11 / 12",
+  gridColumn: "13 / 14",
 };
 
 const overviewRow: CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "52px 1.5fr 3fr 1fr 1fr 1.1fr 1.2fr 80px 90px 70px 80px 88px",
+  gridTemplateColumns: "52px 1.5fr 3fr 1fr 1fr 1.1fr 1.2fr 70px 70px 70px 90px 40px 88px",
   gap: 10,
   alignItems: "center",
   padding: "16px 14px",
@@ -4818,41 +4776,6 @@ const progressBadge: CSSProperties = {
   background: "#fff",
 };
 
-
-const detailGrid: CSSProperties = {
-  display: "grid",
-  gridTemplateColumns: "1fr 1fr",
-  gap: 14,
-};
-
-const detailItem: CSSProperties = {
-  padding: "12px 14px",
-  borderRadius: 12,
-  background: "#f8fafc",
-  border: "1px solid #e5e7eb",
-};
-
-const detailItemFull: CSSProperties = {
-  gridColumn: "1 / -1",
-  padding: "12px 14px",
-  borderRadius: 12,
-  background: "#f8fafc",
-  border: "1px solid #e5e7eb",
-};
-
-const detailLabel: CSSProperties = {
-  fontSize: 12,
-  color: "#6b7280",
-  marginBottom: 6,
-  fontWeight: 700,
-};
-
-const detailValue: CSSProperties = {
-  fontSize: 15,
-  color: "#111827",
-  fontWeight: 600,
-  wordBreak: "break-word",
-};
 
 
 const modalSectionTitle: CSSProperties = {
@@ -5043,7 +4966,8 @@ const rowActionBtn: CSSProperties = {
 
 const warningMark: CSSProperties = {
   color: "#dc2626",
-  fontWeight: 900,
+  fontWeight: 800,
   fontSize: 18,
   lineHeight: 1,
+  display: "inline-block",
 };
