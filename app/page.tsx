@@ -2619,7 +2619,7 @@ export default function Home() {
                   )}
                 </Section>
 
-                <div style={{ marginTop: 140 }}>
+                <div style={{ marginTop: 135 }}>
                   <Section title="메모사항">
                     <Input label="메모" value={memo} set={setMemo} />
                   </Section>
