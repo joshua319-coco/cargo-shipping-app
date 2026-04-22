@@ -2,7 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, ReactNode } from "react";
+import type { CSSProperties, ReactNode, KeyboardEvent as ReactKeyboardEvent, RefObject } from "react";
 import { supabase } from "@/lib/supabase";
 
 type Party = {
@@ -704,6 +704,40 @@ async function copyTextSilently(text: string) {
   }
 }
 
+function focusNextFormField(current: HTMLElement, reverse = false) {
+  if (typeof document === "undefined") return;
+
+  const scope =
+    (current.closest('[data-enter-scope="form"]') as HTMLElement | null) ?? document.body;
+
+  const candidates = Array.from(
+    scope.querySelectorAll<HTMLElement>(
+      "input:not([type='hidden']):not([disabled]), select:not([disabled]), textarea:not([disabled])"
+    )
+  ).filter((element) => element.offsetParent !== null);
+
+  const currentIndex = candidates.indexOf(current);
+  if (currentIndex < 0) return;
+
+  const nextIndex = reverse ? currentIndex - 1 : currentIndex + 1;
+  const next = candidates[nextIndex];
+  if (!next) return;
+
+  next.focus();
+
+  if (next instanceof HTMLInputElement || next instanceof HTMLTextAreaElement) {
+    next.select?.();
+  }
+}
+
+function handleEnterMoveNext(event: ReactKeyboardEvent<HTMLElement>) {
+  if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+  if (event.currentTarget instanceof HTMLTextAreaElement) return;
+
+  event.preventDefault();
+  focusNextFormField(event.currentTarget as HTMLElement);
+}
+
 function displayDelivery(delivery: DeliveryType) {
   return delivery === "정기" ? "화물" : "택배";
 }
@@ -953,6 +987,8 @@ export default function Home() {
   const senderUploadRef = useRef<HTMLInputElement | null>(null);
   const branchUploadRef = useRef<HTMLInputElement | null>(null);
   const waybillUploadRef = useRef<HTMLInputElement | null>(null);
+  const receiverPhoneInputRef = useRef<HTMLInputElement | null>(null);
+  const senderPhoneInputRef = useRef<HTMLInputElement | null>(null);
 
   const [receiverMaster, setReceiverMaster] = useState<Party[]>([]);
   const [senderMaster, setSenderMaster] = useState<Party[]>([]);
@@ -1458,12 +1494,22 @@ export default function Home() {
         branch: party.branch || "",
       })
     );
+
+    window.setTimeout(() => {
+      receiverPhoneInputRef.current?.focus();
+      receiverPhoneInputRef.current?.select();
+    }, 0);
   };
 
   const applySender = (party: Party) => {
     setSender(party.name);
     setSenderPhone(party.phone);
     setSenderFocused(false);
+
+    window.setTimeout(() => {
+      senderPhoneInputRef.current?.focus();
+      senderPhoneInputRef.current?.select();
+    }, 0);
   };
 
   const handleReceiverEnter = () => {
@@ -2387,8 +2433,8 @@ export default function Home() {
 
         {tab === "출고등록" && (
           <>
-            <div style={grid}>
-              <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+            <div style={grid} data-enter-scope="form">
+              <div>
                 <Section title="받는 사람">
                   <div style={row2}>
                     <AutocompleteInput
@@ -2401,123 +2447,15 @@ export default function Home() {
                       focused={receiverFocused}
                       setFocused={setReceiverFocused}
                     />
-                    <Input label="전화번호" value={receiverPhone} set={setReceiverPhone} />
-                  </div>
-
-                  <div style={{ marginTop: 18 }}>
-                    {delivery === "택배" ? (
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <input
-                          style={{ ...input, flex: 1 }}
-                          value={address}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setAddress(v);
-                            setFare(
-                              suggestFareByQty({
-                                qty,
-                                delivery,
-                                pack,
-                                address: v,
-                                branch,
-                              })
-                            );
-                          }}
-                          placeholder="주소 입력"
-                        />
-
-                        <button
-                          type="button"
-                          style={{
-                            padding: "0 14px",
-                            borderRadius: 10,
-                            border: "none",
-                            background: "#2563eb",
-                            color: "#fff",
-                            fontWeight: 700,
-                            cursor: "pointer",
-                          }}
-                          onClick={() => {
-                            setAddrKeyword(address || "");
-                            setAddrResults([]);
-                            setAddrSearched(false);
-                            setShowAddrSearch(true);
-                          }}
-                        >
-                          찾기
-                        </button>
-                      </div>
-                    ) : (
-                      <Input
-                        label="도착영업소"
-                        value={branch}
-                        set={(v) => {
-                          setBranch(v);
-                          setPostalCode(
-                            resolvePostalCodeValue({
-                              delivery: "정기",
-                              receiver,
-                              branch: v,
-                              currentPostalCode: "",
-                            })
-                          );
-                          setFare(
-                            suggestFareByQty({
-                              qty,
-                              delivery,
-                              pack,
-                              address,
-                              branch: v,
-                            })
-                          );
-                        }}
-                      />
-                    )}
+                    <Input
+                      label="전화번호"
+                      value={receiverPhone}
+                      set={setReceiverPhone}
+                      inputRef={receiverPhoneInputRef}
+                    />
                   </div>
 
                   {note && <div style={noteStyle}>⚠ {note}</div>}
-                </Section>
-
-                <div style={{ marginTop: "auto", paddingTop: 28 }}>
-                  <Section title="보내는 사람">
-                    <div style={row2}>
-                      <AutocompleteInput
-                        label="발화주명"
-                        value={sender}
-                        setValue={setSender}
-                        matches={senderMatches}
-                        onSelect={applySender}
-                        onEnter={handleSenderEnter}
-                        focused={senderFocused}
-                        setFocused={setSenderFocused}
-                      />
-                      <Input label="전화번호" value={senderPhone} set={setSenderPhone} />
-                    </div>
-                  </Section>
-                </div>
-              </div>
-
-              <div>
-                <Section title="품목 / 포장">
-                  <div style={row2}>
-                    <Input label="품명" value={item} set={setItem} />
-                    <Input
-                      label="포장형태"
-                      value={pack}
-                      set={(v) => {
-                        setPack(v);
-                        setFare(
-                          suggestFareByQty({
-                            qty,
-                            delivery,
-                            pack: v,
-                            address,
-                            branch,
-                          })
-                        );
-                      }}
-                    />
-                  </div>
                 </Section>
 
                 <Section title="운송정보">
@@ -2559,6 +2497,126 @@ export default function Home() {
                     <Input label="수량" value={qty} set={handleQty} />
                     <Input label="운임" value={fare} set={setFare} />
                   </div>
+                </Section>
+
+                <Section title="보내는 사람">
+                  <div style={row2}>
+                    <AutocompleteInput
+                      label="발화주명"
+                      value={sender}
+                      setValue={setSender}
+                      matches={senderMatches}
+                      onSelect={applySender}
+                      onEnter={handleSenderEnter}
+                      focused={senderFocused}
+                      setFocused={setSenderFocused}
+                    />
+                    <Input
+                      label="전화번호"
+                      value={senderPhone}
+                      set={setSenderPhone}
+                      inputRef={senderPhoneInputRef}
+                    />
+                  </div>
+                </Section>
+              </div>
+
+              <div>
+                <Section title="품목 / 포장">
+                  <div style={row2}>
+                    <Input label="품명" value={item} set={setItem} />
+                    <Input
+                      label="박스"
+                      value={pack}
+                      set={(v) => {
+                        setPack(v);
+                        setFare(
+                          suggestFareByQty({
+                            qty,
+                            delivery,
+                            pack: v,
+                            address,
+                            branch,
+                          })
+                        );
+                      }}
+                    />
+                  </div>
+                </Section>
+
+                <Section title="도착지정보">
+                  {delivery === "택배" ? (
+                    <div>
+                      <div style={labelStyle}>주소</div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <input
+                          style={{ ...input, flex: 1 }}
+                          value={address}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setAddress(v);
+                            setFare(
+                              suggestFareByQty({
+                                qty,
+                                delivery,
+                                pack,
+                                address: v,
+                                branch,
+                              })
+                            );
+                          }}
+                          onKeyDown={handleEnterMoveNext}
+                          placeholder="주소 입력"
+                        />
+
+                        <button
+                          type="button"
+                          style={{
+                            padding: "0 14px",
+                            borderRadius: 10,
+                            border: "none",
+                            background: "#2563eb",
+                            color: "#fff",
+                            fontWeight: 700,
+                            cursor: "pointer",
+                          }}
+                          onClick={() => {
+                            setAddrKeyword(address || "");
+                            setAddrResults([]);
+                            setAddrSearched(false);
+                            setShowAddrSearch(true);
+                          }}
+                        >
+                          찾기
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <Input
+                      label="도착영업소"
+                      value={branch}
+                      set={(v) => {
+                        setBranch(v);
+                        setPostalCode(
+                          resolvePostalCodeValue({
+                            delivery: "정기",
+                            receiver,
+                            branch: v,
+                            currentPostalCode: "",
+                          })
+                        );
+                        setFare(
+                          suggestFareByQty({
+                            qty,
+                            delivery,
+                            pack,
+                            address,
+                            branch: v,
+                          })
+                        );
+                      }}
+                    />
+                  )}
                 </Section>
 
                 <Section title="메모사항">
@@ -2687,14 +2745,6 @@ export default function Home() {
             </div>
 
             <div style={exportBar}>
-              <label style={selectAllLabel}>
-                <input
-                  type="checkbox"
-                  checked={allFilteredSelected}
-                  onChange={toggleSelectAllFiltered}
-                />
-                현재 목록 전체 선택
-              </label>
 
               <div style={exportRight}>
                 <span style={selectedCountText}>선택 {selectedIds.length}건</span>
@@ -2905,15 +2955,6 @@ export default function Home() {
                 />
                 불일치만 보기
               </label>
-
-              <button
-                type="button"
-                style={smallGrayBtn}
-                onClick={() => setTab("운송장문구")}
-                disabled={waybillUploadRows.length === 0}
-              >
-                운송장문구 보기
-              </button>
             </div>
 
             {waybillUploadRows.length === 0 ? (
@@ -2932,7 +2973,6 @@ export default function Home() {
                       <th style={verifyHeaderCell}>운송</th>
                       <th style={verifyHeaderCell}>지불</th>
                       <th style={verifyHeaderCell}>총운임</th>
-                      <th style={verifyHeaderCell}>운송장번호</th>
                       <th style={verifyHeaderCell}>확인사항</th>
                     </tr>
                   </thead>
@@ -2970,7 +3010,6 @@ export default function Home() {
                         <td style={verifyCell}>{row.deliveryText || "-"}</td>
                         <td style={verifyCell}>{row.payText || "-"}</td>
                         <td style={verifyCell}>{row.fareText || "-"}</td>
-                        <td style={verifyCell}>{row.waybillNo || "-"}</td>
                         <td style={verifyCell}>{row.reasons.join(", ") || "-"}</td>
                       </tr>
                     ))}
@@ -3781,15 +3820,23 @@ function Input({
   label,
   value,
   set,
+  inputRef,
 }: {
   label: string;
   value: string;
   set: (v: string) => void;
+  inputRef?: RefObject<HTMLInputElement | null>;
 }) {
   return (
     <div>
       <div style={labelStyle}>{label}</div>
-      <input style={input} value={value} onChange={(e) => set(e.target.value)} />
+      <input
+        ref={inputRef}
+        style={input}
+        value={value}
+        onChange={(e) => set(e.target.value)}
+        onKeyDown={handleEnterMoveNext}
+      />
     </div>
   );
 }
@@ -3813,30 +3860,87 @@ function AutocompleteInput({
   focused: boolean;
   setFocused: (v: boolean) => void;
 }) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
+
+  useEffect(() => {
+    setHighlightedIndex(0);
+  }, [value, matches.length, focused]);
+
+  const confirmSelection = (party: Party) => {
+    onSelect(party);
+    setHighlightedIndex(0);
+
+    window.setTimeout(() => {
+      if (inputRef.current) {
+        focusNextFormField(inputRef.current);
+      }
+    }, 0);
+  };
+
   return (
     <div style={{ position: "relative" }}>
       <div style={labelStyle}>{label}</div>
       <input
+        ref={inputRef}
         style={input}
         value={value}
-        onChange={(e) => setValue(e.target.value)}
+        onChange={(e) => {
+          setValue(e.target.value);
+          setHighlightedIndex(0);
+        }}
         onFocus={() => setFocused(true)}
         onBlur={() => setTimeout(() => setFocused(false), 150)}
         onKeyDown={(e) => {
+          if (e.key === "ArrowDown" && matches.length > 0) {
+            e.preventDefault();
+            setFocused(true);
+            setHighlightedIndex((prev) => Math.min(prev + 1, matches.length - 1));
+            return;
+          }
+
+          if (e.key === "ArrowUp" && matches.length > 0) {
+            e.preventDefault();
+            setFocused(true);
+            setHighlightedIndex((prev) => Math.max(prev - 1, 0));
+            return;
+          }
+
+          if (e.key === "Escape") {
+            setFocused(false);
+            return;
+          }
+
           if (e.key === "Enter") {
             e.preventDefault();
+
+            if (focused && value.trim() && matches.length > 0) {
+              confirmSelection(matches[highlightedIndex] ?? matches[0]);
+              return;
+            }
+
             onEnter();
+
+            window.setTimeout(() => {
+              if (inputRef.current) {
+                focusNextFormField(inputRef.current);
+              }
+            }, 0);
           }
         }}
       />
       {focused && value.trim() && matches.length > 0 && (
         <div style={dropdown}>
-          {matches.map((party) => (
+          {matches.map((party, index) => (
             <button
               key={party.name}
               type="button"
-              style={dropdownItem}
-              onClick={() => onSelect(party)}
+              style={{
+                ...dropdownItem,
+                background: index === highlightedIndex ? "#eff6ff" : "#fff",
+              }}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => confirmSelection(party)}
             >
               <div style={{ fontWeight: 700 }}>{party.name}</div>
               {party.aliases && party.aliases.length > 0 && (
@@ -4318,7 +4422,7 @@ const resetFilterBtn: CSSProperties = {
 
 const exportBar: CSSProperties = {
   display: "flex",
-  justifyContent: "space-between",
+  justifyContent: "flex-end",
   alignItems: "center",
   gap: 16,
   marginBottom: 12,
