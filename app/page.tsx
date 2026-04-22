@@ -27,10 +27,9 @@ type BranchPostalItem = {
 type MasterMode = "new" | "edit";
 
 type Checklist = {
-  orderSheet: boolean;
-  salesSlip: boolean;
   pda: boolean;
   waybill: boolean;
+  closedDone: boolean;
 };
 
 type SavedShipment = {
@@ -74,6 +73,7 @@ type WaybillVerificationStatus = "일치" | "확인필요" | "출고목록만" |
 type WaybillVerificationRow = {
   id: string;
   status: WaybillVerificationStatus;
+  shipmentId?: string;
   shipmentListName: string;
   uploadListName: string;
   qtyText: string;
@@ -217,30 +217,24 @@ const initialBranchPostalMap: Record<string, string> = {
 
 function createEmptyChecklist(): Checklist {
   return {
-    orderSheet: false,
-    salesSlip: false,
     pda: false,
     waybill: false,
+    closedDone: false,
   };
 }
 
 function normalizeChecklist(raw: any): Checklist {
   return {
-    orderSheet:
-      raw?.orderSheet ??
-      raw?.processOrderPrint ??
-      raw?.orderConfirm ??
-      false,
-    salesSlip:
-      raw?.salesSlip ??
-      raw?.processSalesSlip ??
-      raw?.salesSlipCreate ??
-      false,
     pda: raw?.pda ?? raw?.processPda ?? raw?.pdaRegister ?? false,
     waybill:
       raw?.waybill ??
       raw?.closingWaybill ??
       raw?.waybillRegister ??
+      false,
+    closedDone:
+      raw?.closedDone ??
+      raw?.closed_done ??
+      raw?.closeDone ??
       false,
   };
 }
@@ -266,10 +260,9 @@ function normalizeShipment(raw: any): SavedShipment {
     createdAt: raw?.createdAt ?? raw?.created_at ?? new Date().toISOString(),
     checklist: normalizeChecklist(
       raw?.checklist ?? {
-        orderSheet: raw?.order_sheet,
-        salesSlip: raw?.sales_slip,
         pda: raw?.pda,
         waybill: raw?.waybill,
+        closedDone: raw?.closed_done,
       }
     ),
   };
@@ -623,6 +616,7 @@ function buildWaybillVerificationRows(
 
     rows.push({
       id: `matched-${index + 1}-${shipment.id}-${upload.id}`,
+      shipmentId: shipment.id,
       status: reasons.length === 0 ? "일치" : "확인필요",
       shipmentListName: displayReceiverName(shipment.sender, shipment.receiver),
       uploadListName: buildWaybillListName(upload.sender, upload.receiver),
@@ -640,6 +634,7 @@ function buildWaybillVerificationRows(
 
     rows.push({
       id: `shipment-only-${shipment.id}`,
+      shipmentId: shipment.id,
       status: "출고목록만",
       shipmentListName: displayReceiverName(shipment.sender, shipment.receiver),
       uploadListName: "",
@@ -1580,10 +1575,9 @@ export default function Home() {
       fare: Number(String(fare).replace(/,/g, "")),
       memo,
       note,
-      order_sheet: false,
-      sales_slip: false,
       pda: false,
       waybill: false,
+      closed_done: false,
     };
 
     const { error } = await supabase
@@ -1621,22 +1615,17 @@ export default function Home() {
   };
 
   
-  const handleChecklistToggle = async (shipmentId: string, key: keyof Checklist) => {
-    const current = savedShipments.find((item) => item.id === shipmentId);
-    if (!current) return;
-
-    const nextValue = !current.checklist[key];
-    const columnMap: Record<keyof Checklist, string> = {
-      orderSheet: "order_sheet",
-      salesSlip: "sales_slip",
-      pda: "pda",
-      waybill: "waybill",
-    };
+  const updateChecklistColumns = async (
+    shipmentIds: string[],
+    values: Partial<{ pda: boolean; waybill: boolean; closed_done: boolean }>
+  ) => {
+    const numericIds = shipmentIds.map((id) => Number(id)).filter((id) => !Number.isNaN(id));
+    if (numericIds.length === 0) return;
 
     const { error } = await supabase
       .from("shipments")
-      .update({ [columnMap[key]]: nextValue })
-      .eq("id", Number(shipmentId));
+      .update(values)
+      .in("id", numericIds);
 
     if (error) {
       console.error(error);
@@ -1645,6 +1634,90 @@ export default function Home() {
     }
 
     await loadShipmentsFromDb();
+  };
+
+  const handleChecklistToggle = async (shipmentId: string, key: keyof Checklist) => {
+    const current = savedShipments.find((item) => item.id === shipmentId);
+    if (!current) return;
+
+    const nextValue = !current.checklist[key];
+
+    if (key === "closedDone") {
+      if (nextValue) {
+        await updateChecklistColumns([shipmentId], {
+          pda: true,
+          waybill: true,
+          closed_done: true,
+        });
+      } else {
+        await updateChecklistColumns([shipmentId], {
+          closed_done: false,
+        });
+      }
+      return;
+    }
+
+    await updateChecklistColumns([shipmentId], {
+      [key === "pda" ? "pda" : "waybill"]: nextValue,
+    });
+  };
+
+  const handleChecklistRowToggle = async (shipmentId: string) => {
+    const current = savedShipments.find((item) => item.id === shipmentId);
+    if (!current) return;
+
+    const isAllChecked =
+      current.checklist.pda &&
+      current.checklist.waybill &&
+      current.checklist.closedDone;
+
+    await updateChecklistColumns([shipmentId], {
+      pda: !isAllChecked,
+      waybill: !isAllChecked,
+      closed_done: !isAllChecked,
+    });
+  };
+
+  const handleChecklistColumnToggle = async (key: keyof Checklist) => {
+    const rows = filteredShipments;
+    if (rows.length === 0) return;
+
+    const allChecked = rows.every((item) => item.checklist[key]);
+
+    if (key === "closedDone") {
+      await updateChecklistColumns(
+        rows.map((item) => item.id),
+        allChecked
+          ? { closed_done: false }
+          : { pda: true, waybill: true, closed_done: true }
+      );
+      return;
+    }
+
+    await updateChecklistColumns(
+      rows.map((item) => item.id),
+      key === "pda"
+        ? { pda: !allChecked }
+        : { waybill: !allChecked }
+    );
+  };
+
+  const handleChecklistAllToggle = async (nextValue: boolean) => {
+    if (filteredShipments.length === 0) return;
+
+    const confirmed = window.confirm(
+      nextValue
+        ? "현재 목록의 체크리스트를 전체 체크할까요?"
+        : "현재 목록의 체크리스트를 전체 해제할까요?"
+    );
+    if (!confirmed) return;
+
+    await updateChecklistColumns(
+      filteredShipments.map((item) => item.id),
+      nextValue
+        ? { pda: true, waybill: true, closed_done: true }
+        : { pda: false, waybill: false, closed_done: false }
+    );
   };
 
   
@@ -1695,10 +1768,9 @@ export default function Home() {
       fare: Number(String(editForm.fare).replace(/,/g, "")),
       memo: editForm.memo,
       note: editForm.note,
-      order_sheet: editForm.checklist.orderSheet,
-      sales_slip: editForm.checklist.salesSlip,
       pda: editForm.checklist.pda,
       waybill: editForm.checklist.waybill,
+      closed_done: editForm.checklist.closedDone,
     };
 
     const { error } = await supabase
@@ -1828,6 +1900,11 @@ export default function Home() {
       ).padStart(2, "0")}`;
 
       XLSX.writeFile(workbook, `대신택배_일괄업로드_${fileLabel}_${stamp}.xlsx`);
+
+      await updateChecklistColumns(
+        rows.map((row) => row.id),
+        { waybill: true }
+      );
     } catch (error) {
       console.error(error);
       alert('엑셀 다운로드 기능을 쓰려면 먼저 "npm install xlsx"를 실행해 주세요.');
@@ -2323,6 +2400,14 @@ export default function Home() {
     };
   }, [todayShipments, waybillUploadRows, waybillVerificationRows]);
 
+  const waybillWarningShipmentIds = useMemo(() => {
+    return new Set(
+      waybillVerificationRows
+        .filter((row) => row.shipmentId && row.status !== "일치")
+        .map((row) => row.shipmentId as string)
+    );
+  }, [waybillVerificationRows]);
+
   const waybillMessageRows = useMemo(() => {
     return waybillUploadRows
       .filter((row) => row.waybillNo)
@@ -2747,6 +2832,22 @@ export default function Home() {
             </div>
 
             <div style={exportBar}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  style={smallGrayBtn}
+                  onClick={() => void handleChecklistAllToggle(true)}
+                >
+                  현재 목록 체크 전체선택
+                </button>
+                <button
+                  type="button"
+                  style={smallGrayBtn}
+                  onClick={() => void handleChecklistAllToggle(false)}
+                >
+                  현재 목록 체크 전체해제
+                </button>
+              </div>
 
               <div style={exportRight}>
                 <span style={selectedCountText}>선택 {selectedIds.length}건</span>
@@ -2790,10 +2891,22 @@ export default function Home() {
                       <div style={ovQty}>수량</div>
                       <div style={ovFare}>운임</div>
 
-                      <div style={{ ...ovCheck, ...checkStartBorder }}>주문서</div>
-                      <div style={ovCheck}>판매전표</div>
-                      <div style={ovCheck}>PDA</div>
-                      <div style={ovCheck}>운송장</div>
+                      <div style={{ ...ovCheck, ...checkStartBorder }}>
+                        <button type="button" style={headerActionBtn} onClick={() => void handleChecklistColumnToggle("pda")}>
+                          PDA
+                        </button>
+                      </div>
+                      <div style={ovCheck}>
+                        <button type="button" style={headerActionBtn} onClick={() => void handleChecklistColumnToggle("waybill")}>
+                          운송장
+                        </button>
+                      </div>
+                      <div style={ovCheck}>
+                        <button type="button" style={headerActionBtn} onClick={() => void handleChecklistColumnToggle("closedDone")}>
+                          종결완료
+                        </button>
+                      </div>
+                      <div style={ovCheck}>!</div>
 
                       <div style={ovDelete}>삭제</div>
                     </div>
@@ -2802,84 +2915,105 @@ export default function Home() {
                       const isToday =
                         new Date(shipment.createdAt).toDateString() === new Date().toDateString();
 
+                      const isChecklistDone =
+                        shipment.checklist.pda &&
+                        shipment.checklist.waybill &&
+                        shipment.checklist.closedDone;
+
                       return (
-                        <div key={shipment.id} style={overviewRow}>
-                          <div style={ovSelect}>
-                            <input
-                              type="checkbox"
-                              checked={selectedIds.includes(shipment.id)}
-                              onChange={() => toggleSelectOne(shipment.id)}
-                            />
-                          </div>
-
-                          <div
-                            style={{
-                              ...ovDate,
-                              color: isToday ? "#2563eb" : "#6b7280",
-                              fontWeight: isToday ? "bold" : "normal",
-                            }}
-                          >
-                            {new Date(shipment.createdAt).toLocaleDateString("ko-KR")}
-                          </div>
-
-                          <div style={ovCompany}>
-                            <button
-                              type="button"
-                              style={companyLinkBtn}
-                              onClick={() => openDetail(shipment)}
-                            >
-                              {displayReceiverName(shipment.sender, shipment.receiver)}
-                            </button>
-                          </div>
-
-                          <div style={ovPay}>{shipment.pay}</div>
-                          <div style={ovDelivery}>{displayDelivery(shipment.delivery)}</div>
-                          <div style={ovQty}>{ceilQuantityDisplay(shipment.qty, shipment.pack)}</div>
-                          <div style={ovFare}>{formatFare(shipment.fare)}</div>
-
-                          <div style={{ ...ovCheck, ...checkStartBorder }}>
-                            <input
-                              type="checkbox"
-                              style={checkboxStyle}
-                              checked={shipment.checklist.orderSheet}
-                              onChange={() => handleChecklistToggle(shipment.id, "orderSheet")}
-                            />
-                          </div>
-
-                          <div style={ovCheck}>
-                            <input
-                              type="checkbox"
-                              style={checkboxStyle}
-                              checked={shipment.checklist.salesSlip}
-                              onChange={() => handleChecklistToggle(shipment.id, "salesSlip")}
-                            />
-                          </div>
-
-                          <div style={ovCheck}>
-                            <input
-                              type="checkbox"
-                              style={checkboxStyle}
-                              checked={shipment.checklist.pda}
-                              onChange={() => handleChecklistToggle(shipment.id, "pda")}
-                            />
-                          </div>
-
-                          <div style={ovCheck}>
-                            <input
-                              type="checkbox"
-                              style={checkboxStyle}
-                              checked={shipment.checklist.waybill}
-                              onChange={() => handleChecklistToggle(shipment.id, "waybill")}
-                            />
-                          </div>
-
-                          <div style={ovDelete}>
-                            <button type="button" style={deleteBtn} onClick={() => handleDelete(shipment.id)}>
-                              삭제
-                            </button>
-                          </div>
+                        <div
+                          key={shipment.id}
+                          style={{
+                            ...overviewRow,
+                            background: isChecklistDone ? "#f3f4f6" : "#fff",
+                            opacity: isChecklistDone ? 0.78 : 1,
+                          }}
+                        >
+                        <div style={ovSelect}>
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.includes(shipment.id)}
+                            onChange={() => toggleSelectOne(shipment.id)}
+                          />
                         </div>
-                      );
+
+                        <div
+                          style={{
+                            ...ovDate,
+                            color: isToday ? "#2563eb" : "#6b7280",
+                            fontWeight: isToday ? "bold" : "normal",
+                          }}
+                        >
+                          {new Date(shipment.createdAt).toLocaleDateString("ko-KR")}
+                        </div>
+
+                        <div style={ovCompany}>
+                          <button
+                            type="button"
+                            style={companyLinkBtn}
+                            onClick={() => openDetail(shipment)}
+                          >
+                            {displayReceiverName(shipment.sender, shipment.receiver)}
+                          </button>
+                        </div>
+
+                        <div style={ovPay}>{shipment.pay}</div>
+                        <div style={ovDelivery}>{displayDelivery(shipment.delivery)}</div>
+                        <div style={ovQty}>{ceilQuantityDisplay(shipment.qty, shipment.pack)}</div>
+                        <div style={ovFare}>{formatFare(shipment.fare)}</div>
+
+                        <div style={{ ...ovCheck, ...checkStartBorder }}>
+                          <button
+                            type="button"
+                            style={rowActionBtn}
+                            onClick={() => void handleChecklistRowToggle(shipment.id)}
+                          >
+                            전체
+                          </button>
+                        </div>
+
+                        <div style={ovCheck}>
+                          <input
+                            type="checkbox"
+                            style={checkboxStyle}
+                            checked={shipment.checklist.pda}
+                            onChange={() => void handleChecklistToggle(shipment.id, "pda")}
+                          />
+                        </div>
+
+                        <div style={ovCheck}>
+                          <input
+                            type="checkbox"
+                            style={checkboxStyle}
+                            checked={shipment.checklist.waybill}
+                            onChange={() => void handleChecklistToggle(shipment.id, "waybill")}
+                          />
+                        </div>
+
+                        <div style={ovCheck}>
+                          <input
+                            type="checkbox"
+                            style={checkboxStyle}
+                            checked={shipment.checklist.closedDone}
+                            onChange={() => void handleChecklistToggle(shipment.id, "closedDone")}
+                          />
+                        </div>
+
+                        <div style={ovCheck}>
+                          {waybillWarningShipmentIds.has(shipment.id) ? (
+                            <span style={warningMark}>!</span>
+                          ) : (
+                            <span style={{ color: "transparent" }}>!</span>
+                          )}
+                        </div>
+
+                        <div style={ovDelete}>
+                          <button type="button" style={deleteBtn} onClick={() => handleDelete(shipment.id)}>
+                            삭제
+                          </button>
+                        </div>
+                      </div>
+                    );
                     })}
                     </div>
                   </div>
@@ -4885,4 +5019,31 @@ const smallRedBtn: CSSProperties = {
   padding: "10px 14px",
   cursor: "pointer",
   fontWeight: 700,
+};
+
+const headerActionBtn: CSSProperties = {
+  border: "none",
+  background: "transparent",
+  color: "#374151",
+  fontWeight: 800,
+  cursor: "pointer",
+  padding: 0,
+};
+
+const rowActionBtn: CSSProperties = {
+  border: "none",
+  background: "#e5e7eb",
+  color: "#111827",
+  borderRadius: 8,
+  padding: "6px 10px",
+  cursor: "pointer",
+  fontWeight: 700,
+  fontSize: 12,
+};
+
+const warningMark: CSSProperties = {
+  color: "#dc2626",
+  fontWeight: 900,
+  fontSize: 18,
+  lineHeight: 1,
 };
