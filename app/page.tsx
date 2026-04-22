@@ -17,7 +17,7 @@ type Party = {
 
 type PayType = "착불" | "선불";
 type DeliveryType = "정기" | "택배";
-type TabType = "출고등록" | "출고목록" | "발송검증" | "운송장문구" | "마스터관리";
+type TabType = "출고등록" | "출고목록" | "발송검증" | "운송장번호" | "마스터관리";
 
 type BranchPostalItem = {
   branch: string;
@@ -1304,7 +1304,7 @@ export default function Home() {
       void loadAllMastersFromDb();
     }
 
-    if (tab === "출고목록" || tab === "발송검증" || tab === "운송장문구") {
+    if (tab === "출고목록" || tab === "발송검증" || tab === "운송장번호") {
       void loadShipmentsFromDb();
     }
   }, [tab]);
@@ -2415,7 +2415,7 @@ export default function Home() {
         </div>
 
         <div style={tabWrap}>
-          {(["출고등록", "출고목록", "발송검증", "운송장문구", "마스터관리"] as TabType[]).map((item) => (
+          {(["출고등록", "출고목록", "발송검증", "운송장번호", "마스터관리"] as TabType[]).map((item) => (
             <button
               key={item}
               type="button"
@@ -2898,7 +2898,7 @@ export default function Home() {
             <h2 style={listTitle}>발송검증</h2>
 
             <div style={verifyInfoText}>
-              오늘 등록된 출고목록과 대신택배 발송데이터를 비교해. 정렬은 무시하고 내용 기준으로 맞춰준다.
+              대신 발송데이터 내려받는 법: [대신택배물류시스템 접속] → [일자별조회] → [목록전체선택] → [엑셀저장]
             </div>
 
             {waybillUploadControls}
@@ -2960,7 +2960,7 @@ export default function Home() {
             </div>
 
             {waybillUploadRows.length === 0 ? (
-              <div style={emptyText}>대신 발송데이터를 업로드하면 여기서 바로 검증 결과가 보인다.</div>
+              <div style={emptyText}>대신택배 발송데이터 엑셀파일 업로드 시, 검증 결과 확인 가능.</div>
             ) : filteredWaybillVerificationRows.length === 0 ? (
               <div style={emptyText}>조건에 맞는 검증 결과가 없습니다.</div>
             ) : (
@@ -3022,18 +3022,18 @@ export default function Home() {
           </div>
         )}
 
-        {tab === "운송장문구" && (
+        {tab === "운송장번호" && (
           <div style={{ marginTop: 8 }}>
-            <h2 style={listTitle}>운송장문구</h2>
+            <h2 style={listTitle}>운송장번호</h2>
 
             <div style={verifyInfoText}>
-              문구 셀을 눌러도 복사되고, 오른쪽 복사 버튼을 눌러도 바로 복사된다. 팝업은 안 뜬다.
+              대신택배 발송데이터를 업로드하여 생성된 운송장번호 / 안내문구를 확인하세요.
             </div>
 
             {waybillUploadControls}
 
             {waybillMessageRows.length === 0 ? (
-              <div style={emptyText}>운송장번호가 들어 있는 대신 발송데이터를 업로드하면 문구가 생성된다.</div>
+              <div style={emptyText}>발송문구를 클릭하거나, 오른쪽 [복사]버튼을 눌러 문구를 복사 후, 거래처에 카톡발송</div>
             ) : (
               <div style={verifyTableWrap}>
                 <table style={verifyTable}>
@@ -3489,7 +3489,94 @@ export default function Home() {
                 />
               </div>
 
-              <div style={{ marginTop: 14 }}>
+              <div style={{...modalSectionTitle, marginTop: 40}}>운송정보</div>
+              
+              <div style={{ ...detailEditGrid, marginTop: 10 }}>
+                <Toggle
+                  label="지불방법"
+                  value={editForm.pay}
+                  set={(v) => updateEditField("pay", v)}
+                  options={["착불", "선불"]}
+                />
+                <Toggle
+                  label="운송형태"
+                  value={editForm.delivery}
+                  set={(v) => {
+                    updateEditField("delivery", v);
+                    updateEditField(
+                      "postalCode",
+                      resolvePostalCodeValue({
+                        delivery: v,
+                        receiver: editForm.receiver,
+                        branch: editForm.branch,
+                        currentPostalCode: "",
+                      })
+                    );
+                    updateEditField(
+                      "fare",
+                      suggestFareByQty({
+                        qty: editForm.qty,
+                        delivery: v,
+                        pack: editForm.pack,
+                        address: editForm.address,
+                        branch: editForm.branch,
+                      })
+                    );
+                  }}
+                  options={["정기", "택배"]}
+                />
+              </div>
+
+              <div style={{ ...detailEditGrid, marginTop: 40 }}>
+                <Input
+                  label="수량"
+                  value={editForm.qty}
+                  set={(v) => {
+                    updateEditField("qty", v);
+                    updateEditField(
+                      "fare",
+                      suggestFareByQty({
+                        qty: v,
+                        delivery: editForm.delivery,
+                        pack: editForm.pack,
+                        address: editForm.address,
+                        branch: editForm.branch,
+                      })
+                    );
+                  }}
+                />
+                <div>
+                  <div style={labelStyle}>운임</div>
+                  <div style={fareRow}>
+                    <input
+                      style={input}
+                      value={editForm.fare}
+                      onChange={(e) => updateEditField("fare", e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      style={recalcBtn}
+                      onClick={() =>
+                        updateEditField(
+                          "fare",
+                          suggestFareByQty({
+                            qty: editForm.qty,
+                            delivery: editForm.delivery,
+                            pack: editForm.pack,
+                            address: editForm.address,
+                            branch: editForm.branch,
+                          })
+                        )
+                      }
+                    >
+                      재계산
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ ...modalSectionTitle, marginTop: 40}}>도착지 정보</div>
+              <div style={{ marginTop: 10 }}>
                 {editForm.delivery === "택배" ? (
                   <Input
                     label="주소"
@@ -3582,22 +3669,9 @@ export default function Home() {
                 <div />
               </div>
 
-              <div style={modalSectionTitle}>보내는 사람</div>
-              <div style={detailEditGrid}>
-                <Input
-                  label="발화주명"
-                  value={editForm.sender}
-                  set={(v) => updateEditField("sender", v)}
-                />
-                <Input
-                  label="발화주전화"
-                  value={editForm.senderPhone}
-                  set={(v) => updateEditField("senderPhone", v)}
-                />
-              </div>
+              <div style={{ ...modalSectionTitle, marginTop: 40}}>품목/포장</div>
 
-              <div style={modalSectionTitle}>운송정보</div>
-              <div style={detailEditGrid}>
+              <div style={{ ...detailEditGrid, marginTop: 10 }}>
                 <Input label="품명" value={editForm.item} set={(v) => updateEditField("item", v)} />
                 <Input
                   label="포장형태"
@@ -3616,98 +3690,28 @@ export default function Home() {
                     );
                   }}
                 />
-              </div>
+              </div>             
 
-              <div style={{ ...detailEditGrid, marginTop: 14 }}>
-                <Toggle
-                  label="지불방법"
-                  value={editForm.pay}
-                  set={(v) => updateEditField("pay", v)}
-                  options={["착불", "선불"]}
-                />
-                <Toggle
-                  label="운송형태"
-                  value={editForm.delivery}
-                  set={(v) => {
-                    updateEditField("delivery", v);
-                    updateEditField(
-                      "postalCode",
-                      resolvePostalCodeValue({
-                        delivery: v,
-                        receiver: editForm.receiver,
-                        branch: editForm.branch,
-                        currentPostalCode: "",
-                      })
-                    );
-                    updateEditField(
-                      "fare",
-                      suggestFareByQty({
-                        qty: editForm.qty,
-                        delivery: v,
-                        pack: editForm.pack,
-                        address: editForm.address,
-                        branch: editForm.branch,
-                      })
-                    );
-                  }}
-                  options={["정기", "택배"]}
-                />
-              </div>
-
-              <div style={{ ...detailEditGrid, marginTop: 14 }}>
+              <div style={{ ...modalSectionTitle, marginTop: 40}}>보내는 사람</div>
+              <div style={detailEditGrid}>
                 <Input
-                  label="수량"
-                  value={editForm.qty}
-                  set={(v) => {
-                    updateEditField("qty", v);
-                    updateEditField(
-                      "fare",
-                      suggestFareByQty({
-                        qty: v,
-                        delivery: editForm.delivery,
-                        pack: editForm.pack,
-                        address: editForm.address,
-                        branch: editForm.branch,
-                      })
-                    );
-                  }}
+                  label="발화주명"
+                  value={editForm.sender}
+                  set={(v) => updateEditField("sender", v)}
                 />
-                <div>
-                  <div style={labelStyle}>운임</div>
-                  <div style={fareRow}>
-                    <input
-                      style={input}
-                      value={editForm.fare}
-                      onChange={(e) => updateEditField("fare", e.target.value)}
-                    />
-                    <button
-                      type="button"
-                      style={recalcBtn}
-                      onClick={() =>
-                        updateEditField(
-                          "fare",
-                          suggestFareByQty({
-                            qty: editForm.qty,
-                            delivery: editForm.delivery,
-                            pack: editForm.pack,
-                            address: editForm.address,
-                            branch: editForm.branch,
-                          })
-                        )
-                      }
-                    >
-                      재계산
-                    </button>
-                  </div>
-                </div>
+                <Input
+                  label="발화주전화"
+                  value={editForm.senderPhone}
+                  set={(v) => updateEditField("senderPhone", v)}
+                />
               </div>
 
-              <div style={{ marginTop: 14 }}>
-                <Input label="특기사항" value={editForm.note} set={(v) => updateEditField("note", v)} />
-              </div>
-
-              <div style={{ marginTop: 14 }}>
+              <div style={{ marginTop: 40 }}>
                 <Input label="메모사항" value={editForm.memo} set={(v) => updateEditField("memo", v)} />
+              </div>
+
+              <div style={{ marginTop: 40 }}>
+                <Input label="거래처 특기사항" value={editForm.note} set={(v) => updateEditField("note", v)} />
               </div>
 
               <div style={modalFooter}>
