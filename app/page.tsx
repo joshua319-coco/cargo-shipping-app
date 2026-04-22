@@ -2892,6 +2892,7 @@ export default function Home() {
                       <div style={ovCheck}>!</div>
 
                       <div style={ovDelete}>삭제</div>
+                    </div>
 
                     {sortedShipments.map((shipment) => {
                       const isToday =
@@ -2911,6 +2912,7 @@ export default function Home() {
                             opacity: isChecklistDone ? 0.78 : 1,
                           }}
                         >
+
                         <div style={ovSelect}>
                           <input
                             type="checkbox"
@@ -2996,7 +2998,7 @@ export default function Home() {
                         </div>
                       </div>
                     );
-                    })}
+                  })}
                     </div>
                   </div>
 
@@ -3004,8 +3006,7 @@ export default function Home() {
                     <span>건수: {summaryCount}건</span>
                     <span>총수량: {summaryQty}</span>
                   </div>
-                </div>
-              </>
+                </>
               )}
             </div>
           )}
