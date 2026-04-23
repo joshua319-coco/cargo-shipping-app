@@ -1702,8 +1702,6 @@ export default function Home() {
     };
   }, []);
 
-  const [verifyStorageReady, setVerifyStorageReady] = useState(false);
-
   useEffect(() => {
     if (typeof window === "undefined") return;
 
