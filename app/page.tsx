@@ -1137,13 +1137,70 @@ function asString(value: unknown) {
   return String(value).trim();
 }
 
+function normalizeHeaderKey(value: unknown) {
+  return String(value ?? "")
+    .replace(/\uFEFF/g, "")
+    .replace(/\s+/g, "")
+    .trim();
+}
+
 function getRowValue(row: Record<string, unknown>, keys: string[]) {
+  const normalizedEntries = Object.entries(row).map(([key, value]) => [
+    normalizeHeaderKey(key),
+    value,
+  ] as const);
+
   for (const key of keys) {
-    if (row[key] !== undefined && row[key] !== null && String(row[key]).trim() !== "") {
-      return String(row[key]).trim();
+    const normalizedKey = normalizeHeaderKey(key);
+    const found = normalizedEntries.find(([rowKey]) => rowKey === normalizedKey);
+
+    if (found) {
+      const value = found[1];
+      if (value !== undefined && value !== null && String(value).trim() !== "") {
+        return String(value).trim();
+      }
     }
   }
+
   return "";
+}
+
+function findHeaderRowIndex(sheetRows: unknown[][], requiredHeaders: string[]) {
+  const normalizedRequired = requiredHeaders.map((header) => normalizeHeaderKey(header));
+
+  for (let i = 0; i < sheetRows.length; i += 1) {
+    const row = Array.isArray(sheetRows[i]) ? sheetRows[i] : [];
+    const normalizedRow = row.map((cell) => normalizeHeaderKey(cell));
+
+    const matched = normalizedRequired.every((header) => normalizedRow.includes(header));
+    if (matched) return i;
+  }
+
+  return -1;
+}
+
+function readSheetRowsFromDetectedHeader(
+  XLSX: any,
+  sheet: any,
+  requiredHeaders: string[]
+): Record<string, unknown>[] {
+  const rawRows = XLSX.utils.sheet_to_json(sheet, {
+    header: 1,
+    defval: "",
+    blankrows: false,
+  }) as unknown[][];
+
+  const headerRowIndex = findHeaderRowIndex(rawRows, requiredHeaders);
+
+  if (headerRowIndex < 0) {
+    return [];
+  }
+
+  return XLSX.utils.sheet_to_json(sheet, {
+    range: headerRowIndex,
+    defval: "",
+    blankrows: false,
+  }) as Record<string, unknown>[];
 }
 
 function normalizeCompareClientName(value: string) {
@@ -1642,20 +1699,7 @@ export default function Home() {
     };
   }, []);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    try {
-      localStorage.setItem("order_status_rows", JSON.stringify(orderStatusRows));
-      localStorage.setItem("sales_status_rows", JSON.stringify(salesStatusRows));
-      localStorage.setItem("pda_rows", JSON.stringify(pdaRows));
-      localStorage.setItem("order_file_name", orderFileName);
-      localStorage.setItem("sales_file_name", salesFileName);
-      localStorage.setItem("pda_paste_text", pdaPasteText);
-    } catch (e) {
-      console.error("검증 데이터 저장 실패", e);
-    }
-  }, [orderStatusRows, salesStatusRows, pdaRows, orderFileName, salesFileName, pdaPasteText]);
+  const [verifyStorageReady, setVerifyStorageReady] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1676,8 +1720,25 @@ export default function Home() {
       if (savedPdaPasteText) setPdaPasteText(savedPdaPasteText);
     } catch (e) {
       console.error("검증 데이터 복구 실패", e);
+    } finally {
+      setVerifyStorageReady(true);
     }
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !verifyStorageReady) return;
+
+    try {
+      localStorage.setItem("order_status_rows", JSON.stringify(orderStatusRows));
+      localStorage.setItem("sales_status_rows", JSON.stringify(salesStatusRows));
+      localStorage.setItem("pda_rows", JSON.stringify(pdaRows));
+      localStorage.setItem("order_file_name", orderFileName);
+      localStorage.setItem("sales_file_name", salesFileName);
+      localStorage.setItem("pda_paste_text", pdaPasteText);
+    } catch (e) {
+      console.error("검증 데이터 저장 실패", e);
+    }
+  }, [verifyStorageReady, orderStatusRows, salesStatusRows, pdaRows, orderFileName, salesFileName, pdaPasteText]);
 
   const persistShipments = (items: SavedShipment[]) => {
     setSavedShipments(items);
@@ -2689,43 +2750,75 @@ export default function Home() {
   };
 
   const handleOrderStatusUpload = async (file: File) => {
-  try {
-    const XLSX = await import("xlsx");
-    const buffer = await file.arrayBuffer();
-    const workbook = XLSX.read(buffer, { type: "array" });
-    const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(firstSheet, { defval: "" }) as Record<string, unknown>[];
-    const parsed = parseOrderStatusExcelRows(rows);
+    try {
+      const XLSX = await import("xlsx");
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: "array" });
+      const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
 
-    setOrderStatusRows(parsed);
-    setOrderFileName(file.name);
-  } catch (error) {
-    console.error(error);
-    alert("주문서현황 업로드 중 오류가 발생했습니다.");
-  }
-};
+      const rows = readSheetRowsFromDetectedHeader(XLSX, firstSheet, [
+        "거래처명",
+        "품목코드",
+        "수량",
+      ]);
 
-const handleSalesStatusUpload = async (file: File) => {
-  try {
-    const XLSX = await import("xlsx");
-    const buffer = await file.arrayBuffer();
-    const workbook = XLSX.read(buffer, { type: "array" });
-    const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(firstSheet, { defval: "" }) as Record<string, unknown>[];
-    const parsed = parseSalesStatusExcelRows(rows);
+      if (rows.length === 0) {
+        alert("주문서현황 파일에서 헤더(거래처명 / 품목코드 / 수량)를 찾지 못했습니다.");
+        return;
+      }
 
-    setSalesStatusRows(parsed);
-    setSalesFileName(file.name);
-  } catch (error) {
-    console.error(error);
-    alert("판매현황 업로드 중 오류가 발생했습니다.");
-  }
-};
+      const parsed = parseOrderStatusExcelRows(rows);
 
-const handlePdaPasteApply = () => {
-  const parsed = parsePdaClipboardText(pdaPasteText);
-  setPdaRows(parsed);
-};
+      if (parsed.length === 0) {
+        alert("주문서현황 데이터는 읽었지만 실제 항목이 0건입니다.");
+        return;
+      }
+
+      setOrderStatusRows(parsed);
+      setOrderFileName(file.name);
+    } catch (error) {
+      console.error(error);
+      alert("주문서현황 업로드 중 오류가 발생했습니다.");
+    }
+  };
+
+  const handleSalesStatusUpload = async (file: File) => {
+    try {
+      const XLSX = await import("xlsx");
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: "array" });
+      const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+
+      const rows = readSheetRowsFromDetectedHeader(XLSX, firstSheet, [
+        "거래처명",
+        "품목코드",
+        "수량",
+      ]);
+
+      if (rows.length === 0) {
+        alert("판매현황 파일에서 헤더(거래처명 / 품목코드 / 수량)를 찾지 못했습니다.");
+        return;
+      }
+
+      const parsed = parseSalesStatusExcelRows(rows);
+
+      if (parsed.length === 0) {
+        alert("판매현황 데이터는 읽었지만 실제 항목이 0건입니다.");
+        return;
+      }
+
+      setSalesStatusRows(parsed);
+      setSalesFileName(file.name);
+    } catch (error) {
+      console.error(error);
+      alert("판매현황 업로드 중 오류가 발생했습니다.");
+    }
+  };
+
+  const handlePdaPasteApply = () => {
+    const parsed = parsePdaClipboardText(pdaPasteText);
+    setPdaRows(parsed);
+  };
 
   const resetWaybillUpload = () => {
     setWaybillUploadRows([]);
@@ -3629,7 +3722,11 @@ const handlePdaPasteApply = () => {
                 </div>
 
                 <div style={verifyUploadFileName}>
-                  주문서: {orderFileName || "없음"} / 판매: {salesFileName || "없음"} / PDA: {pdaRows.length}건
+                  주문서: {orderFileName || "없음"} ({orderStatusRows.length}건)
+                  {" / "}
+                  판매: {salesFileName || "없음"} ({salesStatusRows.length}건)
+                  {" / "}
+                  PDA: {pdaRows.length}건
                 </div>
               </div>
 
