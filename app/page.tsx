@@ -2737,7 +2737,7 @@ const handlePdaPasteApply = () => {
 
     return presenceVerificationRows.filter((row) => {
       const haystack = [row.clientName, row.itemCode, row.reasons.join(" ")].join(" ").toLowerCase();
-      const mismatch = presenceMismatchOnly ? row.status == "확인필요" : true;
+      const mismatch = presenceMismatchOnly ? row.status !== "일치" : true;
       return mismatch && (!keyword || haystack.includes(keyword));
     });
   }, [presenceVerificationRows, presenceKeyword, presenceMismatchOnly]);
