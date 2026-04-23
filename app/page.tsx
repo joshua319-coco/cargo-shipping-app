@@ -736,15 +736,19 @@ function parseOrderStatusExcelRows(rows: Record<string, unknown>[]): OrderStatus
 
 function parseSalesStatusExcelRows(rows: Record<string, unknown>[]): SalesStatusRow[] {
   return rows
-    .map((row, index) => ({
-      id: `sales-${index + 1}`,
-      clientName: getRowValue(row, ["거래처명"]),
-      itemCode: getRowValue(row, ["품목코드"]),
-      orderQty: parseNumberValue(getRowValue(row, ["주문", "수량"])),
-      shippedQty: parseNumberValue(getRowValue(row, ["출고", "판매", "출고수량"])),
-      statusText: getRowValue(row, ["상태"]),
-      raw: row,
-    }))
+    .map((row, index) => {
+      const qty = parseNumberValue(getRowValue(row, ["수량"]));
+
+      return {
+        id: `sales-${index + 1}`,
+        clientName: getRowValue(row, ["거래처명"]),
+        itemCode: getRowValue(row, ["품목코드"]),
+        orderQty: qty,
+        shippedQty: qty,
+        statusText: getRowValue(row, ["비고", "적요", "상태"]),
+        raw: row,
+      };
+    })
     .filter((row) => row.clientName && row.itemCode);
 }
 
@@ -785,11 +789,9 @@ function buildPresenceVerificationRows(
   const pdaMap = sumRowsByKey(pdaRows);
   const salesMap = sumRowsByKey(salesRows);
 
-  const allKeys = Array.from(new Set([
-    ...orderMap.keys(),
-    ...pdaMap.keys(),
-    ...salesMap.keys(),
-  ]));
+  const allKeys = Array.from(
+    new Set([...orderMap.keys(), ...pdaMap.keys(), ...salesMap.keys()])
+  );
 
   return allKeys.map((key, index) => {
     const order = orderMap.get(key);
@@ -804,18 +806,24 @@ function buildPresenceVerificationRows(
     const pdaExists = !!pda && pda.orderQty > 0;
     const salesExists = !!sales;
 
-    const reasons: string[] = [];
+    const orderQty = order?.orderQty ?? 0;
+    const pdaOrderQty = pda?.orderQty ?? 0;
+    const salesQty = sales?.orderQty ?? 0;
 
+    const reasons: string[] = [];
     let status: PresenceVerificationStatus = "일치";
 
     if (pdaExempt) {
-      if (orderExists && salesExists) {
-        status = "PDA예외";
-        reasons.push("PDA 비대상 품목");
-      } else {
+      if (!(orderExists && salesExists)) {
         status = "확인필요";
         if (!orderExists) reasons.push("주문서 없음");
         if (!salesExists) reasons.push("판매현황 없음");
+      } else if (orderQty !== salesQty) {
+        status = "확인필요";
+        reasons.push("주문서/판매현황 수량 불일치");
+      } else {
+        status = "PDA예외";
+        reasons.push("PDA 비대상 품목");
       }
     } else {
       if (!(orderExists && pdaExists && salesExists)) {
@@ -823,6 +831,14 @@ function buildPresenceVerificationRows(
         if (!orderExists) reasons.push("주문서 없음");
         if (!pdaExists) reasons.push("PDA 없음");
         if (!salesExists) reasons.push("판매현황 없음");
+      } else {
+        if (orderQty !== pdaOrderQty) reasons.push("주문서/PDA 주문수량 불일치");
+        if (orderQty !== salesQty) reasons.push("주문서/판매현황 수량 불일치");
+        if (pdaOrderQty !== salesQty) reasons.push("PDA/판매현황 수량 불일치");
+
+        if (reasons.length > 0) {
+          status = "확인필요";
+        }
       }
     }
 
@@ -1614,6 +1630,40 @@ export default function Home() {
     return () => {
       void supabase.removeChannel(channel);
     };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    localStorage.setItem("order_status_rows", JSON.stringify(orderStatusRows));
+    localStorage.setItem("sales_status_rows", JSON.stringify(salesStatusRows));
+    localStorage.setItem("pda_rows", JSON.stringify(pdaRows));
+    localStorage.setItem("order_file_name", orderFileName);
+    localStorage.setItem("sales_file_name", salesFileName);
+
+  }, [orderStatusRows, salesStatusRows, pdaRows]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    try {
+      const savedOrder = localStorage.getItem("order_status_rows");
+      const savedSales = localStorage.getItem("sales_status_rows");
+      const savedPda = localStorage.getItem("pda_rows");
+
+      const savedOrderFile = localStorage.getItem("order_file_name");
+      const savedSalesFile = localStorage.getItem("sales_file_name");
+
+      if (savedOrder) setOrderStatusRows(JSON.parse(savedOrder));
+      if (savedSales) setSalesStatusRows(JSON.parse(savedSales));
+      if (savedPda) setPdaRows(JSON.parse(savedPda));
+
+      if (savedOrderFile) setOrderFileName(savedOrderFile);
+      if (savedSalesFile) setSalesFileName(savedSalesFile);
+
+    } catch (e) {
+      console.error("검증 데이터 복구 실패", e);
+    }
   }, []);
 
   const persistShipments = (items: SavedShipment[]) => {
@@ -3608,9 +3658,9 @@ const handlePdaPasteApply = () => {
                       <th style={verifyHeaderCell}>상태</th>
                       <th style={verifyHeaderCell}>거래처명</th>
                       <th style={verifyHeaderCell}>품목코드</th>
-                      <th style={verifyHeaderCell}>주문서</th>
-                      <th style={verifyHeaderCell}>PDA 주문</th>
-                      <th style={verifyHeaderCell}>판매현황</th>
+                      <th style={verifyHeaderCell}>주문서 수량</th>
+                      <th style={verifyHeaderCell}>PDA 주문수량</th>
+                      <th style={verifyHeaderCell}>판매현황 수량</th>
                       <th style={verifyHeaderCell}>확인사항</th>
                     </tr>
                   </thead>
