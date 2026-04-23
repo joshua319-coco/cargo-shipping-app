@@ -68,6 +68,61 @@ type WaybillUploadRow = {
   raw: Record<string, unknown>;
 };
 
+type OrderStatusRow = {
+  id: string;
+  clientName: string;
+  itemCode: string;
+  orderQty: number;
+  shippedQty: number;
+  statusText: string;
+  raw: Record<string, unknown>;
+};
+
+type SalesStatusRow = {
+  id: string;
+  clientName: string;
+  itemCode: string;
+  orderQty: number;
+  shippedQty: number;
+  statusText: string;
+  raw: Record<string, unknown>;
+};
+
+type PdaRow = {
+  id: string;
+  clientName: string;
+  itemCode: string;
+  orderQty: number;
+  shippedQty: number;
+  statusText: string;
+};
+
+type PresenceVerificationStatus = "일치" | "확인필요" | "PDA예외";
+
+type PresenceVerificationRow = {
+  id: string;
+  status: PresenceVerificationStatus;
+  clientName: string;
+  itemCode: string;
+  orderExists: boolean;
+  pdaExists: boolean;
+  salesExists: boolean;
+  reasons: string[];
+};
+
+type QtyVerificationStatus = "일치" | "수량확인" | "PDA예외";
+
+type QtyVerificationRow = {
+  id: string;
+  status: QtyVerificationStatus;
+  clientName: string;
+  itemCode: string;
+  pdaQty: number;
+  salesQty: number;
+  diffQty: number;
+  reasons: string[];
+};
+
 type WaybillVerificationStatus = "일치" | "확인필요" | "출고목록만" | "발송데이터만";
 
 type WaybillVerificationRow = {
@@ -83,6 +138,8 @@ type WaybillVerificationRow = {
   waybillNo: string;
   reasons: string[];
 };
+
+type VerifySubTab = "대신 발송검증" | "일치 검증" | "출고수량 검증";
 
 const LEGACY_RECEIVER_MASTER_KEY = "receiver_master_v1";
 const LEGACY_SENDER_MASTER_KEY = "sender_master_v1";
@@ -663,6 +720,207 @@ function buildWaybillVerificationRows(
   return rows;
 }
 
+function parseOrderStatusExcelRows(rows: Record<string, unknown>[]): OrderStatusRow[] {
+  return rows
+    .map((row, index) => ({
+      id: `order-${index + 1}`,
+      clientName: getRowValue(row, ["거래처명"]),
+      itemCode: getRowValue(row, ["품목코드"]),
+      orderQty: parseNumberValue(getRowValue(row, ["주문"])),
+      shippedQty: parseNumberValue(getRowValue(row, ["출고"])),
+      statusText: getRowValue(row, ["상태"]),
+      raw: row,
+    }))
+    .filter((row) => row.clientName && row.itemCode);
+}
+
+function parseSalesStatusExcelRows(rows: Record<string, unknown>[]): SalesStatusRow[] {
+  return rows
+    .map((row, index) => ({
+      id: `sales-${index + 1}`,
+      clientName: getRowValue(row, ["거래처명"]),
+      itemCode: getRowValue(row, ["품목코드"]),
+      orderQty: parseNumberValue(getRowValue(row, ["주문", "수량"])),
+      shippedQty: parseNumberValue(getRowValue(row, ["출고", "판매", "출고수량"])),
+      statusText: getRowValue(row, ["상태"]),
+      raw: row,
+    }))
+    .filter((row) => row.clientName && row.itemCode);
+}
+
+function parsePdaClipboardText(text: string): PdaRow[] {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line, index) => {
+      const cells = line.split("\t");
+      return {
+        id: `pda-${index + 1}`,
+        clientName: asString(cells[4]),
+        itemCode: asString(cells[6]),
+        orderQty: parseNumberValue(cells[9]),
+        shippedQty: parseNumberValue(cells[10]),
+        statusText: asString(cells[11]),
+      };
+    })
+    .filter((row) => {
+      const client = row.clientName.replace(/\s+/g, "");
+      const item = row.itemCode.replace(/\s+/g, "").toUpperCase();
+
+      if (!client || !item) return false;
+      if (client === "거래처명") return false;
+      if (item === "품목코드") return false;
+
+      return true;
+    });
+}
+
+function buildPresenceVerificationRows(
+  orderRows: OrderStatusRow[],
+  pdaRows: PdaRow[],
+  salesRows: SalesStatusRow[]
+): PresenceVerificationRow[] {
+  const orderMap = sumRowsByKey(orderRows);
+  const pdaMap = sumRowsByKey(pdaRows);
+  const salesMap = sumRowsByKey(salesRows);
+
+  const allKeys = Array.from(new Set([
+    ...orderMap.keys(),
+    ...pdaMap.keys(),
+    ...salesMap.keys(),
+  ]));
+
+  return allKeys.map((key, index) => {
+    const order = orderMap.get(key);
+    const pda = pdaMap.get(key);
+    const sales = salesMap.get(key);
+
+    const clientName = order?.clientName || pda?.clientName || sales?.clientName || "";
+    const itemCode = order?.itemCode || pda?.itemCode || sales?.itemCode || "";
+    const pdaExempt = isPdaExemptItemCode(itemCode);
+
+    const orderExists = !!order;
+    const pdaExists = !!pda && pda.shippedQty > 0;
+    const salesExists = !!sales;
+
+    const reasons: string[] = [];
+
+    let status: PresenceVerificationStatus = "일치";
+
+    if (pdaExempt) {
+      if (orderExists && salesExists) {
+        status = "PDA예외";
+        reasons.push("PDA 비대상 품목");
+      } else {
+        status = "확인필요";
+        if (!orderExists) reasons.push("주문서 없음");
+        if (!salesExists) reasons.push("판매현황 없음");
+      }
+    } else {
+      if (!(orderExists && pdaExists && salesExists)) {
+        status = "확인필요";
+        if (!orderExists) reasons.push("주문서 없음");
+        if (!pdaExists) reasons.push("PDA 없음");
+        if (!salesExists) reasons.push("판매현황 없음");
+      }
+    }
+
+    return {
+      id: `presence-${index + 1}`,
+      status,
+      clientName,
+      itemCode,
+      orderExists,
+      pdaExists,
+      salesExists,
+      reasons,
+    };
+  });
+}
+
+function buildQtyVerificationRows(
+  pdaRows: PdaRow[],
+  salesRows: SalesStatusRow[]
+): QtyVerificationRow[] {
+  const pdaMap = sumRowsByKey(pdaRows);
+  const salesMap = sumRowsByKey(salesRows);
+
+  const allKeys = Array.from(new Set([
+    ...pdaMap.keys(),
+    ...salesMap.keys(),
+  ]));
+
+  return allKeys.map((key, index) => {
+    const pda = pdaMap.get(key);
+    const sales = salesMap.get(key);
+
+    const clientName = pda?.clientName || sales?.clientName || "";
+    const itemCode = pda?.itemCode || sales?.itemCode || "";
+    const pdaQty = pda?.shippedQty ?? 0;
+    const salesQty = sales?.shippedQty ?? 0;
+    const diffQty = pdaQty - salesQty;
+    const pdaExempt = isPdaExemptItemCode(itemCode);
+
+    const reasons: string[] = [];
+    let status: QtyVerificationStatus = "일치";
+
+    if (pdaExempt && pdaQty === 0 && salesQty > 0) {
+      status = "PDA예외";
+      reasons.push("PDA 비대상 품목");
+    } else if (pdaQty !== salesQty) {
+      status = "수량확인";
+      if (pdaQty > salesQty) {
+        reasons.push("판매현황 수량 확인");
+      } else {
+        reasons.push("PDA 수량 확인");
+      }
+    }
+
+    return {
+      id: `qty-${index + 1}`,
+      status,
+      clientName,
+      itemCode,
+      pdaQty,
+      salesQty,
+      diffQty,
+      reasons,
+    };
+  });
+}
+
+function sumRowsByKey<T extends { clientName: string; itemCode: string; orderQty: number; shippedQty: number }>(rows: T[]) {
+  const map = new Map<
+    string,
+    {
+      clientName: string;
+      itemCode: string;
+      orderQty: number;
+      shippedQty: number;
+    }
+  >();
+
+  rows.forEach((row) => {
+    const key = buildCompareKey(row.clientName, row.itemCode);
+    const prev = map.get(key);
+
+    if (prev) {
+      prev.orderQty += row.orderQty;
+      prev.shippedQty += row.shippedQty;
+    } else {
+      map.set(key, {
+        clientName: normalizeCompareClientName(row.clientName),
+        itemCode: normalizeCompareItemCode(row.itemCode),
+        orderQty: row.orderQty,
+        shippedQty: row.shippedQty,
+      });
+    }
+  });
+
+  return map;
+}
+
 async function copyTextSilently(text: string) {
   const safeText = asString(text);
   if (!safeText) return false;
@@ -862,6 +1120,29 @@ function getRowValue(row: Record<string, unknown>, keys: string[]) {
   return "";
 }
 
+function normalizeCompareClientName(value: string) {
+  return asString(value).replace(/\s+/g, " ").trim();
+}
+
+function normalizeCompareItemCode(value: string) {
+  return asString(value).toUpperCase().replace(/\s+/g, "");
+}
+
+function buildCompareKey(clientName: string, itemCode: string) {
+  return `${normalizeCompareClientName(clientName)}__${normalizeCompareItemCode(itemCode)}`;
+}
+
+function isPdaExemptItemCode(itemCode: string) {
+  const code = normalizeCompareItemCode(itemCode);
+  return (
+    code.startsWith("3030-") ||
+    code.startsWith("CRA") ||
+    code.startsWith("CRS") ||
+    code.startsWith("SHT-") ||
+    code.startsWith("SR000")
+  );
+}
+
 function buildReceiverTemplateRows(): Array<Record<string, string>> {
   return [
     {
@@ -1051,6 +1332,25 @@ export default function Home() {
   const [verificationKeyword, setVerificationKeyword] = useState("");
   const [verificationMismatchOnly, setVerificationMismatchOnly] = useState(false);
   const [copiedWaybillMessageId, setCopiedWaybillMessageId] = useState("");
+
+  const [verifyTab, setVerifyTab] = useState<VerifySubTab>("대신 발송검증");
+
+  const [orderStatusRows, setOrderStatusRows] = useState<OrderStatusRow[]>([]);
+  const [salesStatusRows, setSalesStatusRows] = useState<SalesStatusRow[]>([]);
+  const [pdaRows, setPdaRows] = useState<PdaRow[]>([]);
+
+  const [orderFileName, setOrderFileName] = useState("");
+  const [salesFileName, setSalesFileName] = useState("");
+
+  const [presenceKeyword, setPresenceKeyword] = useState("");
+  const [presenceMismatchOnly, setPresenceMismatchOnly] = useState(false);
+
+  const [qtyKeyword, setQtyKeyword] = useState("");
+  const [qtyMismatchOnly, setQtyMismatchOnly] = useState(false);
+
+  const orderUploadRef = useRef<HTMLInputElement | null>(null);
+  const salesUploadRef = useRef<HTMLInputElement | null>(null);
+  const [pdaPasteText, setPdaPasteText] = useState("");
 
   const loadShipmentsFromDb = async () => {
     const { data, error } = await supabase
@@ -2325,6 +2625,45 @@ export default function Home() {
     }
   };
 
+  const handleOrderStatusUpload = async (file: File) => {
+  try {
+    const XLSX = await import("xlsx");
+    const buffer = await file.arrayBuffer();
+    const workbook = XLSX.read(buffer, { type: "array" });
+    const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(firstSheet, { defval: "" }) as Record<string, unknown>[];
+    const parsed = parseOrderStatusExcelRows(rows);
+
+    setOrderStatusRows(parsed);
+    setOrderFileName(file.name);
+  } catch (error) {
+    console.error(error);
+    alert("주문서현황 업로드 중 오류가 발생했습니다.");
+  }
+};
+
+const handleSalesStatusUpload = async (file: File) => {
+  try {
+    const XLSX = await import("xlsx");
+    const buffer = await file.arrayBuffer();
+    const workbook = XLSX.read(buffer, { type: "array" });
+    const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(firstSheet, { defval: "" }) as Record<string, unknown>[];
+    const parsed = parseSalesStatusExcelRows(rows);
+
+    setSalesStatusRows(parsed);
+    setSalesFileName(file.name);
+  } catch (error) {
+    console.error(error);
+    alert("판매현황 업로드 중 오류가 발생했습니다.");
+  }
+};
+
+const handlePdaPasteApply = () => {
+  const parsed = parsePdaClipboardText(pdaPasteText);
+  setPdaRows(parsed);
+};
+
   const resetWaybillUpload = () => {
     setWaybillUploadRows([]);
     setWaybillUploadFileName("");
@@ -2388,6 +2727,34 @@ export default function Home() {
         .map((row) => row.shipmentId as string)
     );
   }, [waybillVerificationRows]);
+
+  const presenceVerificationRows = useMemo(() => {
+    return buildPresenceVerificationRows(orderStatusRows, pdaRows, salesStatusRows);
+  }, [orderStatusRows, pdaRows, salesStatusRows]);
+
+  const filteredPresenceVerificationRows = useMemo(() => {
+    const keyword = presenceKeyword.trim().toLowerCase();
+
+    return presenceVerificationRows.filter((row) => {
+      const haystack = [row.clientName, row.itemCode, row.reasons.join(" ")].join(" ").toLowerCase();
+      const mismatch = presenceMismatchOnly ? row.status == "확인필요" : true;
+      return mismatch && (!keyword || haystack.includes(keyword));
+    });
+  }, [presenceVerificationRows, presenceKeyword, presenceMismatchOnly]);
+
+  const qtyVerificationRows = useMemo(() => {
+    return buildQtyVerificationRows(pdaRows, salesStatusRows);
+  }, [pdaRows, salesStatusRows]);
+
+  const filteredQtyVerificationRows = useMemo(() => {
+    const keyword = qtyKeyword.trim().toLowerCase();
+
+    return qtyVerificationRows.filter((row) => {
+      const haystack = [row.clientName, row.itemCode, row.reasons.join(" ")].join(" ").toLowerCase();
+      const mismatch = qtyMismatchOnly ? row.status == "수량확인" : true;
+      return mismatch && (!keyword || haystack.includes(keyword));
+    });
+  }, [qtyVerificationRows, qtyKeyword, qtyMismatchOnly]);
 
   const waybillMessageRows = useMemo(() => {
     return waybillUploadRows
@@ -3011,134 +3378,316 @@ export default function Home() {
             </div>
           )}
 
-          {tab === "발송검증" && (
-            <div style={{ marginTop: 8 }}>
-            <h2 style={listTitle}>발송검증</h2>
+        {tab === "발송검증" && (
+          <div style={{ marginTop: 8 }}>
+          <h2 style={listTitle}>발송검증</h2>
 
-            <div style={verifyInfoText}>
-              대신 발송데이터 내려받는 법: [대신택배물류시스템 접속] → [일자별조회] → [목록전체선택] → [엑셀저장]
-            </div>
+          <div style={tabWrap}>
+            {(["대신 발송검증", "일치 검증", "출고수량 검증"] as VerifySubTab[]).map((item) => (
+              <button
+                key={item}
+                type="button"
+                onClick={() => setVerifyTab(item)}
+                style={{
+                  ...tabButton,
+                  background: verifyTab === item ? "#2563eb" : "#e5e7eb",
+                  color: verifyTab === item ? "#fff" : "#111827",
+                }}
+              >
+                {item}
+              </button>
+            ))}
+          </div>
 
-            {waybillUploadControls}
-
-            <div style={verifySummaryGrid}>
-              <div style={verifySummaryItem}>
-                <div style={verifySummaryLabel}>오늘 출고목록</div>
-                <div style={verifySummaryValue}>{waybillVerificationSummary.shipmentCount}건</div>
+          {verifyTab === "대신 발송검증" && (
+            <>
+              <div style={verifyInfoText}>
+                대신 발송데이터 내려받는 법: [대신택배물류시스템 접속] → [일자별조회] → [목록전체선택] → [엑셀저장]
               </div>
-              <div style={verifySummaryItem}>
-                <div style={verifySummaryLabel}>발송데이터</div>
-                <div style={verifySummaryValue}>{waybillVerificationSummary.uploadCount}건</div>
-              </div>
-              <div style={verifySummaryItem}>
-                <div style={verifySummaryLabel}>일치</div>
-                <div style={{ ...verifySummaryValue, color: "#15803d" }}>
-                  {waybillVerificationSummary.matchedCount}건
+
+              {waybillUploadControls}
+
+              <div style={verifySummaryGrid}>
+                <div style={verifySummaryItem}>
+                  <div style={verifySummaryLabel}>오늘 출고목록</div>
+                  <div style={verifySummaryValue}>{waybillVerificationSummary.shipmentCount}건</div>
+                </div>
+                <div style={verifySummaryItem}>
+                  <div style={verifySummaryLabel}>발송데이터</div>
+                  <div style={verifySummaryValue}>{waybillVerificationSummary.uploadCount}건</div>
+                </div>
+                <div style={verifySummaryItem}>
+                  <div style={verifySummaryLabel}>일치</div>
+                  <div style={{ ...verifySummaryValue, color: "#15803d" }}>
+                    {waybillVerificationSummary.matchedCount}건
+                  </div>
+                </div>
+                <div style={verifySummaryItem}>
+                  <div style={verifySummaryLabel}>확인필요</div>
+                  <div style={{ ...verifySummaryValue, color: "#b45309" }}>
+                    {waybillVerificationSummary.warningCount}건
+                  </div>
+                </div>
+                <div style={verifySummaryItem}>
+                  <div style={verifySummaryLabel}>출고목록만</div>
+                  <div style={{ ...verifySummaryValue, color: "#dc2626" }}>
+                    {waybillVerificationSummary.shipmentOnlyCount}건
+                  </div>
+                </div>
+                <div style={verifySummaryItem}>
+                  <div style={verifySummaryLabel}>발송데이터만</div>
+                  <div style={{ ...verifySummaryValue, color: "#7c3aed" }}>
+                    {waybillVerificationSummary.uploadOnlyCount}건
+                  </div>
                 </div>
               </div>
-              <div style={verifySummaryItem}>
-                <div style={verifySummaryLabel}>확인필요</div>
-                <div style={{ ...verifySummaryValue, color: "#b45309" }}>
-                  {waybillVerificationSummary.warningCount}건
-                </div>
-              </div>
-              <div style={verifySummaryItem}>
-                <div style={verifySummaryLabel}>출고목록만</div>
-                <div style={{ ...verifySummaryValue, color: "#dc2626" }}>
-                  {waybillVerificationSummary.shipmentOnlyCount}건
-                </div>
-              </div>
-              <div style={verifySummaryItem}>
-                <div style={verifySummaryLabel}>발송데이터만</div>
-                <div style={{ ...verifySummaryValue, color: "#7c3aed" }}>
-                  {waybillVerificationSummary.uploadOnlyCount}건
-                </div>
-              </div>
-            </div>
 
-            <div style={verifyFilterBar}>
-              <div style={{ ...filterFieldWide, minWidth: 260 }}>
-                <div style={filterLabel}>검색</div>
-                <input
-                  style={filterInput}
-                  value={verificationKeyword}
-                  onChange={(e) => setVerificationKeyword(e.target.value)}
-                  placeholder="업체명, 운송장번호, 확인사항 검색"
+              <div style={verifyFilterBar}>
+                <div style={{ ...filterFieldWide, minWidth: 260 }}>
+                  <div style={filterLabel}>검색</div>
+                  <input
+                    style={filterInput}
+                    value={verificationKeyword}
+                    onChange={(e) => setVerificationKeyword(e.target.value)}
+                    placeholder="업체명, 운송장번호, 확인사항 검색"
+                  />
+                </div>
+
+                <label style={{ ...filterCheckLabel, paddingBottom: 0 }}>
+                  <input
+                    type="checkbox"
+                    checked={verificationMismatchOnly}
+                    onChange={(e) => setVerificationMismatchOnly(e.target.checked)}
+                  />
+                  불일치만 보기
+                </label>
+              </div>
+
+              {waybillUploadRows.length === 0 ? (
+                <div style={emptyText}>대신택배 발송데이터 엑셀파일 업로드 시, 검증 결과 확인 가능.</div>
+              ) : filteredWaybillVerificationRows.length === 0 ? (
+                <div style={emptyText}>조건에 맞는 검증 결과가 없습니다.</div>
+              ) : (
+                <div style={verifyTableWrap}>
+                  <table style={verifyTable}>
+                    <thead>
+                      <tr>
+                        <th style={verifyHeaderCell}>상태</th>
+                        <th style={verifyHeaderCell}>출고목록</th>
+                        <th style={verifyHeaderCell}>발송데이터</th>
+                        <th style={verifyHeaderCell}>수량</th>
+                        <th style={verifyHeaderCell}>운송</th>
+                        <th style={verifyHeaderCell}>지불</th>
+                        <th style={verifyHeaderCell}>총운임</th>
+                        <th style={verifyHeaderCell}>확인사항</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredWaybillVerificationRows.map((row) => (
+                        <tr key={row.id}>
+                          <td style={verifyCell}>
+                            <span
+                              style={{
+                                ...verifyBadge,
+                                background:
+                                  row.status === "일치"
+                                    ? "#dcfce7"
+                                    : row.status === "확인필요"
+                                      ? "#fef3c7"
+                                      : row.status === "출고목록만"
+                                        ? "#fee2e2"
+                                        : "#ede9fe",
+                                color:
+                                  row.status === "일치"
+                                    ? "#166534"
+                                    : row.status === "확인필요"
+                                      ? "#92400e"
+                                      : row.status === "출고목록만"
+                                        ? "#b91c1c"
+                                        : "#6d28d9",
+                              }}
+                            >
+                              {row.status}
+                            </span>
+                          </td>
+                          <td style={verifyCell}>{row.shipmentListName || "-"}</td>
+                          <td style={verifyCell}>{row.uploadListName || "-"}</td>
+                          <td style={verifyCell}>{row.qtyText || "-"}</td>
+                          <td style={verifyCell}>{row.deliveryText || "-"}</td>
+                          <td style={verifyCell}>{row.payText || "-"}</td>
+                          <td style={verifyCell}>{row.fareText || "-"}</td>
+                          <td style={verifyCell}>{row.reasons.join(", ") || "-"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          )}
+
+          {verifyTab === "일치 검증" && (
+            <>
+              <div style={verifyUploadBar}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button type="button" style={smallBlueBtn} onClick={() => orderUploadRef.current?.click()}>
+                    주문서현황 업로드
+                  </button>
+                  <button type="button" style={smallBlueBtn} onClick={() => salesUploadRef.current?.click()}>
+                    판매현황 업로드
+                  </button>
+                  <button type="button" style={smallGrayBtn} onClick={handlePdaPasteApply}>
+                    PDA 복붙 반영
+                  </button>
+
+                  <input
+                    ref={orderUploadRef}
+                    type="file"
+                    accept=".xls,.xlsx"
+                    style={{ display: "none" }}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (file) await handleOrderStatusUpload(file);
+                      e.currentTarget.value = "";
+                    }}
+                  />
+
+                  <input
+                    ref={salesUploadRef}
+                    type="file"
+                    accept=".xls,.xlsx"
+                    style={{ display: "none" }}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (file) await handleSalesStatusUpload(file);
+                      e.currentTarget.value = "";
+                    }}
+                  />
+                </div>
+
+                <div style={verifyUploadFileName}>
+                  주문서: {orderFileName || "없음"} / 판매: {salesFileName || "없음"} / PDA: {pdaRows.length}건
+                </div>
+              </div>
+
+              <div style={{ marginBottom: 14 }}>
+                <div style={filterLabel}>PDA 복붙</div>
+                <textarea
+                  style={verifyTextArea}
+                  value={pdaPasteText}
+                  onChange={(e) => setPdaPasteText(e.target.value)}
+                  placeholder="PDA 화면 전체선택 → 복사 → 여기에 붙여넣기"
                 />
               </div>
 
-              <label style={{ ...filterCheckLabel, paddingBottom: 0 }}>
-                <input
-                  type="checkbox"
-                  checked={verificationMismatchOnly}
-                  onChange={(e) => setVerificationMismatchOnly(e.target.checked)}
-                />
-                불일치만 보기
-              </label>
-            </div>
+              <div style={verifyFilterBar}>
+                <div style={{ ...filterFieldWide, minWidth: 260 }}>
+                  <div style={filterLabel}>검색</div>
+                  <input
+                    style={filterInput}
+                    value={presenceKeyword}
+                    onChange={(e) => setPresenceKeyword(e.target.value)}
+                    placeholder="거래처명, 품목코드, 확인사항 검색"
+                  />
+                </div>
 
-            {waybillUploadRows.length === 0 ? (
-              <div style={emptyText}>대신택배 발송데이터 엑셀파일 업로드 시, 검증 결과 확인 가능.</div>
-            ) : filteredWaybillVerificationRows.length === 0 ? (
-              <div style={emptyText}>조건에 맞는 검증 결과가 없습니다.</div>
-            ) : (
+                <label style={{ ...filterCheckLabel, paddingBottom: 0 }}>
+                  <input
+                    type="checkbox"
+                    checked={presenceMismatchOnly}
+                    onChange={(e) => setPresenceMismatchOnly(e.target.checked)}
+                  />
+                  불일치만 보기
+                </label>
+              </div>
+
               <div style={verifyTableWrap}>
                 <table style={verifyTable}>
                   <thead>
                     <tr>
                       <th style={verifyHeaderCell}>상태</th>
-                      <th style={verifyHeaderCell}>출고목록</th>
-                      <th style={verifyHeaderCell}>발송데이터</th>
-                      <th style={verifyHeaderCell}>수량</th>
-                      <th style={verifyHeaderCell}>운송</th>
-                      <th style={verifyHeaderCell}>지불</th>
-                      <th style={verifyHeaderCell}>총운임</th>
+                      <th style={verifyHeaderCell}>거래처명</th>
+                      <th style={verifyHeaderCell}>품목코드</th>
+                      <th style={verifyHeaderCell}>주문서</th>
+                      <th style={verifyHeaderCell}>PDA</th>
+                      <th style={verifyHeaderCell}>판매현황</th>
                       <th style={verifyHeaderCell}>확인사항</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredWaybillVerificationRows.map((row) => (
+                    {filteredPresenceVerificationRows.map((row) => (
                       <tr key={row.id}>
-                        <td style={verifyCell}>
-                          <span
-                            style={{
-                              ...verifyBadge,
-                              background:
-                                row.status === "일치"
-                                  ? "#dcfce7"
-                                  : row.status === "확인필요"
-                                    ? "#fef3c7"
-                                    : row.status === "출고목록만"
-                                      ? "#fee2e2"
-                                      : "#ede9fe",
-                              color:
-                                row.status === "일치"
-                                  ? "#166534"
-                                  : row.status === "확인필요"
-                                    ? "#92400e"
-                                    : row.status === "출고목록만"
-                                      ? "#b91c1c"
-                                      : "#6d28d9",
-                            }}
-                          >
-                            {row.status}
-                          </span>
-                        </td>
-                        <td style={verifyCell}>{row.shipmentListName || "-"}</td>
-                        <td style={verifyCell}>{row.uploadListName || "-"}</td>
-                        <td style={verifyCell}>{row.qtyText || "-"}</td>
-                        <td style={verifyCell}>{row.deliveryText || "-"}</td>
-                        <td style={verifyCell}>{row.payText || "-"}</td>
-                        <td style={verifyCell}>{row.fareText || "-"}</td>
+                        <td style={verifyCell}>{row.status}</td>
+                        <td style={verifyCell}>{row.clientName}</td>
+                        <td style={verifyCell}>{row.itemCode}</td>
+                        <td style={verifyCell}>{row.orderExists ? "있음" : "-"}</td>
+                        <td style={verifyCell}>{row.pdaExists ? "있음" : "-"}</td>
+                        <td style={verifyCell}>{row.salesExists ? "있음" : "-"}</td>
                         <td style={verifyCell}>{row.reasons.join(", ") || "-"}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-            )}
-          </div>
+            </>
+          )}
+
+          {verifyTab === "출고수량 검증" && (
+            <>
+              <div style={verifyFilterBar}>
+                <div style={{ ...filterFieldWide, minWidth: 260 }}>
+                  <div style={filterLabel}>검색</div>
+                  <input
+                    style={filterInput}
+                    value={qtyKeyword}
+                    onChange={(e) => setQtyKeyword(e.target.value)}
+                    placeholder="거래처명, 품목코드, 확인사항 검색"
+                  />
+                </div>
+
+                <label style={{ ...filterCheckLabel, paddingBottom: 0 }}>
+                  <input
+                    type="checkbox"
+                    checked={qtyMismatchOnly}
+                    onChange={(e) => setQtyMismatchOnly(e.target.checked)}
+                  />
+                  불일치만 보기
+                </label>
+              </div>
+
+              <div style={verifyTableWrap}>
+                <table style={verifyTable}>
+                  <thead>
+                    <tr>
+                      <th style={verifyHeaderCell}>상태</th>
+                      <th style={verifyHeaderCell}>거래처명</th>
+                      <th style={verifyHeaderCell}>품목코드</th>
+                      <th style={verifyHeaderCell}>PDA 출고수량</th>
+                      <th style={verifyHeaderCell}>판매현황 출고수량</th>
+                      <th style={verifyHeaderCell}>차이</th>
+                      <th style={verifyHeaderCell}>확인사항</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredQtyVerificationRows.map((row) => (
+                      <tr key={row.id}>
+                        <td style={verifyCell}>{row.status}</td>
+                        <td style={verifyCell}>{row.clientName}</td>
+                        <td style={verifyCell}>{row.itemCode}</td>
+                        <td style={verifyCell}>{row.pdaQty}</td>
+                        <td style={verifyCell}>{row.salesQty}</td>
+                        <td style={verifyCell}>{row.diffQty}</td>
+                        <td style={verifyCell}>{row.reasons.join(", ") || "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
         )}
+      
 
         {tab === "운송장번호" && (
           <div style={{ marginTop: 8 }}>
@@ -4600,7 +5149,7 @@ const groupInfo: CSSProperties = {
 };
 
 const groupChecklist: CSSProperties = {
-  gridColumn: "7 / 13",
+  gridColumn: "8 / 13",
   paddingLeft: 12,
 };
 
@@ -4971,4 +5520,17 @@ const warningMark: CSSProperties = {
   fontSize: 18,
   lineHeight: 1,
   display: "inline-block",
+};
+
+const verifyTextArea: CSSProperties = {
+  width: "100%",
+  minHeight: 160,
+  padding: "12px 14px",
+  borderRadius: 10,
+  border: "1px solid #d1d5db",
+  fontSize: 14,
+  background: "#fff",
+  resize: "vertical",
+  fontFamily: "inherit",
+  lineHeight: 1.45,
 };
