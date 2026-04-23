@@ -801,7 +801,7 @@ function buildPresenceVerificationRows(
     const pdaExempt = isPdaExemptItemCode(itemCode);
 
     const orderExists = !!order;
-    const pdaExists = !!pda && pda.shippedQty > 0;
+    const pdaExists = !!pda && pda.orderQty > 0;
     const salesExists = !!sales;
 
     const reasons: string[] = [];
@@ -3609,7 +3609,7 @@ const handlePdaPasteApply = () => {
                       <th style={verifyHeaderCell}>거래처명</th>
                       <th style={verifyHeaderCell}>품목코드</th>
                       <th style={verifyHeaderCell}>주문서</th>
-                      <th style={verifyHeaderCell}>PDA</th>
+                      <th style={verifyHeaderCell}>PDA 주문</th>
                       <th style={verifyHeaderCell}>판매현황</th>
                       <th style={verifyHeaderCell}>확인사항</th>
                     </tr>
