@@ -3033,7 +3033,7 @@ export default function Home() {
           alignItems: "center",
           marginBottom: "20px"
         }}>
-          <h1 style={title}>🚚 화물 출고 입력</h1>
+          <h1 style={title}>🚚 상화시스템 출고관리</h1>
 
           <div style={{
             padding: "5px 12px",
@@ -3420,14 +3420,14 @@ export default function Home() {
                             style={smallChecklistBtn}
                             onClick={() => void handleChecklistAllToggle(true)}
                           >
-                            현재목록 체크 전체선택
+                            전체 체크선택
                           </button>
                           <button
                             type="button"
                             style={smallChecklistBtn}
                             onClick={() => void handleChecklistAllToggle(false)}
                           >
-                            현재목록 체크 전체해제
+                            전체 체크해제
                           </button>
                         </div>
                       </div>
