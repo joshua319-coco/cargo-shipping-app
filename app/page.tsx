@@ -107,6 +107,9 @@ type PresenceVerificationRow = {
   orderExists: boolean;
   pdaExists: boolean;
   salesExists: boolean;
+  orderQty: number;
+  pdaOrderQty: number;
+  salesQty: number;
   reasons: string[];
 };
 
@@ -722,15 +725,19 @@ function buildWaybillVerificationRows(
 
 function parseOrderStatusExcelRows(rows: Record<string, unknown>[]): OrderStatusRow[] {
   return rows
-    .map((row, index) => ({
-      id: `order-${index + 1}`,
-      clientName: getRowValue(row, ["거래처명"]),
-      itemCode: getRowValue(row, ["품목코드"]),
-      orderQty: parseNumberValue(getRowValue(row, ["주문"])),
-      shippedQty: parseNumberValue(getRowValue(row, ["출고"])),
-      statusText: getRowValue(row, ["상태"]),
-      raw: row,
-    }))
+    .map((row, index) => {
+      const qty = parseNumberValue(getRowValue(row, ["수량"]));
+
+      return {
+        id: `order-${index + 1}`,
+        clientName: getRowValue(row, ["거래처명"]),
+        itemCode: getRowValue(row, ["품목코드"]),
+        orderQty: qty,
+        shippedQty: qty,
+        statusText: getRowValue(row, ["적요", "거래유형"]),
+        raw: row,
+      };
+    })
     .filter((row) => row.clientName && row.itemCode);
 }
 
@@ -850,6 +857,9 @@ function buildPresenceVerificationRows(
       orderExists,
       pdaExists,
       salesExists,
+      orderQty,
+      pdaOrderQty,
+      salesQty,
       reasons,
     };
   });
@@ -1635,13 +1645,17 @@ export default function Home() {
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    localStorage.setItem("order_status_rows", JSON.stringify(orderStatusRows));
-    localStorage.setItem("sales_status_rows", JSON.stringify(salesStatusRows));
-    localStorage.setItem("pda_rows", JSON.stringify(pdaRows));
-    localStorage.setItem("order_file_name", orderFileName);
-    localStorage.setItem("sales_file_name", salesFileName);
-
-  }, [orderStatusRows, salesStatusRows, pdaRows]);
+    try {
+      localStorage.setItem("order_status_rows", JSON.stringify(orderStatusRows));
+      localStorage.setItem("sales_status_rows", JSON.stringify(salesStatusRows));
+      localStorage.setItem("pda_rows", JSON.stringify(pdaRows));
+      localStorage.setItem("order_file_name", orderFileName);
+      localStorage.setItem("sales_file_name", salesFileName);
+      localStorage.setItem("pda_paste_text", pdaPasteText);
+    } catch (e) {
+      console.error("검증 데이터 저장 실패", e);
+    }
+  }, [orderStatusRows, salesStatusRows, pdaRows, orderFileName, salesFileName, pdaPasteText]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1650,17 +1664,16 @@ export default function Home() {
       const savedOrder = localStorage.getItem("order_status_rows");
       const savedSales = localStorage.getItem("sales_status_rows");
       const savedPda = localStorage.getItem("pda_rows");
-
       const savedOrderFile = localStorage.getItem("order_file_name");
       const savedSalesFile = localStorage.getItem("sales_file_name");
+      const savedPdaPasteText = localStorage.getItem("pda_paste_text");
 
       if (savedOrder) setOrderStatusRows(JSON.parse(savedOrder));
       if (savedSales) setSalesStatusRows(JSON.parse(savedSales));
       if (savedPda) setPdaRows(JSON.parse(savedPda));
-
       if (savedOrderFile) setOrderFileName(savedOrderFile);
       if (savedSalesFile) setSalesFileName(savedSalesFile);
-
+      if (savedPdaPasteText) setPdaPasteText(savedPdaPasteText);
     } catch (e) {
       console.error("검증 데이터 복구 실패", e);
     }
@@ -3670,9 +3683,9 @@ const handlePdaPasteApply = () => {
                         <td style={verifyCell}>{row.status}</td>
                         <td style={verifyCell}>{row.clientName}</td>
                         <td style={verifyCell}>{row.itemCode}</td>
-                        <td style={verifyCell}>{row.orderExists ? "있음" : "-"}</td>
-                        <td style={verifyCell}>{row.pdaExists ? "있음" : "-"}</td>
-                        <td style={verifyCell}>{row.salesExists ? "있음" : "-"}</td>
+                        <td style={verifyCell}>{row.orderExists ? row.orderQty : "-"}</td>
+                        <td style={verifyCell}>{row.pdaExists ? row.pdaOrderQty : "-"}</td>
+                        <td style={verifyCell}>{row.salesExists ? row.salesQty : "-"}</td>
                         <td style={verifyCell}>{row.reasons.join(", ") || "-"}</td>
                       </tr>
                     ))}
