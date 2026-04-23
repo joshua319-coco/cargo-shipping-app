@@ -1422,6 +1422,9 @@ export default function Home() {
   const [salesStatusRows, setSalesStatusRows] = useState<SalesStatusRow[]>([]);
   const [pdaRows, setPdaRows] = useState<PdaRow[]>([]);
 
+  const VERIFY_DATE_KEY = "verify_date_key";
+  const [verifyStorageReady, setVerifyStorageReady] = useState(false);
+
   const [orderFileName, setOrderFileName] = useState("");
   const [salesFileName, setSalesFileName] = useState("");
 
@@ -1705,6 +1708,18 @@ export default function Home() {
     if (typeof window === "undefined") return;
 
     try {
+      const todayKey = getTodaySeoulDateKey();
+      const savedDateKey = localStorage.getItem(VERIFY_DATE_KEY);
+
+      if (savedDateKey && savedDateKey !== todayKey) {
+        localStorage.removeItem("order_status_rows");
+        localStorage.removeItem("sales_status_rows");
+        localStorage.removeItem("pda_rows");
+        localStorage.removeItem("order_file_name");
+        localStorage.removeItem("sales_file_name");
+        localStorage.removeItem("pda_paste_text");
+      }
+
       const savedOrder = localStorage.getItem("order_status_rows");
       const savedSales = localStorage.getItem("sales_status_rows");
       const savedPda = localStorage.getItem("pda_rows");
@@ -1718,6 +1733,8 @@ export default function Home() {
       if (savedOrderFile) setOrderFileName(savedOrderFile);
       if (savedSalesFile) setSalesFileName(savedSalesFile);
       if (savedPdaPasteText) setPdaPasteText(savedPdaPasteText);
+
+      localStorage.setItem(VERIFY_DATE_KEY, todayKey);
     } catch (e) {
       console.error("검증 데이터 복구 실패", e);
     } finally {
@@ -1735,10 +1752,19 @@ export default function Home() {
       localStorage.setItem("order_file_name", orderFileName);
       localStorage.setItem("sales_file_name", salesFileName);
       localStorage.setItem("pda_paste_text", pdaPasteText);
+      localStorage.setItem(VERIFY_DATE_KEY, getTodaySeoulDateKey());
     } catch (e) {
       console.error("검증 데이터 저장 실패", e);
     }
-  }, [verifyStorageReady, orderStatusRows, salesStatusRows, pdaRows, orderFileName, salesFileName, pdaPasteText]);
+  }, [
+    verifyStorageReady,
+    orderStatusRows,
+    salesStatusRows,
+    pdaRows,
+    orderFileName,
+    salesFileName,
+    pdaPasteText,
+  ]);
 
   const persistShipments = (items: SavedShipment[]) => {
     setSavedShipments(items);
@@ -2820,6 +2846,25 @@ export default function Home() {
     setPdaRows(parsed);
   };
 
+  const handleVerifyReset = () => {
+    setOrderStatusRows([]);
+    setSalesStatusRows([]);
+    setPdaRows([]);
+    setOrderFileName("");
+    setSalesFileName("");
+    setPdaPasteText("");
+
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("order_status_rows");
+      localStorage.removeItem("sales_status_rows");
+      localStorage.removeItem("pda_rows");
+      localStorage.removeItem("order_file_name");
+      localStorage.removeItem("sales_file_name");
+      localStorage.removeItem("pda_paste_text");
+      localStorage.removeItem(VERIFY_DATE_KEY);
+    }
+  };
+
   const resetWaybillUpload = () => {
     setWaybillUploadRows([]);
     setWaybillUploadFileName("");
@@ -3336,22 +3381,6 @@ export default function Home() {
             </div>
 
             <div style={exportBar}>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button
-                  type="button"
-                  style={smallGrayBtn}
-                  onClick={() => void handleChecklistAllToggle(true)}
-                >
-                  현재 목록 체크 전체선택
-                </button>
-                <button
-                  type="button"
-                  style={smallGrayBtn}
-                  onClick={() => void handleChecklistAllToggle(false)}
-                >
-                  현재 목록 체크 전체해제
-                </button>
-              </div>
 
               <div style={exportRight}>
                 <span style={selectedCountText}>선택 {selectedIds.length}건</span>
@@ -3375,7 +3404,36 @@ export default function Home() {
                     <div style={groupHeaderRow}>
                       <div style={groupSelect}></div>
                       <div style={groupInfo}>출고정보</div>
-                      <div style={groupChecklist}>체크리스트</div>
+
+                      <div
+                        style={{
+                          ...groupChecklist,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: 8,
+                        }}
+                      >
+                        <span>체크리스트</span>
+
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                          <button
+                            type="button"
+                            style={smallChecklistBtn}
+                            onClick={() => void handleChecklistAllToggle(true)}
+                          >
+                            현재목록 체크 전체선택
+                          </button>
+                          <button
+                            type="button"
+                            style={smallChecklistBtn}
+                            onClick={() => void handleChecklistAllToggle(false)}
+                          >
+                            현재목록 체크 전체해제
+                          </button>
+                        </div>
+                      </div>
+
                       <div style={groupAction} />
                     </div>
 
@@ -3694,6 +3752,9 @@ export default function Home() {
                   </button>
                   <button type="button" style={smallGrayBtn} onClick={handlePdaPasteApply}>
                     PDA 복붙 반영
+                  </button>
+                  <button type="button" style={smallRedBtn} onClick={handleVerifyReset}>
+                    검증 데이터 초기화
                   </button>
 
                   <input
@@ -5290,7 +5351,7 @@ const overviewWrap: CSSProperties = {
 
 const groupHeaderRow: CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "52px 1.5fr 3fr 1fr 1fr 1.1fr 1.2fr 70px 70px 70px 90px 40px 88px",
+  gridTemplateColumns: "52px 1.3fr 2.6fr 0.9fr 0.9fr 1fr 1.1fr 70px 70px 70px 90px 40px 88px",
   gap: 10,
   alignItems: "center",
   fontSize: 13,
@@ -5319,7 +5380,7 @@ const groupAction: CSSProperties = {
 
 const overviewRow: CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "52px 1.5fr 3fr 1fr 1fr 1.1fr 1.2fr 70px 70px 70px 90px 40px 88px",
+  gridTemplateColumns: "52px 1.3fr 2.6fr 0.9fr 0.9fr 1fr 1.1fr 70px 70px 70px 90px 40px 88px",
   gap: 10,
   alignItems: "center",
   padding: "16px 14px",
@@ -5652,6 +5713,19 @@ const smallRedBtn: CSSProperties = {
   padding: "10px 14px",
   cursor: "pointer",
   fontWeight: 700,
+};
+
+const smallChecklistBtn: CSSProperties = {
+  border: "none",
+  background: "#e5e7eb",
+  color: "#111827",
+  borderRadius: 8,
+  padding: "6px 10px",
+  cursor: "pointer",
+  fontWeight: 700,
+  fontSize: 12,
+  lineHeight: 1.2,
+  whiteSpace: "nowrap",
 };
 
 const headerActionBtn: CSSProperties = {
