@@ -17,7 +17,7 @@ type Party = {
 
 type PayType = "착불" | "선불";
 type DeliveryType = "정기" | "택배";
-type TabType = "출고등록" | "출고목록" | "발송검증" | "운송장번호" | "마스터관리";
+type TabType = "화물출고등록" | "화물출고목록" | "운송장번호" | "마스터관리" | "발송검증";
 
 type BranchPostalItem = {
   branch: string;
@@ -1318,7 +1318,7 @@ function toTemplateRow(
 }
 
 export default function Home() {
-  const [tab, setTab] = useState<TabType>("출고등록");
+  const [tab, setTab] = useState<TabType>("화물출고등록");
 
   const today = new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 
@@ -1662,11 +1662,11 @@ export default function Home() {
   }, [waybillUploadRows, waybillUploadFileName]);
 
   useEffect(() => {
-    if (tab === "출고등록" || tab === "마스터관리") {
+    if (tab === "화물출고등록" || tab === "마스터관리") {
       void loadAllMastersFromDb();
     }
 
-    if (tab === "출고목록" || tab === "발송검증" || tab === "운송장번호") {
+    if (tab === "화물출고목록" || tab === "발송검증" || tab === "운송장번호") {
       void loadShipmentsFromDb();
     }
   }, [tab]);
@@ -3047,7 +3047,7 @@ export default function Home() {
         </div>
 
         <div style={tabWrap}>
-          {(["출고등록", "출고목록", "발송검증", "운송장번호", "마스터관리"] as TabType[]).map((item) => (
+          {(["화물출고등록", "화물출고목록", "운송장번호", "마스터관리", "발송검증"] as TabType[]).map((item) => (
             <button
               key={item}
               type="button"
@@ -3063,7 +3063,7 @@ export default function Home() {
           ))}
         </div>
 
-        {tab === "출고등록" && (
+        {tab === "화물출고등록" && (
           <>
             <div style={grid} data-enter-scope="form">
               <div>
@@ -3265,9 +3265,9 @@ export default function Home() {
           </>
         )}
 
-        {tab === "출고목록" && (
+        {tab === "화물출고목록" && (
           <div style={{ marginTop: 8 }}>
-            <h2 style={listTitle}>출고목록</h2>
+            <h2 style={listTitle}>화물출고목록</h2>
 
             <div style={{ marginBottom: "10px", fontWeight: "bold", color: "#555"}}>
               {listScope === "today"
