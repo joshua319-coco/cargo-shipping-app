@@ -144,12 +144,24 @@ type WaybillVerificationRow = {
 
 type VerifySubTab = "대신 발송검증" | "일치 검증" | "출고수량 검증";
 
+type SharedVerifyStateRow = {
+  session_date: string;
+  waybill_upload_rows: WaybillUploadRow[];
+  waybill_upload_file_name: string;
+  order_status_rows: OrderStatusRow[];
+  sales_status_rows: SalesStatusRow[];
+  pda_rows: PdaRow[];
+  order_file_name: string;
+  sales_file_name: string;
+  pda_paste_text: string;
+  updated_at?: string;
+};
+
 const LEGACY_RECEIVER_MASTER_KEY = "receiver_master_v1";
 const LEGACY_SENDER_MASTER_KEY = "sender_master_v1";
 const LEGACY_BRANCH_MASTER_KEY = "branch_master_v1";
 const MASTER_DB_MIGRATION_KEY = "master_db_migrated_v1";
-const WAYBILL_UPLOAD_STORAGE_KEY = "waybill_upload_rows_v1";
-const WAYBILL_UPLOAD_FILE_NAME_KEY = "waybill_upload_file_name_v1";
+const SHARED_VERIFY_STATE_TABLE = "shared_verify_state";
 
 const TEMPLATE_SHEET_NAME = "업로드_양식 값붙여넣기(우클릭+V)";
 const TEMPLATE_HEADERS = [
@@ -346,6 +358,21 @@ function normalizeBranchMasterRows(rows: any[]): BranchPostalItem[] {
     branch: row?.branch ?? "",
     postalCode: row?.postal_code ?? "",
   }));
+}
+
+function normalizeSharedVerifyState(raw: any, sessionDate: string): SharedVerifyStateRow {
+  return {
+    session_date: raw?.session_date ?? sessionDate,
+    waybill_upload_rows: Array.isArray(raw?.waybill_upload_rows) ? raw.waybill_upload_rows : [],
+    waybill_upload_file_name: raw?.waybill_upload_file_name ?? "",
+    order_status_rows: Array.isArray(raw?.order_status_rows) ? raw.order_status_rows : [],
+    sales_status_rows: Array.isArray(raw?.sales_status_rows) ? raw.sales_status_rows : [],
+    pda_rows: Array.isArray(raw?.pda_rows) ? raw.pda_rows : [],
+    order_file_name: raw?.order_file_name ?? "",
+    sales_file_name: raw?.sales_file_name ?? "",
+    pda_paste_text: raw?.pda_paste_text ?? "",
+    updated_at: raw?.updated_at,
+  };
 }
 
 function toReceiverMasterRows(items: Party[]) {
@@ -1422,9 +1449,6 @@ export default function Home() {
   const [salesStatusRows, setSalesStatusRows] = useState<SalesStatusRow[]>([]);
   const [pdaRows, setPdaRows] = useState<PdaRow[]>([]);
 
-  const VERIFY_DATE_KEY = "verify_date_key";
-  const [verifyStorageReady, setVerifyStorageReady] = useState(false);
-
   const [orderFileName, setOrderFileName] = useState("");
   const [salesFileName, setSalesFileName] = useState("");
 
@@ -1501,6 +1525,90 @@ export default function Home() {
       loadSenderMasterFromDb(),
       loadBranchMasterFromDb(),
     ]);
+  };
+
+  const getVerifySessionDate = () => getTodaySeoulDateKey();
+
+  const buildEmptySharedVerifyState = (sessionDate: string): SharedVerifyStateRow => ({
+    session_date: sessionDate,
+    waybill_upload_rows: [],
+    waybill_upload_file_name: "",
+    order_status_rows: [],
+    sales_status_rows: [],
+    pda_rows: [],
+    order_file_name: "",
+    sales_file_name: "",
+    pda_paste_text: "",
+  });
+
+  const applySharedVerifyState = (row: SharedVerifyStateRow) => {
+    setWaybillUploadRows(Array.isArray(row.waybill_upload_rows) ? row.waybill_upload_rows : []);
+    setWaybillUploadFileName(row.waybill_upload_file_name || "");
+
+    setOrderStatusRows(Array.isArray(row.order_status_rows) ? row.order_status_rows : []);
+    setSalesStatusRows(Array.isArray(row.sales_status_rows) ? row.sales_status_rows : []);
+    setPdaRows(Array.isArray(row.pda_rows) ? row.pda_rows : []);
+
+    setOrderFileName(row.order_file_name || "");
+    setSalesFileName(row.sales_file_name || "");
+    setPdaPasteText(row.pda_paste_text || "");
+  };
+
+  const loadSharedVerifyStateFromDb = async () => {
+    const sessionDate = getVerifySessionDate();
+
+    const { data, error } = await supabase
+      .from(SHARED_VERIFY_STATE_TABLE)
+      .select("*")
+      .eq("session_date", sessionDate)
+      .maybeSingle();
+
+    if (error) {
+      console.error("공유 검증데이터 조회 실패", error);
+      return;
+    }
+
+    if (!data) {
+      applySharedVerifyState(buildEmptySharedVerifyState(sessionDate));
+      return;
+    }
+
+    applySharedVerifyState(normalizeSharedVerifyState(data, sessionDate));
+  };
+
+  const saveSharedVerifyStateToDb = async (patch: Partial<SharedVerifyStateRow> = {}) => {
+    const sessionDate = getVerifySessionDate();
+
+    const { data: existing, error: fetchError } = await supabase
+      .from(SHARED_VERIFY_STATE_TABLE)
+      .select("*")
+      .eq("session_date", sessionDate)
+      .maybeSingle();
+
+    if (fetchError) {
+      console.error("공유 검증데이터 기존값 조회 실패", fetchError);
+      alert("검증데이터 저장 실패: " + fetchError.message);
+      return;
+    }
+
+    const base = existing
+      ? normalizeSharedVerifyState(existing, sessionDate)
+      : buildEmptySharedVerifyState(sessionDate);
+
+    const payload: SharedVerifyStateRow = {
+      ...base,
+      ...patch,
+      session_date: sessionDate,
+    };
+
+    const { error } = await supabase
+      .from(SHARED_VERIFY_STATE_TABLE)
+      .upsert(payload, { onConflict: "session_date" });
+
+    if (error) {
+      console.error("공유 검증데이터 저장 실패", error);
+      alert("검증데이터 저장 실패: " + error.message);
+    }
   };
 
   const ensureMasterSeedData = async () => {
@@ -1624,42 +1732,15 @@ export default function Home() {
     const initialize = async () => {
       await migrateLegacyLocalMastersToDbIfNeeded();
       await ensureMasterSeedData();
-      await Promise.all([loadShipmentsFromDb(), loadAllMastersFromDb()]);
+      await Promise.all([
+        loadShipmentsFromDb(),
+        loadAllMastersFromDb(),
+        loadSharedVerifyStateFromDb(),
+      ]);
     };
 
     void initialize();
   }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    try {
-      const savedRows = localStorage.getItem(WAYBILL_UPLOAD_STORAGE_KEY);
-      const savedFileName = localStorage.getItem(WAYBILL_UPLOAD_FILE_NAME_KEY);
-
-      if (savedRows) {
-        const parsedRows = JSON.parse(savedRows);
-        setWaybillUploadRows(Array.isArray(parsedRows) ? parsedRows : []);
-      }
-
-      if (savedFileName) {
-        setWaybillUploadFileName(savedFileName);
-      }
-    } catch (error) {
-      console.error("발송데이터 localStorage 복구 실패", error);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    try {
-      localStorage.setItem(WAYBILL_UPLOAD_STORAGE_KEY, JSON.stringify(waybillUploadRows));
-      localStorage.setItem(WAYBILL_UPLOAD_FILE_NAME_KEY, waybillUploadFileName);
-    } catch (error) {
-      console.error("발송데이터 localStorage 저장 실패", error);
-    }
-  }, [waybillUploadRows, waybillUploadFileName]);
 
   useEffect(() => {
     if (tab === "출고등록" || tab === "마스터관리") {
@@ -1703,66 +1784,24 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    const channel = supabase
+      .channel("shared-verify-sync")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "shared_verify_state" },
+        (payload) => {
+          const row = payload.new as SharedVerifyStateRow | undefined;
+          if (!row) return;
+          if (row.session_date !== getVerifySessionDate()) return;
+          void loadSharedVerifyStateFromDb();
+        }
+      )
+      .subscribe();
 
-    try {
-      const todayKey = getTodaySeoulDateKey();
-      const savedDateKey = localStorage.getItem(VERIFY_DATE_KEY);
-
-      if (savedDateKey && savedDateKey !== todayKey) {
-        localStorage.removeItem("order_status_rows");
-        localStorage.removeItem("sales_status_rows");
-        localStorage.removeItem("pda_rows");
-        localStorage.removeItem("order_file_name");
-        localStorage.removeItem("sales_file_name");
-        localStorage.removeItem("pda_paste_text");
-      }
-
-      const savedOrder = localStorage.getItem("order_status_rows");
-      const savedSales = localStorage.getItem("sales_status_rows");
-      const savedPda = localStorage.getItem("pda_rows");
-      const savedOrderFile = localStorage.getItem("order_file_name");
-      const savedSalesFile = localStorage.getItem("sales_file_name");
-      const savedPdaPasteText = localStorage.getItem("pda_paste_text");
-
-      if (savedOrder) setOrderStatusRows(JSON.parse(savedOrder));
-      if (savedSales) setSalesStatusRows(JSON.parse(savedSales));
-      if (savedPda) setPdaRows(JSON.parse(savedPda));
-      if (savedOrderFile) setOrderFileName(savedOrderFile);
-      if (savedSalesFile) setSalesFileName(savedSalesFile);
-      if (savedPdaPasteText) setPdaPasteText(savedPdaPasteText);
-
-      localStorage.setItem(VERIFY_DATE_KEY, todayKey);
-    } catch (e) {
-      console.error("검증 데이터 복구 실패", e);
-    } finally {
-      setVerifyStorageReady(true);
-    }
+    return () => {
+      void supabase.removeChannel(channel);
+    };
   }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined" || !verifyStorageReady) return;
-
-    try {
-      localStorage.setItem("order_status_rows", JSON.stringify(orderStatusRows));
-      localStorage.setItem("sales_status_rows", JSON.stringify(salesStatusRows));
-      localStorage.setItem("pda_rows", JSON.stringify(pdaRows));
-      localStorage.setItem("order_file_name", orderFileName);
-      localStorage.setItem("sales_file_name", salesFileName);
-      localStorage.setItem("pda_paste_text", pdaPasteText);
-      localStorage.setItem(VERIFY_DATE_KEY, getTodaySeoulDateKey());
-    } catch (e) {
-      console.error("검증 데이터 저장 실패", e);
-    }
-  }, [
-    verifyStorageReady,
-    orderStatusRows,
-    salesStatusRows,
-    pdaRows,
-    orderFileName,
-    salesFileName,
-    pdaPasteText,
-  ]);
 
   const persistShipments = (items: SavedShipment[]) => {
     setSavedShipments(items);
@@ -2767,6 +2806,11 @@ export default function Home() {
       setVerificationKeyword("");
       setVerificationMismatchOnly(false);
       setCopiedWaybillMessageId("");
+
+      await saveSharedVerifyStateToDb({
+        waybill_upload_rows: parsedRows,
+        waybill_upload_file_name: file.name,
+      });
     } catch (error) {
       console.error(error);
       alert("대신 발송데이터 업로드 중 오류가 발생했습니다.");
@@ -2800,6 +2844,11 @@ export default function Home() {
 
       setOrderStatusRows(parsed);
       setOrderFileName(file.name);
+
+      await saveSharedVerifyStateToDb({
+        order_status_rows: parsed,
+        order_file_name: file.name,
+      });
     } catch (error) {
       console.error(error);
       alert("주문서현황 업로드 중 오류가 발생했습니다.");
@@ -2833,18 +2882,28 @@ export default function Home() {
 
       setSalesStatusRows(parsed);
       setSalesFileName(file.name);
+
+      await saveSharedVerifyStateToDb({
+        sales_status_rows: parsed,
+        sales_file_name: file.name,
+      });
     } catch (error) {
       console.error(error);
       alert("판매현황 업로드 중 오류가 발생했습니다.");
     }
   };
 
-  const handlePdaPasteApply = () => {
+  const handlePdaPasteApply = async () => {
     const parsed = parsePdaClipboardText(pdaPasteText);
     setPdaRows(parsed);
+
+    await saveSharedVerifyStateToDb({
+      pda_rows: parsed,
+      pda_paste_text: pdaPasteText,
+    });
   };
 
-  const handleVerifyReset = () => {
+  const handleVerifyReset = async () => {
     setOrderStatusRows([]);
     setSalesStatusRows([]);
     setPdaRows([]);
@@ -2852,28 +2911,27 @@ export default function Home() {
     setSalesFileName("");
     setPdaPasteText("");
 
-    if (typeof window !== "undefined") {
-      localStorage.removeItem("order_status_rows");
-      localStorage.removeItem("sales_status_rows");
-      localStorage.removeItem("pda_rows");
-      localStorage.removeItem("order_file_name");
-      localStorage.removeItem("sales_file_name");
-      localStorage.removeItem("pda_paste_text");
-      localStorage.removeItem(VERIFY_DATE_KEY);
-    }
+    await saveSharedVerifyStateToDb({
+      order_status_rows: [],
+      sales_status_rows: [],
+      pda_rows: [],
+      order_file_name: "",
+      sales_file_name: "",
+      pda_paste_text: "",
+    });
   };
 
-  const resetWaybillUpload = () => {
+  const resetWaybillUpload = async () => {
     setWaybillUploadRows([]);
     setWaybillUploadFileName("");
     setVerificationKeyword("");
     setVerificationMismatchOnly(false);
     setCopiedWaybillMessageId("");
 
-    if (typeof window !== "undefined") {
-      localStorage.removeItem(WAYBILL_UPLOAD_STORAGE_KEY);
-      localStorage.removeItem(WAYBILL_UPLOAD_FILE_NAME_KEY);
-    }
+    await saveSharedVerifyStateToDb({
+      waybill_upload_rows: [],
+      waybill_upload_file_name: "",
+    });
   };
 
   const todayShipments = useMemo(() => {
@@ -3794,7 +3852,11 @@ export default function Home() {
                 <textarea
                   style={verifyTextArea}
                   value={pdaPasteText}
-                  onChange={(e) => setPdaPasteText(e.target.value)}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setPdaPasteText(value);
+                    void saveSharedVerifyStateToDb({ pda_paste_text: value });
+                  }}
                   placeholder="PDA 화면 전체선택 → 복사 → 여기에 붙여넣기"
                 />
               </div>
