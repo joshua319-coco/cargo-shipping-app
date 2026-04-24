@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode, KeyboardEvent as ReactKeyboardEvent, RefObject } from "react";
 import { supabase } from "@/lib/supabase";
+import type { Session } from "@supabase/supabase-js";
 
 type Party = {
   name: string;
@@ -143,6 +144,7 @@ type WaybillVerificationRow = {
 };
 
 type VerifySubTab = "대신 발송검증" | "일치 검증" | "출고수량 검증";
+type AuthMode = "login" | "forgot" | "reset";
 
 type SharedVerifyStateRow = {
   session_date: string;
@@ -1164,6 +1166,11 @@ function asString(value: unknown) {
   return String(value).trim();
 }
 
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  return "알 수 없는 오류가 발생했습니다.";
+}
+
 function normalizeHeaderKey(value: unknown) {
   return String(value ?? "")
     .replace(/\uFEFF/g, "")
@@ -1348,6 +1355,16 @@ export default function Home() {
   const [tab, setTab] = useState<TabType>("출고등록");
 
   const today = new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+
+  const [session, setSession] = useState<Session | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authMode, setAuthMode] = useState<AuthMode>("login");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authPasswordConfirm, setAuthPasswordConfirm] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [authMessage, setAuthMessage] = useState("");
 
   const receiverUploadRef = useRef<HTMLInputElement | null>(null);
   const senderUploadRef = useRef<HTMLInputElement | null>(null);
@@ -1728,7 +1745,200 @@ export default function Home() {
     }
   };
 
+  const clearAuthFeedback = () => {
+    setAuthError("");
+    setAuthMessage("");
+  };
+
+  const getPasswordResetRedirectUrl = () => {
+    if (typeof window === "undefined") return undefined;
+    return `${window.location.origin}${window.location.pathname}?mode=reset-password`;
+  };
+
+  const handleSignIn = async () => {
+    if (!authEmail.trim() || !authPassword) {
+      setAuthError("이메일과 비밀번호를 입력해 주세요.");
+      setAuthMessage("");
+      return;
+    }
+
+    clearAuthFeedback();
+    setAuthBusy(true);
+
+    const { error } = await supabase.auth.signInWithPassword({
+      email: authEmail.trim(),
+      password: authPassword,
+    });
+
+    setAuthBusy(false);
+
+    if (error) {
+      setAuthError(error.message);
+      return;
+    }
+
+    setAuthPassword("");
+  };
+
+  const handleSendPasswordReset = async () => {
+    if (!authEmail.trim()) {
+      setAuthError("비밀번호 재설정 메일을 받을 이메일을 입력해 주세요.");
+      setAuthMessage("");
+      return;
+    }
+
+    clearAuthFeedback();
+    setAuthBusy(true);
+
+    const { error } = await supabase.auth.resetPasswordForEmail(authEmail.trim(), {
+      redirectTo: getPasswordResetRedirectUrl(),
+    });
+
+    setAuthBusy(false);
+
+    if (error) {
+      setAuthError(error.message);
+      return;
+    }
+
+    setAuthMessage("비밀번호 재설정 메일을 보냈습니다. 메일의 링크를 눌러 새 비밀번호를 설정해 주세요.");
+  };
+
+  const handleUpdatePassword = async () => {
+    if (!authPassword || !authPasswordConfirm) {
+      setAuthError("새 비밀번호와 비밀번호 확인을 입력해 주세요.");
+      setAuthMessage("");
+      return;
+    }
+
+    if (authPassword.length < 6) {
+      setAuthError("비밀번호는 6자 이상으로 입력해 주세요.");
+      setAuthMessage("");
+      return;
+    }
+
+    if (authPassword !== authPasswordConfirm) {
+      setAuthError("비밀번호와 비밀번호 확인이 일치하지 않습니다.");
+      setAuthMessage("");
+      return;
+    }
+
+    clearAuthFeedback();
+    setAuthBusy(true);
+
+    const { error } = await supabase.auth.updateUser({
+      password: authPassword,
+    });
+
+    if (error) {
+      setAuthBusy(false);
+      setAuthError(error.message);
+      return;
+    }
+
+    await supabase.auth.signOut();
+
+    setAuthBusy(false);
+    setSession(null);
+    setAuthMode("login");
+    setAuthPassword("");
+    setAuthPasswordConfirm("");
+    setAuthMessage("비밀번호가 변경되었습니다. 새 비밀번호로 다시 로그인해 주세요.");
+  };
+
+  const handleSignOut = async () => {
+    clearAuthFeedback();
+    setAuthBusy(true);
+
+    const { error } = await supabase.auth.signOut();
+
+    setAuthBusy(false);
+
+    if (error) {
+      alert("로그아웃 실패: " + error.message);
+      return;
+    }
+
+    setSession(null);
+    setAuthMode("login");
+    setAuthPassword("");
+    setAuthPasswordConfirm("");
+  };
+
   useEffect(() => {
+    let mounted = true;
+
+    const initAuth = async () => {
+      try {
+        if (typeof window !== "undefined") {
+          const url = new URL(window.location.href);
+          const code = url.searchParams.get("code");
+          const mode = url.searchParams.get("mode");
+
+          if (code) {
+            const { error } = await supabase.auth.exchangeCodeForSession(code);
+            if (error) {
+              throw error;
+            }
+          }
+
+          const { data: { session } } = await supabase.auth.getSession();
+
+          if (!mounted) return;
+
+          setSession(session ?? null);
+
+          if (mode === "reset-password") {
+            setAuthMode("reset");
+            setAuthMessage("새 비밀번호를 입력해 주세요.");
+            setAuthError("");
+          }
+
+          if (code || mode) {
+            window.history.replaceState({}, document.title, window.location.pathname);
+          }
+        } else {
+          const { data: { session } } = await supabase.auth.getSession();
+          if (!mounted) return;
+          setSession(session ?? null);
+        }
+      } catch (error) {
+        if (!mounted) return;
+        setAuthError(getErrorMessage(error));
+      } finally {
+        if (mounted) setAuthLoading(false);
+      }
+    };
+
+    void initAuth();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      if (!mounted) return;
+
+      setSession(nextSession ?? null);
+
+      if (event === "PASSWORD_RECOVERY") {
+        setAuthMode("reset");
+        setAuthMessage("새 비밀번호를 입력해 주세요.");
+        setAuthError("");
+      }
+
+      if (event === "SIGNED_OUT") {
+        setAuthMode("login");
+        setAuthPassword("");
+        setAuthPasswordConfirm("");
+      }
+    });
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (authLoading || !session) return;
+
     const initialize = async () => {
       await migrateLegacyLocalMastersToDbIfNeeded();
       await ensureMasterSeedData();
@@ -1740,9 +1950,11 @@ export default function Home() {
     };
 
     void initialize();
-  }, []);
+  }, [authLoading, session?.user.id]);
 
   useEffect(() => {
+    if (!session) return;
+
     if (tab === "출고등록" || tab === "마스터관리") {
       void loadAllMastersFromDb();
     }
@@ -1753,6 +1965,8 @@ export default function Home() {
   }, [tab]);
 
   useEffect(() => {
+    if (!session) return;
+
     const channel = supabase
       .channel("master-sync")
       .on(
@@ -1781,9 +1995,11 @@ export default function Home() {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, []);
+  }, [session?.user.id]);
 
   useEffect(() => {
+    if (!session) return;
+
     const channel = supabase
       .channel("shared-verify-sync")
       .on(
@@ -1801,7 +2017,7 @@ export default function Home() {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, []);
+  }, [session?.user.id]);
 
   const persistShipments = (items: SavedShipment[]) => {
     setSavedShipments(items);
@@ -3082,6 +3298,149 @@ export default function Home() {
     </div>
   );
 
+  if (authLoading) {
+    return (
+      <main style={page}>
+        <div style={authShell}>
+          <div style={authCard}>
+            <div style={authBrand}>🚚 상화시스템 출고관리</div>
+            <div style={authSubtitle}>로그인 상태를 확인하는 중입니다...</div>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  if (!session || authMode === "forgot" || authMode === "reset") {
+    const isResetMode = authMode === "reset";
+
+    return (
+      <main style={page}>
+        <div style={authShell}>
+          <div style={authCard}>
+            <div style={authBrand}>🚚 상화시스템 출고관리</div>
+            <div style={authSubtitle}>로그인 후 시스템에 들어갈 수 있습니다.</div>
+
+            {authError ? <div style={authErrorBox}>{authError}</div> : null}
+            {authMessage ? <div style={authSuccessBox}>{authMessage}</div> : null}
+
+            {authMode === "login" && (
+              <div style={authForm}>
+                <div style={labelStyle}>이메일</div>
+                <input
+                  style={authInput}
+                  type="email"
+                  value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
+                  placeholder="example@company.com"
+                  autoComplete="email"
+                />
+
+                <div style={labelStyle}>비밀번호</div>
+                <input
+                  style={authInput}
+                  type="password"
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  placeholder="비밀번호 입력"
+                  autoComplete="current-password"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      void handleSignIn();
+                    }
+                  }}
+                />
+
+                <button type="button" style={authPrimaryBtn} onClick={() => void handleSignIn()} disabled={authBusy}>
+                  {authBusy ? "로그인 중..." : "로그인"}
+                </button>
+
+                <button
+                  type="button"
+                  style={authTextBtn}
+                  onClick={() => {
+                    clearAuthFeedback();
+                    setAuthMode("forgot");
+                    setAuthPassword("");
+                    setAuthPasswordConfirm("");
+                  }}
+                >
+                  비밀번호를 잊으셨나요?
+                </button>
+              </div>
+            )}
+
+            {authMode === "forgot" && (
+              <div style={authForm}>
+                <div style={labelStyle}>이메일</div>
+                <input
+                  style={authInput}
+                  type="email"
+                  value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
+                  placeholder="비밀번호 재설정 메일을 받을 이메일"
+                  autoComplete="email"
+                />
+
+                <button type="button" style={authPrimaryBtn} onClick={() => void handleSendPasswordReset()} disabled={authBusy}>
+                  {authBusy ? "메일 보내는 중..." : "비밀번호 재설정 메일 보내기"}
+                </button>
+
+                <button
+                  type="button"
+                  style={authSecondaryBtn}
+                  onClick={() => {
+                    clearAuthFeedback();
+                    setAuthMode("login");
+                  }}
+                >
+                  로그인으로 돌아가기
+                </button>
+              </div>
+            )}
+
+            {isResetMode && (
+              <div style={authForm}>
+                <div style={labelStyle}>새 비밀번호</div>
+                <input
+                  style={authInput}
+                  type="password"
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  placeholder="새 비밀번호 입력 (6자 이상)"
+                  autoComplete="new-password"
+                />
+
+                <div style={labelStyle}>새 비밀번호 확인</div>
+                <input
+                  style={authInput}
+                  type="password"
+                  value={authPasswordConfirm}
+                  onChange={(e) => setAuthPasswordConfirm(e.target.value)}
+                  placeholder="새 비밀번호 다시 입력"
+                  autoComplete="new-password"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      void handleUpdatePassword();
+                    }
+                  }}
+                />
+
+                <button type="button" style={authPrimaryBtn} onClick={() => void handleUpdatePassword()} disabled={authBusy}>
+                  {authBusy ? "변경 중..." : "비밀번호 변경"}
+                </button>
+
+                <div style={authHintText}>
+                  재설정 메일 링크로 들어온 경우에만 비밀번호를 바꿀 수 있습니다.
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main style={page}>
       <div style={card}>
@@ -3093,14 +3452,12 @@ export default function Home() {
         }}>
           <h1 style={title}>🚚 상화시스템 출고관리</h1>
 
-          <div style={{
-            padding: "5px 12px",
-            borderRadius: "8px",
-            background: "#f5f7fa",
-            fontWeight: "bold",
-            color: "#333"
-          }}>
-            {`${today}`}
+          <div style={headerRightWrap}>
+            <div style={userBadge}>{session.user.email || "로그인 사용자"}</div>
+            <button type="button" style={logoutBtn} onClick={() => void handleSignOut()}>
+              로그아웃
+            </button>
+            <div style={dateBadge}>{`${today}`}</div>
           </div>
         </div>
 
@@ -5130,6 +5487,144 @@ const messageCellButton: CSSProperties = {
   fontSize: 14,
   lineHeight: 1.5,
 };
+const authShell: CSSProperties = {
+  minHeight: "100vh",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: 24,
+};
+
+const authCard: CSSProperties = {
+  width: "100%",
+  maxWidth: 460,
+  background: "#fff",
+  borderRadius: 18,
+  padding: 28,
+  boxShadow: "0 12px 36px rgba(0,0,0,0.12)",
+  display: "grid",
+  gap: 14,
+};
+
+const authBrand: CSSProperties = {
+  fontSize: 28,
+  fontWeight: 800,
+  color: "#111827",
+};
+
+const authSubtitle: CSSProperties = {
+  fontSize: 14,
+  color: "#6b7280",
+  lineHeight: 1.5,
+};
+
+const authForm: CSSProperties = {
+  display: "grid",
+  gap: 10,
+  marginTop: 6,
+};
+
+const authInput: CSSProperties = {
+  width: "100%",
+  padding: "12px 14px",
+  borderRadius: 10,
+  border: "1px solid #d1d5db",
+  fontSize: 15,
+  background: "#fff",
+};
+
+const authPrimaryBtn: CSSProperties = {
+  border: "none",
+  background: "#2563eb",
+  color: "#fff",
+  borderRadius: 10,
+  padding: "12px 16px",
+  cursor: "pointer",
+  fontWeight: 800,
+  fontSize: 15,
+};
+
+const authSecondaryBtn: CSSProperties = {
+  border: "none",
+  background: "#e5e7eb",
+  color: "#111827",
+  borderRadius: 10,
+  padding: "12px 16px",
+  cursor: "pointer",
+  fontWeight: 700,
+  fontSize: 14,
+};
+
+const authTextBtn: CSSProperties = {
+  border: "none",
+  background: "transparent",
+  color: "#2563eb",
+  cursor: "pointer",
+  fontWeight: 700,
+  fontSize: 14,
+  textAlign: "left",
+  padding: 0,
+};
+
+const authErrorBox: CSSProperties = {
+  padding: "10px 12px",
+  borderRadius: 10,
+  background: "#fef2f2",
+  color: "#b91c1c",
+  fontSize: 14,
+  fontWeight: 700,
+};
+
+const authSuccessBox: CSSProperties = {
+  padding: "10px 12px",
+  borderRadius: 10,
+  background: "#ecfdf5",
+  color: "#047857",
+  fontSize: 14,
+  fontWeight: 700,
+};
+
+const authHintText: CSSProperties = {
+  fontSize: 13,
+  color: "#6b7280",
+  lineHeight: 1.5,
+};
+
+const headerRightWrap: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 10,
+  flexWrap: "wrap",
+  justifyContent: "flex-end",
+};
+
+const userBadge: CSSProperties = {
+  padding: "8px 12px",
+  borderRadius: 999,
+  background: "#eef2ff",
+  color: "#4338ca",
+  fontSize: 13,
+  fontWeight: 700,
+};
+
+const logoutBtn: CSSProperties = {
+  border: "none",
+  background: "#111827",
+  color: "#fff",
+  borderRadius: 10,
+  padding: "10px 14px",
+  cursor: "pointer",
+  fontWeight: 700,
+};
+
+const dateBadge: CSSProperties = {
+  padding: "8px 12px",
+  borderRadius: "8px",
+  background: "#f5f7fa",
+  fontWeight: "bold",
+  color: "#333",
+};
+
 const page: CSSProperties = {
   background: "#f3f4f6",
   padding: 32,
