@@ -1003,6 +1003,15 @@ function buildClientSummaryRows<
   );
 }
 
+function matchesClientSummaryFilter(
+  row: { warningRows: number },
+  filter: VerifyViewFilter
+) {
+  if (filter === "전체") return true;
+  if (filter === "불일치만") return row.warningRows > 0;
+  return row.warningRows === 0;
+}
+
 function sumRowsByKey<T extends { clientName: string; itemCode: string; orderQty: number; shippedQty: number }>(rows: T[]) {
   const map = new Map<
     string,
@@ -1529,9 +1538,11 @@ export default function Home() {
 
   const [presenceKeyword, setPresenceKeyword] = useState("");
   const [presenceViewFilter, setPresenceViewFilter] = useState<VerifyViewFilter>("전체");
+  const [presenceSummaryOpen, setPresenceSummaryOpen] = useState(false);
 
   const [qtyKeyword, setQtyKeyword] = useState("");
   const [qtyViewFilter, setQtyViewFilter] = useState<VerifyViewFilter>("전체");
+  const [qtySummaryOpen, setQtySummaryOpen] = useState(false);
 
   const orderUploadRef = useRef<HTMLInputElement | null>(null);
   const salesUploadRef = useRef<HTMLInputElement | null>(null);
@@ -3291,6 +3302,18 @@ export default function Home() {
     return buildClientSummaryRows(qtyVerificationRows);
   }, [qtyVerificationRows]);
 
+  const filteredPresenceClientSummaryRows = useMemo(() => {
+    return presenceClientSummaryRows.filter((row) =>
+      matchesClientSummaryFilter(row, presenceViewFilter)
+    );
+  }, [presenceClientSummaryRows, presenceViewFilter]);
+
+  const filteredQtyClientSummaryRows = useMemo(() => {
+    return qtyClientSummaryRows.filter((row) =>
+      matchesClientSummaryFilter(row, qtyViewFilter)
+    );
+  }, [qtyClientSummaryRows, qtyViewFilter]);
+
   const filteredQtyVerificationRows = useMemo(() => {
     const keyword = qtyKeyword.trim().toLowerCase();
 
@@ -4328,36 +4351,60 @@ export default function Home() {
                 </div>
               </div>
 
-              <h3 style={{ ...masterTitle, marginBottom: 10 }}>거래처별 총 주문수량</h3>
+              <div style={summaryToggleHeader}>
+                <button
+                  type="button"
+                  style={summaryToggleBtn}
+                  onClick={() => setPresenceSummaryOpen((prev) => !prev)}
+                >
+                  {presenceSummaryOpen ? "▼" : "▶"} 거래처별 총 주문수량
+                </button>
 
-              <div style={{ ...verifyTableWrap, marginBottom: 18 }}>
-                <table style={verifyTable}>
-                  <thead>
-                    <tr>
-                      <th style={verifyHeaderCell}>거래처명</th>
-                      <th style={verifyHeaderCell}>총 주문수량</th>
-                      <th style={verifyHeaderCell}>품목수</th>
-                      <th style={verifyHeaderCell}>일치</th>
-                      <th style={verifyHeaderCell}>확인필요</th>
-                      <th style={verifyHeaderCell}>상태</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {presenceClientSummaryRows.map((row) => (
-                      <tr key={row.clientName}>
-                        <td style={verifyCell}>{row.clientName}</td>
-                        <td style={verifyCell}>{row.totalQty}</td>
-                        <td style={verifyCell}>{row.totalRows}</td>
-                        <td style={verifyCell}>{row.matchedRows}</td>
-                        <td style={verifyCell}>{row.warningRows}</td>
-                        <td style={verifyCell}>
-                          {row.warningRows === 0 ? "전체 일치" : "확인필요"}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <span style={summaryHintText}>
+                  전체 {presenceClientSummaryRows.length}거래처 / 일치{" "}
+                  {presenceClientSummaryRows.filter((row) => row.warningRows === 0).length} / 확인필요{" "}
+                  {presenceClientSummaryRows.filter((row) => row.warningRows > 0).length}
+                </span>
               </div>
+
+              {presenceSummaryOpen && (
+                <div style={{ ...verifyTableWrap, marginBottom: 18 }}>
+                  <table style={verifyTable}>
+                    <thead>
+                      <tr>
+                        <th style={verifyHeaderCell}>거래처명</th>
+                        <th style={verifyHeaderCell}>총 주문수량</th>
+                        <th style={verifyHeaderCell}>품목수</th>
+                        <th style={verifyHeaderCell}>일치</th>
+                        <th style={verifyHeaderCell}>확인필요</th>
+                        <th style={verifyHeaderCell}>상태</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredPresenceClientSummaryRows.length === 0 ? (
+                        <tr>
+                          <td style={verifyCell} colSpan={6}>
+                            조건에 맞는 거래처가 없습니다.
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredPresenceClientSummaryRows.map((row) => (
+                          <tr key={row.clientName}>
+                            <td style={verifyCell}>{row.clientName}</td>
+                            <td style={verifyCell}>{row.totalQty}</td>
+                            <td style={verifyCell}>{row.totalRows}</td>
+                            <td style={verifyCell}>{row.matchedRows}</td>
+                            <td style={verifyCell}>{row.warningRows}</td>
+                            <td style={verifyCell}>
+                              {row.warningRows === 0 ? "전체 일치" : "확인필요"}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
 
               <div style={verifyTableWrap}>
                 <table style={verifyTable}>
@@ -6481,4 +6528,35 @@ const verifyTextArea: CSSProperties = {
   resize: "vertical",
   fontFamily: "inherit",
   lineHeight: 1.45,
+};
+
+const summaryToggleHeader: CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: 12,
+  flexWrap: "wrap",
+  marginTop: 8,
+  marginBottom: 10,
+};
+
+const summaryToggleBtn: CSSProperties = {
+  border: "none",
+  background: "transparent",
+  padding: 0,
+  margin: 0,
+  cursor: "pointer",
+  fontSize: 18,
+  fontWeight: 800,
+  color: "#111827",
+  textAlign: "left",
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+};
+
+const summaryHintText: CSSProperties = {
+  fontSize: 13,
+  color: "#6b7280",
+  fontWeight: 700,
 };
