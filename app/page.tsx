@@ -98,7 +98,8 @@ type PdaRow = {
   statusText: string;
 };
 
-type PresenceVerificationStatus = "일치" | "확인필요" | "PDA예외";
+type PresenceVerificationStatus = "일치" | "확인필요";
+type VerifyViewFilter = "전체" | "불일치만" | "일치만";
 
 type PresenceVerificationRow = {
   id: string;
@@ -858,8 +859,7 @@ function buildPresenceVerificationRows(
         status = "확인필요";
         reasons.push("주문서/판매현황 수량 불일치");
       } else {
-        status = "PDA예외";
-        reasons.push("PDA 비대상 품목");
+        status = "일치";
       }
     } else {
       if (!(orderExists && pdaExists && salesExists)) {
@@ -943,6 +943,64 @@ function buildQtyVerificationRows(
       reasons,
     };
   });
+}
+
+function buildClientSummaryRows<
+  T extends {
+    status: string;
+    clientName: string;
+    orderQty?: number;
+    pdaOrderQty?: number;
+    salesQty?: number;
+    pdaQty?: number;
+  }
+>(rows: T[]) {
+  const map = new Map<
+    string,
+    {
+      clientName: string;
+      totalQty: number;
+      totalRows: number;
+      matchedRows: number;
+      warningRows: number;
+    }
+  >();
+
+  rows.forEach((row) => {
+    const clientName = normalizeCompareClientName(row.clientName);
+    if (!clientName) return;
+
+    const qty =
+      row.orderQty ??
+      row.salesQty ??
+      row.pdaQty ??
+      0;
+
+    const prev =
+      map.get(clientName) ??
+      {
+        clientName,
+        totalQty: 0,
+        totalRows: 0,
+        matchedRows: 0,
+        warningRows: 0,
+      };
+
+    prev.totalQty += qty;
+    prev.totalRows += 1;
+
+    if (row.status === "일치") {
+      prev.matchedRows += 1;
+    } else {
+      prev.warningRows += 1;
+    }
+
+    map.set(clientName, prev);
+  });
+
+  return Array.from(map.values()).sort((a, b) =>
+    a.clientName.localeCompare(b.clientName, "ko")
+  );
 }
 
 function sumRowsByKey<T extends { clientName: string; itemCode: string; orderQty: number; shippedQty: number }>(rows: T[]) {
@@ -1470,10 +1528,10 @@ export default function Home() {
   const [salesFileName, setSalesFileName] = useState("");
 
   const [presenceKeyword, setPresenceKeyword] = useState("");
-  const [presenceMismatchOnly, setPresenceMismatchOnly] = useState(false);
+  const [presenceViewFilter, setPresenceViewFilter] = useState<VerifyViewFilter>("전체");
 
   const [qtyKeyword, setQtyKeyword] = useState("");
-  const [qtyMismatchOnly, setQtyMismatchOnly] = useState(false);
+  const [qtyViewFilter, setQtyViewFilter] = useState<VerifyViewFilter>("전체");
 
   const orderUploadRef = useRef<HTMLInputElement | null>(null);
   const salesUploadRef = useRef<HTMLInputElement | null>(null);
@@ -3210,24 +3268,47 @@ export default function Home() {
 
     return presenceVerificationRows.filter((row) => {
       const haystack = [row.clientName, row.itemCode, row.reasons.join(" ")].join(" ").toLowerCase();
-      const mismatch = presenceMismatchOnly ? row.status !== "일치" : true;
-      return mismatch && (!keyword || haystack.includes(keyword));
+      const matchesStatus =
+        presenceViewFilter === "전체"
+          ? true
+          : presenceViewFilter === "불일치만"
+            ? row.status !== "일치"
+            : row.status === "일치";
+
+      return matchesStatus && (!keyword || haystack.includes(keyword));
     });
-  }, [presenceVerificationRows, presenceKeyword, presenceMismatchOnly]);
+  }, [presenceVerificationRows, presenceKeyword, presenceViewFilter]);
 
   const qtyVerificationRows = useMemo(() => {
     return buildQtyVerificationRows(pdaRows, salesStatusRows);
   }, [pdaRows, salesStatusRows]);
 
+  const presenceClientSummaryRows = useMemo(() => {
+    return buildClientSummaryRows(presenceVerificationRows);
+  }, [presenceVerificationRows]);
+
+  const qtyClientSummaryRows = useMemo(() => {
+    return buildClientSummaryRows(qtyVerificationRows);
+  }, [qtyVerificationRows]);
+
   const filteredQtyVerificationRows = useMemo(() => {
     const keyword = qtyKeyword.trim().toLowerCase();
 
     return qtyVerificationRows.filter((row) => {
-      const haystack = [row.clientName, row.itemCode, row.reasons.join(" ")].join(" ").toLowerCase();
-      const mismatch = qtyMismatchOnly ? row.status == "수량확인" : true;
-      return mismatch && (!keyword || haystack.includes(keyword));
+      const haystack = [row.clientName, row.itemCode, row.reasons.join(" ")]
+        .join(" ")
+        .toLowerCase();
+
+      const matchesStatus =
+        qtyViewFilter === "전체"
+          ? true
+          : qtyViewFilter === "불일치만"
+            ? row.status !== "일치"
+            : row.status === "일치";
+
+      return matchesStatus && (!keyword || haystack.includes(keyword));
     });
-  }, [qtyVerificationRows, qtyKeyword, qtyMismatchOnly]);
+  }, [qtyVerificationRows, qtyKeyword, qtyViewFilter]);
 
   const waybillMessageRows = useMemo(() => {
     return waybillUploadRows
@@ -4229,14 +4310,53 @@ export default function Home() {
                   />
                 </div>
 
-                <label style={{ ...filterCheckLabel, paddingBottom: 0 }}>
-                  <input
-                    type="checkbox"
-                    checked={presenceMismatchOnly}
-                    onChange={(e) => setPresenceMismatchOnly(e.target.checked)}
-                  />
-                  불일치만 보기
-                </label>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", paddingBottom: 0 }}>
+                  {(["전체", "불일치만", "일치만"] as VerifyViewFilter[]).map((item) => (
+                    <button
+                      key={item}
+                      type="button"
+                      style={{
+                        ...scopeToggleBtn,
+                        background: presenceViewFilter === item ? "#2563eb" : "#e5e7eb",
+                        color: presenceViewFilter === item ? "#fff" : "#111827",
+                      }}
+                      onClick={() => setPresenceViewFilter(item)}
+                    >
+                      {item}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <h3 style={{ ...masterTitle, marginBottom: 10 }}>거래처별 총 주문수량</h3>
+
+              <div style={{ ...verifyTableWrap, marginBottom: 18 }}>
+                <table style={verifyTable}>
+                  <thead>
+                    <tr>
+                      <th style={verifyHeaderCell}>거래처명</th>
+                      <th style={verifyHeaderCell}>총 주문수량</th>
+                      <th style={verifyHeaderCell}>품목수</th>
+                      <th style={verifyHeaderCell}>일치</th>
+                      <th style={verifyHeaderCell}>확인필요</th>
+                      <th style={verifyHeaderCell}>상태</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {presenceClientSummaryRows.map((row) => (
+                      <tr key={row.clientName}>
+                        <td style={verifyCell}>{row.clientName}</td>
+                        <td style={verifyCell}>{row.totalQty}</td>
+                        <td style={verifyCell}>{row.totalRows}</td>
+                        <td style={verifyCell}>{row.matchedRows}</td>
+                        <td style={verifyCell}>{row.warningRows}</td>
+                        <td style={verifyCell}>
+                          {row.warningRows === 0 ? "전체 일치" : "확인필요"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
 
               <div style={verifyTableWrap}>
@@ -4283,14 +4403,53 @@ export default function Home() {
                   />
                 </div>
 
-                <label style={{ ...filterCheckLabel, paddingBottom: 0 }}>
-                  <input
-                    type="checkbox"
-                    checked={qtyMismatchOnly}
-                    onChange={(e) => setQtyMismatchOnly(e.target.checked)}
-                  />
-                  불일치만 보기
-                </label>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", paddingBottom: 0 }}>
+                  {(["전체", "불일치만", "일치만"] as VerifyViewFilter[]).map((item) => (
+                    <button
+                      key={item}
+                      type="button"
+                      style={{
+                        ...scopeToggleBtn,
+                        background: qtyViewFilter === item ? "#2563eb" : "#e5e7eb",
+                        color: qtyViewFilter === item ? "#fff" : "#111827",
+                      }}
+                      onClick={() => setQtyViewFilter(item)}
+                    >
+                      {item}
+                    </button>
+                  ))}
+                </div>
+              </div>
+                
+              <h3 style={{ ...masterTitle, marginBottom: 10 }}>거래처별 총 출고수량</h3>
+
+              <div style={{ ...verifyTableWrap, marginBottom: 18 }}>
+                <table style={verifyTable}>
+                  <thead>
+                    <tr>
+                      <th style={verifyHeaderCell}>거래처명</th>
+                      <th style={verifyHeaderCell}>총 출고수량</th>
+                      <th style={verifyHeaderCell}>품목수</th>
+                      <th style={verifyHeaderCell}>일치</th>
+                      <th style={verifyHeaderCell}>확인필요</th>
+                      <th style={verifyHeaderCell}>상태</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {qtyClientSummaryRows.map((row) => (
+                      <tr key={row.clientName}>
+                        <td style={verifyCell}>{row.clientName}</td>
+                        <td style={verifyCell}>{row.totalQty}</td>
+                        <td style={verifyCell}>{row.totalRows}</td>
+                        <td style={verifyCell}>{row.matchedRows}</td>
+                        <td style={verifyCell}>{row.warningRows}</td>
+                        <td style={verifyCell}>
+                          {row.warningRows === 0 ? "전체 일치" : "확인필요"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
 
               <div style={verifyTableWrap}>
