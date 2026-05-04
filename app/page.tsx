@@ -4468,36 +4468,52 @@ export default function Home() {
                 </div>
               </div>
                 
-              <h3 style={{ ...masterTitle, marginBottom: 10 }}>거래처별 총 출고수량</h3>
+              <div style={summaryToggleHeader}>
+                <button
+                  type="button"
+                  style={summaryToggleBtn}
+                  onClick={() => setQtySummaryOpen((prev) => !prev)}
+                >
+                  {qtySummaryOpen ? "▼" : "▶"} 거래처별 총 출고수량
+                </button>
 
-              <div style={{ ...verifyTableWrap, marginBottom: 18 }}>
-                <table style={verifyTable}>
-                  <thead>
-                    <tr>
-                      <th style={verifyHeaderCell}>거래처명</th>
-                      <th style={verifyHeaderCell}>총 출고수량</th>
-                      <th style={verifyHeaderCell}>품목수</th>
-                      <th style={verifyHeaderCell}>일치</th>
-                      <th style={verifyHeaderCell}>확인필요</th>
-                      <th style={verifyHeaderCell}>상태</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {qtyClientSummaryRows.map((row) => (
-                      <tr key={row.clientName}>
-                        <td style={verifyCell}>{row.clientName}</td>
-                        <td style={verifyCell}>{row.totalQty}</td>
-                        <td style={verifyCell}>{row.totalRows}</td>
-                        <td style={verifyCell}>{row.matchedRows}</td>
-                        <td style={verifyCell}>{row.warningRows}</td>
-                        <td style={verifyCell}>
-                          {row.warningRows === 0 ? "전체 일치" : "확인필요"}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <span style={summaryHintText}>
+                  전체 {qtyClientSummaryRows.length} / 일치{" "}
+                  {qtyClientSummaryRows.filter((row) => row.warningRows === 0).length} / 확인필요{" "}
+                  {qtyClientSummaryRows.filter((row) => row.warningRows > 0).length}
+                </span>
               </div>
+
+              {qtySummaryOpen && (
+                <div style={{ ...verifyTableWrap, marginBottom: 18 }}>
+                  <table style={verifyTable}>
+                    <thead>
+                      <tr>
+                        <th style={verifyHeaderCell}>거래처명</th>
+                        <th style={verifyHeaderCell}>총 출고수량</th>
+                        <th style={verifyHeaderCell}>품목수</th>
+                        <th style={verifyHeaderCell}>일치</th>
+                        <th style={verifyHeaderCell}>확인필요</th>
+                        <th style={verifyHeaderCell}>상태</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {qtyClientSummaryRows.map((row) => (
+                        <tr key={row.clientName}>
+                          <td style={verifyCell}>{row.clientName}</td>
+                          <td style={verifyCell}>{row.totalQty}</td>
+                          <td style={verifyCell}>{row.totalRows}</td>
+                          <td style={verifyCell}>{row.matchedRows}</td>
+                          <td style={verifyCell}>{row.warningRows}</td>
+                          <td style={verifyCell}>
+                            {row.warningRows === 0 ? "전체 일치" : "확인필요"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
 
               <div style={verifyTableWrap}>
                 <table style={verifyTable}>
