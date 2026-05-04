@@ -4498,7 +4498,7 @@ export default function Home() {
                       </tr>
                     </thead>
                     <tbody>
-                      {qtyClientSummaryRows.map((row) => (
+                      {filteredQtyClientSummaryRows.map((row) => (
                         <tr key={row.clientName}>
                           <td style={verifyCell}>{row.clientName}</td>
                           <td style={verifyCell}>{row.totalQty}</td>
