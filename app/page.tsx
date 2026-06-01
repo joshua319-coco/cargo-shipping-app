@@ -1366,7 +1366,23 @@ function toTemplateRow(
 }
 
 export default function Home() {
-  const [tab, setTab] = useState<TabType>("출고등록");
+  const [tab, setTab] = useState<TabType>(() => {
+    if (typeof window === "undefined") return "출고등록";
+
+    const savedTab = localStorage.getItem("cargo_active_tab") as TabType | null;
+
+    if (
+      savedTab === "출고등록" ||
+      savedTab === "출고목록" ||
+      savedTab === "운송장번호" ||
+      savedTab === "발송검증" ||
+      savedTab === "마스터관리"
+    ) {
+      return savedTab;
+    }
+
+    return "출고등록";
+  });
 
   const today = new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 
@@ -1968,6 +1984,11 @@ export default function Home() {
 
     void initialize();
   }, [authLoading, session?.user.id]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem("cargo_active_tab", tab);
+  }, [tab]);
 
   useEffect(() => {
     if (!session) return;
