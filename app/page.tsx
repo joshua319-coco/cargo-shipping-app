@@ -3824,7 +3824,7 @@ export default function Home() {
                             fontWeight: 700,
                             cursor: "pointer",
                           }}
-                          onClick={openAddressSearch}
+                          onClick={() => openAddressSearch(address)}
                         >
                           찾기
                         </button>
