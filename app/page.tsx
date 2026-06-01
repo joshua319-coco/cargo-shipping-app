@@ -353,6 +353,7 @@ function normalizeSenderMasterRows(rows: any[]): Party[] {
     name: row?.name ?? "",
     aliases: Array.isArray(row?.aliases) ? row.aliases : [],
     phone: row?.phone ?? "",
+    note: row?.note ?? "",
   }));
 }
 
@@ -395,6 +396,7 @@ function toSenderMasterRows(items: Party[]) {
     name: item.name,
     aliases: item.aliases ?? [],
     phone: item.phone ?? "",
+    note: item.note ?? "",
   }));
 }
 
@@ -408,7 +410,7 @@ function toBranchMasterRows(items: BranchPostalItem[]) {
 function matchesParty(item: Party, keyword: string) {
   const k = keyword.trim().toLowerCase();
   if (!k) return false;
-  const pool = [item.name, ...(item.aliases || [])].map((v) => v.toLowerCase());
+  const pool = [item.name, ...(item.aliases || []), item.note || ""].map((v) => v.toLowerCase());
   return pool.some((text) => text.includes(k));
 }
 
@@ -945,73 +947,6 @@ function buildQtyVerificationRows(
   });
 }
 
-function buildClientSummaryRows<
-  T extends {
-    status: string;
-    clientName: string;
-    orderQty?: number;
-    pdaOrderQty?: number;
-    salesQty?: number;
-    pdaQty?: number;
-  }
->(rows: T[]) {
-  const map = new Map<
-    string,
-    {
-      clientName: string;
-      totalQty: number;
-      totalRows: number;
-      matchedRows: number;
-      warningRows: number;
-    }
-  >();
-
-  rows.forEach((row) => {
-    const clientName = normalizeCompareClientName(row.clientName);
-    if (!clientName) return;
-
-    const qty =
-      row.orderQty ??
-      row.salesQty ??
-      row.pdaQty ??
-      0;
-
-    const prev =
-      map.get(clientName) ??
-      {
-        clientName,
-        totalQty: 0,
-        totalRows: 0,
-        matchedRows: 0,
-        warningRows: 0,
-      };
-
-    prev.totalQty += qty;
-    prev.totalRows += 1;
-
-    if (row.status === "일치") {
-      prev.matchedRows += 1;
-    } else {
-      prev.warningRows += 1;
-    }
-
-    map.set(clientName, prev);
-  });
-
-  return Array.from(map.values()).sort((a, b) =>
-    a.clientName.localeCompare(b.clientName, "ko")
-  );
-}
-
-function matchesClientSummaryFilter(
-  row: { warningRows: number },
-  filter: VerifyViewFilter
-) {
-  if (filter === "전체") return true;
-  if (filter === "불일치만") return row.warningRows > 0;
-  return row.warningRows === 0;
-}
-
 function sumRowsByKey<T extends { clientName: string; itemCode: string; orderQty: number; shippedQty: number }>(rows: T[]) {
   const map = new Map<
     string,
@@ -1228,6 +1163,17 @@ function aliasesToText(aliases?: string[]) {
   return (aliases || []).join(", ");
 }
 
+function buildShipmentNote(receiverNote: string, senderNote: string) {
+  const safeReceiverNote = asString(receiverNote);
+  const safeSenderNote = asString(senderNote);
+
+  if (safeReceiverNote && safeSenderNote) {
+    return `수화주: ${safeReceiverNote} / 발화주: ${safeSenderNote}`;
+  }
+
+  return safeReceiverNote || safeSenderNote;
+}
+
 function asString(value: unknown) {
   if (value === undefined || value === null) return "";
   return String(value).trim();
@@ -1347,6 +1293,7 @@ function buildSenderTemplateRows(): Array<Record<string, string>> {
       name: "제로100모터스",
       aliases: "제로100,제로백",
       phone: "025159728",
+      note: "직송건 확인",
     },
   ];
 }
@@ -1439,6 +1386,7 @@ export default function Home() {
   const waybillUploadRef = useRef<HTMLInputElement | null>(null);
   const receiverPhoneInputRef = useRef<HTMLInputElement | null>(null);
   const senderPhoneInputRef = useRef<HTMLInputElement | null>(null);
+  const addrSearchInputRef = useRef<HTMLInputElement | null>(null);
 
   const [receiverMaster, setReceiverMaster] = useState<Party[]>([]);
   const [senderMaster, setSenderMaster] = useState<Party[]>([]);
@@ -1453,6 +1401,7 @@ export default function Home() {
 
   const [sender, setSender] = useState("상화시스템");
   const [senderPhone, setSenderPhone] = useState("0318059618");
+  const [senderNote, setSenderNote] = useState("");
 
   const [item, setItem] = useState("부품");
   const [pack, setPack] = useState("박스");
@@ -1510,6 +1459,7 @@ export default function Home() {
     name: "",
     aliases: [],
     phone: "",
+    note: "",
   });
 
   const [branchForm, setBranchForm] = useState<BranchPostalItem>({
@@ -1538,11 +1488,9 @@ export default function Home() {
 
   const [presenceKeyword, setPresenceKeyword] = useState("");
   const [presenceViewFilter, setPresenceViewFilter] = useState<VerifyViewFilter>("전체");
-  const [presenceSummaryOpen, setPresenceSummaryOpen] = useState(false);
 
   const [qtyKeyword, setQtyKeyword] = useState("");
   const [qtyViewFilter, setQtyViewFilter] = useState<VerifyViewFilter>("전체");
-  const [qtySummaryOpen, setQtySummaryOpen] = useState(false);
 
   const orderUploadRef = useRef<HTMLInputElement | null>(null);
   const salesUploadRef = useRef<HTMLInputElement | null>(null);
@@ -2088,6 +2036,15 @@ export default function Home() {
     };
   }, [session?.user.id]);
 
+  useEffect(() => {
+    if (!showAddrSearch) return;
+
+    window.setTimeout(() => {
+      addrSearchInputRef.current?.focus();
+      addrSearchInputRef.current?.select();
+    }, 0);
+  }, [showAddrSearch]);
+
   const persistShipments = (items: SavedShipment[]) => {
     setSavedShipments(items);
   };
@@ -2119,6 +2076,16 @@ export default function Home() {
     () => getMatches(senderMaster, sender),
     [senderMaster, sender]
   );
+
+  const receiverExistsInMaster = useMemo(() => {
+    const trimmed = receiver.trim();
+    return !!trimmed && receiverMaster.some((item) => item.name.trim() === trimmed);
+  }, [receiverMaster, receiver]);
+
+  const senderExistsInMaster = useMemo(() => {
+    const trimmed = sender.trim();
+    return !!trimmed && senderMaster.some((item) => item.name.trim() === trimmed);
+  }, [senderMaster, sender]);
 
   const filteredShipments = useMemo(() => {
     const todayKey = getTodaySeoulDateKey();
@@ -2205,7 +2172,8 @@ export default function Home() {
     return (
       item.name.toLowerCase().includes(keyword) ||
       aliasesToText(item.aliases).toLowerCase().includes(keyword) ||
-      (item.phone || "").toLowerCase().includes(keyword)
+      (item.phone || "").toLowerCase().includes(keyword) ||
+      (item.note || "").toLowerCase().includes(keyword)
     );
   });
 
@@ -2252,6 +2220,7 @@ export default function Home() {
   const applySender = (party: Party) => {
     setSender(party.name);
     setSenderPhone(party.phone);
+    setSenderNote(party.note || "");
     setSenderFocused(false);
 
     window.setTimeout(() => {
@@ -2281,6 +2250,101 @@ export default function Home() {
     );
   };
 
+  const openAddressSearch = (keyword = address) => {
+    setAddrKeyword(keyword || "");
+    setAddrResults([]);
+    setAddrSearched(false);
+    setShowAddrSearch(true);
+  };
+
+  const handleAddressSearch = async () => {
+    try {
+      const result = await searchAddress(addrKeyword);
+      console.log("주소검색 결과", result);
+      setAddrResults(result);
+      setAddrSearched(true);
+    } catch (error) {
+      console.error("주소검색 실패", error);
+      alert(
+        error instanceof Error
+          ? error.message
+          : "주소검색에 실패했습니다."
+      );
+      setAddrResults([]);
+      setAddrSearched(true);
+    }
+  };
+
+  const saveCurrentReceiverToMaster = async () => {
+    if (!receiver.trim()) {
+      alert("수화주명을 먼저 입력해 주세요.");
+      return;
+    }
+
+    if (receiverExistsInMaster) {
+      alert("이미 수화주 마스터에 등록된 업체입니다.");
+      return;
+    }
+
+    const payload = {
+      name: receiver.trim(),
+      aliases: [],
+      phone: receiverPhone ?? "",
+      address: address ?? "",
+      branch: branch ?? "",
+      note: note ?? "",
+      postal_code: resolvePostalCodeValue({
+        delivery,
+        receiver,
+        branch,
+        currentPostalCode: postalCode,
+      }),
+    };
+
+    const { error } = await supabase
+      .from("receiver_master")
+      .insert([payload]);
+
+    if (error) {
+      alert("수화주 마스터 신규저장 실패: " + error.message);
+      return;
+    }
+
+    await loadReceiverMasterFromDb();
+    alert("수화주 마스터에 신규저장 완료");
+  };
+
+  const saveCurrentSenderToMaster = async () => {
+    if (!sender.trim()) {
+      alert("발화주명을 먼저 입력해 주세요.");
+      return;
+    }
+
+    if (senderExistsInMaster) {
+      alert("이미 발화주 마스터에 등록된 업체입니다.");
+      return;
+    }
+
+    const payload = {
+      name: sender.trim(),
+      aliases: [],
+      phone: senderPhone ?? "",
+      note: senderNote ?? "",
+    };
+
+    const { error } = await supabase
+      .from("sender_master")
+      .insert([payload]);
+
+    if (error) {
+      alert("발화주 마스터 신규저장 실패: " + error.message);
+      return;
+    }
+
+    await loadSenderMasterFromDb();
+    alert("발화주 마스터에 신규저장 완료");
+  };
+
   const resetForm = () => {
     setReceiver("");
     setReceiverPhone("");
@@ -2290,6 +2354,7 @@ export default function Home() {
     setNote("");
     setSender("상화시스템");
     setSenderPhone("0318059618");
+    setSenderNote("");
     setItem("부품");
     setPack("박스");
     setPay("착불");
@@ -2306,6 +2371,9 @@ export default function Home() {
     if (!sender.trim()) return alert("발화주명을 입력해 주세요.");
     if (!qty.trim()) return alert("수량을 입력해 주세요.");
     if (!fare.trim()) return alert("운임을 입력해 주세요.");
+    if (delivery === "택배" && address.trim().length > 50) {
+      return alert("주소는 50자 이하로 입력해 주세요. 대신택배 업로드 주소칸이 50자를 넘으면 터집니다. 아주 예민한 친구예요.");
+    }
 
     const payload = {
       receiver,
@@ -2327,7 +2395,7 @@ export default function Home() {
       qty: Number(qty),
       fare: Number(String(fare).replace(/,/g, "")),
       memo,
-      note,
+      note: buildShipmentNote(note, senderNote),
       pda: false,
       waybill: false,
       closed_done: false,
@@ -2499,6 +2567,9 @@ export default function Home() {
     if (!editForm.sender.trim()) return alert("발화주명을 입력해 주세요.");
     if (!editForm.qty.trim()) return alert("수량을 입력해 주세요.");
     if (!editForm.fare.trim()) return alert("운임을 입력해 주세요.");
+    if (editForm.delivery === "택배" && editForm.address.trim().length > 50) {
+      return alert("주소는 50자 이하로 입력해 주세요.");
+    }
 
     const payload = {
       receiver: editForm.receiver,
@@ -2609,7 +2680,9 @@ export default function Home() {
   const exportRows = async (rows: SavedShipment[], fileLabel: string) => {
     if (rows.length === 0) return alert("내려받을 출고건이 없습니다.");
 
-    const unresolved = rows.filter((row) => {
+    const exportOrderRows = [...rows].reverse();
+
+    const unresolved = exportOrderRows.filter((row) => {
       const code = resolvePostalCodeValue({
         delivery: row.delivery,
         receiver: row.receiver,
@@ -2635,7 +2708,7 @@ export default function Home() {
 
       const data = [
         [...TEMPLATE_HEADERS],
-        ...rows.map((shipment) => {
+        ...exportOrderRows.map((shipment) => {
           const mapped = toTemplateRow(shipment, resolvePostalCodeValue);
           return TEMPLATE_HEADERS.map((header) => mapped[header]);
         }),
@@ -2655,7 +2728,7 @@ export default function Home() {
       XLSX.writeFile(workbook, `대신택배_일괄업로드_${fileLabel}_${stamp}.xlsx`);
 
       await updateChecklistColumns(
-        rows.map((row) => row.id),
+        exportOrderRows.map((row) => row.id),
         { waybill: true }
       );
     } catch (error) {
@@ -2665,12 +2738,12 @@ export default function Home() {
   };
 
   const exportSelected = async () => {
-    const rows = filteredShipments.filter((item) => selectedIds.includes(item.id));
+    const rows = sortedShipments.filter((item) => selectedIds.includes(item.id));
     await exportRows(rows, "선택");
   };
 
   const exportFilteredAll = async () => {
-    await exportRows(filteredShipments, "전체");
+    await exportRows(sortedShipments, "전체");
   };
 
   const exportMasterTemplate = async (kind: "receiver" | "sender" | "branch") => {
@@ -2795,6 +2868,7 @@ export default function Home() {
           name: getRowValue(row, ["name", "발화주명", "업체명"]),
           aliases: parseAliases(getRowValue(row, ["aliases", "검색명", "별칭"])),
           phone: getRowValue(row, ["phone", "전화번호", "발화주전화번호"]),
+          note: getRowValue(row, ["note", "특기사항"]),
         }))
         .filter((item) => item.name);
 
@@ -2877,6 +2951,7 @@ export default function Home() {
       name: "",
       aliases: [],
       phone: "",
+      note: "",
     });
     setSenderAliasesInput("");
     setSenderMasterMode("new");
@@ -2953,6 +3028,7 @@ export default function Home() {
       name: normalizedSenderForm.name.trim(),
       aliases: normalizedSenderForm.aliases ?? [],
       phone: normalizedSenderForm.phone ?? "",
+      note: normalizedSenderForm.note ?? "",
     };
 
     if (senderMasterMode === "edit" && selectedSenderMasterName) {
@@ -3294,25 +3370,6 @@ export default function Home() {
     return buildQtyVerificationRows(pdaRows, salesStatusRows);
   }, [pdaRows, salesStatusRows]);
 
-  const presenceClientSummaryRows = useMemo(() => {
-    return buildClientSummaryRows(presenceVerificationRows);
-  }, [presenceVerificationRows]);
-
-  const qtyClientSummaryRows = useMemo(() => {
-    return buildClientSummaryRows(qtyVerificationRows);
-  }, [qtyVerificationRows]);
-
-  const filteredPresenceClientSummaryRows = useMemo(() => {
-    return presenceClientSummaryRows.filter((row) =>
-      matchesClientSummaryFilter(row, presenceViewFilter)
-    );
-  }, [presenceClientSummaryRows, presenceViewFilter]);
-
-  const filteredQtyClientSummaryRows = useMemo(() => {
-    return qtyClientSummaryRows.filter((row) =>
-      matchesClientSummaryFilter(row, qtyViewFilter)
-    );
-  }, [qtyClientSummaryRows, qtyViewFilter]);
 
   const filteredQtyVerificationRows = useMemo(() => {
     const keyword = qtyKeyword.trim().toLowerCase();
@@ -3591,7 +3648,11 @@ export default function Home() {
                     <AutocompleteInput
                       label="수화주명"
                       value={receiver}
-                      setValue={setReceiver}
+                      setValue={(v) => {
+                        setReceiver(v);
+                        const matched = receiverMaster.find((item) => item.name === v.trim());
+                        setNote(matched?.note || "");
+                      }}
                       matches={receiverMatches}
                       onSelect={applyReceiver}
                       onEnter={handleReceiverEnter}
@@ -3607,6 +3668,17 @@ export default function Home() {
                   </div>
 
                   {note && <div style={noteStyle}>⚠ {note}</div>}
+
+                  <div style={quickMasterRow}>
+                    <button
+                      type="button"
+                      style={receiverExistsInMaster ? disabledSmallBtn : smallGrayBtn}
+                      onClick={() => void saveCurrentReceiverToMaster()}
+                      disabled={!receiver.trim() || receiverExistsInMaster}
+                    >
+                      {receiverExistsInMaster ? "수화주 마스터 등록됨" : "수화주 마스터 신규저장"}
+                    </button>
+                  </div>
                 </Section>
 
                 <Section title="운송정보">
@@ -3655,7 +3727,11 @@ export default function Home() {
                     <AutocompleteInput
                       label="발화주명"
                       value={sender}
-                      setValue={setSender}
+                      setValue={(v) => {
+                        setSender(v);
+                        const matched = senderMaster.find((item) => item.name === v.trim());
+                        setSenderNote(matched?.note || "");
+                      }}
                       matches={senderMatches}
                       onSelect={applySender}
                       onEnter={handleSenderEnter}
@@ -3668,6 +3744,19 @@ export default function Home() {
                       set={setSenderPhone}
                       inputRef={senderPhoneInputRef}
                     />
+                  </div>
+
+                  {senderNote && <div style={noteStyle}>⚠ {senderNote}</div>}
+
+                  <div style={quickMasterRow}>
+                    <button
+                      type="button"
+                      style={senderExistsInMaster ? disabledSmallBtn : smallGrayBtn}
+                      onClick={() => void saveCurrentSenderToMaster()}
+                      disabled={!sender.trim() || senderExistsInMaster}
+                    >
+                      {senderExistsInMaster ? "발화주 마스터 등록됨" : "발화주 마스터 신규저장"}
+                    </button>
                   </div>
                 </Section>
               </div>
@@ -3716,7 +3805,11 @@ export default function Home() {
                               })
                             );
                           }}
-                          onKeyDown={handleEnterMoveNext}
+                          onKeyDown={(e) => {
+                            if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return;
+                            e.preventDefault();
+                            openAddressSearch(e.currentTarget.value);
+                          }}
                           placeholder="주소 입력"
                         />
 
@@ -3731,12 +3824,7 @@ export default function Home() {
                             fontWeight: 700,
                             cursor: "pointer",
                           }}
-                          onClick={() => {
-                            setAddrKeyword(address || "");
-                            setAddrResults([]);
-                            setAddrSearched(false);
-                            setShowAddrSearch(true);
-                          }}
+                          onClick={openAddressSearch}
                         >
                           찾기
                         </button>
@@ -4350,62 +4438,6 @@ export default function Home() {
                   ))}
                 </div>
               </div>
-
-              <div style={summaryToggleHeader}>
-                <button
-                  type="button"
-                  style={summaryToggleBtn}
-                  onClick={() => setPresenceSummaryOpen((prev) => !prev)}
-                >
-                  {presenceSummaryOpen ? "▼" : "▶"} 거래처별 총 주문수량
-                </button>
-
-                <span style={summaryHintText}>
-                  전체 {presenceClientSummaryRows.length}거래처 / 일치{" "}
-                  {presenceClientSummaryRows.filter((row) => row.warningRows === 0).length} / 확인필요{" "}
-                  {presenceClientSummaryRows.filter((row) => row.warningRows > 0).length}
-                </span>
-              </div>
-
-              {presenceSummaryOpen && (
-                <div style={{ ...verifyTableWrap, marginBottom: 18 }}>
-                  <table style={verifyTable}>
-                    <thead>
-                      <tr>
-                        <th style={verifyHeaderCell}>거래처명</th>
-                        <th style={verifyHeaderCell}>총 주문수량</th>
-                        <th style={verifyHeaderCell}>품목수</th>
-                        <th style={verifyHeaderCell}>일치</th>
-                        <th style={verifyHeaderCell}>확인필요</th>
-                        <th style={verifyHeaderCell}>상태</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredPresenceClientSummaryRows.length === 0 ? (
-                        <tr>
-                          <td style={verifyCell} colSpan={6}>
-                            조건에 맞는 거래처가 없습니다.
-                          </td>
-                        </tr>
-                      ) : (
-                        filteredPresenceClientSummaryRows.map((row) => (
-                          <tr key={row.clientName}>
-                            <td style={verifyCell}>{row.clientName}</td>
-                            <td style={verifyCell}>{row.totalQty}</td>
-                            <td style={verifyCell}>{row.totalRows}</td>
-                            <td style={verifyCell}>{row.matchedRows}</td>
-                            <td style={verifyCell}>{row.warningRows}</td>
-                            <td style={verifyCell}>
-                              {row.warningRows === 0 ? "전체 일치" : "확인필요"}
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-
               <div style={verifyTableWrap}>
                 <table style={verifyTable}>
                   <thead>
@@ -4467,54 +4499,6 @@ export default function Home() {
                   ))}
                 </div>
               </div>
-                
-              <div style={summaryToggleHeader}>
-                <button
-                  type="button"
-                  style={summaryToggleBtn}
-                  onClick={() => setQtySummaryOpen((prev) => !prev)}
-                >
-                  {qtySummaryOpen ? "▼" : "▶"} 거래처별 총 출고수량
-                </button>
-
-                <span style={summaryHintText}>
-                  전체 {qtyClientSummaryRows.length} / 일치{" "}
-                  {qtyClientSummaryRows.filter((row) => row.warningRows === 0).length} / 확인필요{" "}
-                  {qtyClientSummaryRows.filter((row) => row.warningRows > 0).length}
-                </span>
-              </div>
-
-              {qtySummaryOpen && (
-                <div style={{ ...verifyTableWrap, marginBottom: 18 }}>
-                  <table style={verifyTable}>
-                    <thead>
-                      <tr>
-                        <th style={verifyHeaderCell}>거래처명</th>
-                        <th style={verifyHeaderCell}>총 출고수량</th>
-                        <th style={verifyHeaderCell}>품목수</th>
-                        <th style={verifyHeaderCell}>일치</th>
-                        <th style={verifyHeaderCell}>확인필요</th>
-                        <th style={verifyHeaderCell}>상태</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredQtyClientSummaryRows.map((row) => (
-                        <tr key={row.clientName}>
-                          <td style={verifyCell}>{row.clientName}</td>
-                          <td style={verifyCell}>{row.totalQty}</td>
-                          <td style={verifyCell}>{row.totalRows}</td>
-                          <td style={verifyCell}>{row.matchedRows}</td>
-                          <td style={verifyCell}>{row.warningRows}</td>
-                          <td style={verifyCell}>
-                            {row.warningRows === 0 ? "전체 일치" : "확인필요"}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-
               <div style={verifyTableWrap}>
                 <table style={verifyTable}>
                   <thead>
@@ -4841,7 +4825,7 @@ export default function Home() {
                       }}
                     >
                       <div style={masterListName}>{item.name}</div>
-                      <div style={masterListSub}>{item.phone || "-"}</div>
+                      <div style={masterListSub}>{item.phone || "-"}{item.note ? ` / ${item.note}` : ""}</div>
                     </button>
                   ))}
                 </div>
@@ -4861,6 +4845,11 @@ export default function Home() {
                     label="전화번호"
                     value={senderForm.phone || ""}
                     set={(v) => setSenderForm((prev) => ({ ...prev, phone: v }))}
+                  />
+                  <Input
+                    label="특기사항"
+                    value={senderForm.note || ""}
+                    set={(v) => setSenderForm((prev) => ({ ...prev, note: v }))}
                   />
                 </div>
 
@@ -4984,8 +4973,8 @@ export default function Home() {
         )}
 
         {detailOpen && editForm && (
-          <div style={modalBackdrop} onClick={closeDetail}>
-            <div style={modalCard} onClick={(e) => e.stopPropagation()}>
+          <div style={modalBackdrop}>
+            <div style={modalCard}>
               <div style={modalHeader}>
                 <div>
                   <div style={detailTitle}>상세정보 수정</div>
@@ -5258,31 +5247,21 @@ export default function Home() {
               <h3>주소 검색</h3>
 
               <input
+                ref={addrSearchInputRef}
                 style={{ ...input, marginBottom: 10 }}
                 value={addrKeyword}
                 onChange={(e) => setAddrKeyword(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return;
+                  e.preventDefault();
+                  void handleAddressSearch();
+                }}
                 placeholder="주소 입력"
               />
 
               <button
                 style={modalSaveBtn}
-                onClick={async () => {
-                  try {
-                    const result = await searchAddress(addrKeyword);
-                    console.log("주소검색 결과", result);
-                    setAddrResults(result);
-                    setAddrSearched(true);
-                  } catch (error) {
-                    console.error("주소검색 실패", error);
-                    alert(
-                      error instanceof Error
-                        ? error.message
-                        : "주소검색에 실패했습니다."
-                    );
-                    setAddrResults([]);
-                    setAddrSearched(true);
-                  }
-                }}
+                onClick={() => void handleAddressSearch()}
               >
                 검색
               </button>
@@ -6482,6 +6461,18 @@ const smallBlueBtn: CSSProperties = {
   fontWeight: 800,
 };
 
+const quickMasterRow: CSSProperties = {
+  marginTop: 10,
+  display: "flex",
+  justifyContent: "flex-end",
+};
+
+const disabledSmallBtn: CSSProperties = {
+  ...smallGrayBtn,
+  opacity: 0.55,
+  cursor: "not-allowed",
+};
+
 const smallRedBtn: CSSProperties = {
   border: "none",
   background: "#ef4444",
@@ -6544,35 +6535,4 @@ const verifyTextArea: CSSProperties = {
   resize: "vertical",
   fontFamily: "inherit",
   lineHeight: 1.45,
-};
-
-const summaryToggleHeader: CSSProperties = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-  gap: 12,
-  flexWrap: "wrap",
-  marginTop: 8,
-  marginBottom: 10,
-};
-
-const summaryToggleBtn: CSSProperties = {
-  border: "none",
-  background: "transparent",
-  padding: 0,
-  margin: 0,
-  cursor: "pointer",
-  fontSize: 18,
-  fontWeight: 800,
-  color: "#111827",
-  textAlign: "left",
-  display: "inline-flex",
-  alignItems: "center",
-  gap: 6,
-};
-
-const summaryHintText: CSSProperties = {
-  fontSize: 13,
-  color: "#6b7280",
-  fontWeight: 700,
 };
