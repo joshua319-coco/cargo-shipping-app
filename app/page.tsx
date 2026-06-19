@@ -1,8 +1,12 @@
-
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, ReactNode, KeyboardEvent as ReactKeyboardEvent, RefObject } from "react";
+import type {
+  CSSProperties,
+  ReactNode,
+  KeyboardEvent as ReactKeyboardEvent,
+  RefObject,
+} from "react";
 import { supabase } from "@/lib/supabase";
 import type { Session } from "@supabase/supabase-js";
 
@@ -18,7 +22,12 @@ type Party = {
 
 type PayType = "착불" | "선불";
 type DeliveryType = "정기" | "택배";
-type TabType = "출고등록" | "출고목록" | "운송장번호" | "발송검증" | "마스터관리";
+type TabType =
+  | "출고등록"
+  | "출고목록"
+  | "운송장번호"
+  | "발송검증"
+  | "마스터관리";
 
 type BranchPostalItem = {
   branch: string;
@@ -67,6 +76,11 @@ type WaybillUploadRow = {
   branch: string;
   waybillNo: string;
   raw: Record<string, unknown>;
+};
+
+type DatedWaybillUploadRow = WaybillUploadRow & {
+  sessionDate: string;
+  historyId: string;
 };
 
 type OrderStatusRow = {
@@ -128,7 +142,11 @@ type QtyVerificationRow = {
   reasons: string[];
 };
 
-type WaybillVerificationStatus = "일치" | "확인필요" | "출고목록만" | "발송데이터만";
+type WaybillVerificationStatus =
+  | "일치"
+  | "확인필요"
+  | "출고목록만"
+  | "발송데이터만";
 
 type WaybillVerificationRow = {
   id: string;
@@ -157,6 +175,10 @@ type SharedVerifyStateRow = {
   order_file_name: string;
   sales_file_name: string;
   pda_paste_text: string;
+  qty_sales_status_rows: SalesStatusRow[];
+  qty_pda_rows: PdaRow[];
+  qty_sales_file_name: string;
+  qty_pda_paste_text: string;
   updated_at?: string;
 };
 
@@ -294,15 +316,8 @@ function normalizeChecklist(raw: any): Checklist {
   return {
     pda: raw?.pda ?? raw?.processPda ?? raw?.pdaRegister ?? false,
     waybill:
-      raw?.waybill ??
-      raw?.closingWaybill ??
-      raw?.waybillRegister ??
-      false,
-    closedDone:
-      raw?.closedDone ??
-      raw?.closed_done ??
-      raw?.closeDone ??
-      false,
+      raw?.waybill ?? raw?.closingWaybill ?? raw?.waybillRegister ?? false,
+    closedDone: raw?.closedDone ?? raw?.closed_done ?? raw?.closeDone ?? false,
   };
 }
 
@@ -330,11 +345,10 @@ function normalizeShipment(raw: any): SavedShipment {
         pda: raw?.pda,
         waybill: raw?.waybill,
         closedDone: raw?.closed_done,
-      }
+      },
     ),
   };
 }
-
 
 function normalizeReceiverMasterRows(rows: any[]): Party[] {
   return (rows ?? []).map((row) => ({
@@ -364,17 +378,32 @@ function normalizeBranchMasterRows(rows: any[]): BranchPostalItem[] {
   }));
 }
 
-function normalizeSharedVerifyState(raw: any, sessionDate: string): SharedVerifyStateRow {
+function normalizeSharedVerifyState(
+  raw: any,
+  sessionDate: string,
+): SharedVerifyStateRow {
   return {
     session_date: raw?.session_date ?? sessionDate,
-    waybill_upload_rows: Array.isArray(raw?.waybill_upload_rows) ? raw.waybill_upload_rows : [],
+    waybill_upload_rows: Array.isArray(raw?.waybill_upload_rows)
+      ? raw.waybill_upload_rows
+      : [],
     waybill_upload_file_name: raw?.waybill_upload_file_name ?? "",
-    order_status_rows: Array.isArray(raw?.order_status_rows) ? raw.order_status_rows : [],
-    sales_status_rows: Array.isArray(raw?.sales_status_rows) ? raw.sales_status_rows : [],
+    order_status_rows: Array.isArray(raw?.order_status_rows)
+      ? raw.order_status_rows
+      : [],
+    sales_status_rows: Array.isArray(raw?.sales_status_rows)
+      ? raw.sales_status_rows
+      : [],
     pda_rows: Array.isArray(raw?.pda_rows) ? raw.pda_rows : [],
     order_file_name: raw?.order_file_name ?? "",
     sales_file_name: raw?.sales_file_name ?? "",
     pda_paste_text: raw?.pda_paste_text ?? "",
+    qty_sales_status_rows: Array.isArray(raw?.qty_sales_status_rows)
+      ? raw.qty_sales_status_rows
+      : [],
+    qty_pda_rows: Array.isArray(raw?.qty_pda_rows) ? raw.qty_pda_rows : [],
+    qty_sales_file_name: raw?.qty_sales_file_name ?? "",
+    qty_pda_paste_text: raw?.qty_pda_paste_text ?? "",
     updated_at: raw?.updated_at,
   };
 }
@@ -410,7 +439,9 @@ function toBranchMasterRows(items: BranchPostalItem[]) {
 function matchesParty(item: Party, keyword: string) {
   const k = keyword.trim().toLowerCase();
   if (!k) return false;
-  const pool = [item.name, ...(item.aliases || []), item.note || ""].map((v) => v.toLowerCase());
+  const pool = [item.name, ...(item.aliases || []), item.note || ""].map((v) =>
+    v.toLowerCase(),
+  );
   return pool.some((text) => text.includes(k));
 }
 
@@ -443,11 +474,16 @@ function displayReceiverName(sender: string, receiver: string) {
   const safeReceiver = asString(receiver);
 
   if (!safeReceiver) return safeSender;
-  return safeSender && safeSender !== "상화시스템" ? `${safeSender}-${safeReceiver}` : safeReceiver;
+  return safeSender && safeSender !== "상화시스템"
+    ? `${safeSender}-${safeReceiver}`
+    : safeReceiver;
 }
 
 function parseNumberValue(value: unknown) {
-  const text = asString(value).replace(/,/g, "").replace(/원/g, "").replace(/[^0-9.\-]/g, "");
+  const text = asString(value)
+    .replace(/,/g, "")
+    .replace(/원/g, "")
+    .replace(/[^0-9.\-]/g, "");
   if (!text) return 0;
   const num = Number(text);
   return Number.isFinite(num) ? num : 0;
@@ -489,12 +525,18 @@ function addressesClose(a: string, b: string) {
 }
 
 function simplifyWaybillSenderName(sender: string) {
-  return asString(sender).replace(/^상화\s*\/\s*/g, "").trim();
+  return asString(sender)
+    .replace(/^상화\s*\/\s*/g, "")
+    .trim();
 }
 
 function isMainSenderName(sender: string) {
   const normalized = normalizeLooseText(simplifyWaybillSenderName(sender));
-  return !normalized || normalized === normalizeLooseText("상화") || normalized === normalizeLooseText("상화시스템");
+  return (
+    !normalized ||
+    normalized === normalizeLooseText("상화") ||
+    normalized === normalizeLooseText("상화시스템")
+  );
 }
 
 function buildWaybillListName(sender: string, receiver: string) {
@@ -540,22 +582,60 @@ function buildWaybillMessageText(params: {
     .trim();
 }
 
-function parseWaybillUploadRows(rows: Record<string, unknown>[]): WaybillUploadRow[] {
+function parseWaybillUploadRows(
+  rows: Record<string, unknown>[],
+): WaybillUploadRow[] {
   return rows
     .map((row, index) => {
-      const sender = getRowValue(row, ["발화주명", "발송인명", "보내는분", "보내는분명", "발송업체명"]);
-      const receiver = getRowValue(row, ["수화주명", "받는분", "수취인명", "수하인명"]);
+      const sender = getRowValue(row, [
+        "발화주명",
+        "발송인명",
+        "보내는분",
+        "보내는분명",
+        "발송업체명",
+      ]);
+      const receiver = getRowValue(row, [
+        "수화주명",
+        "받는분",
+        "수취인명",
+        "수하인명",
+      ]);
       const receiverPhone = normalizeDigits(
-        getRowValue(row, ["수화주전화", "수화주전화1", "수화주전화번호", "받는분전화", "받는분전화번호"])
+        getRowValue(row, [
+          "수화주전화",
+          "수화주전화1",
+          "수화주전화번호",
+          "받는분전화",
+          "받는분전화번호",
+        ]),
       );
       const address = getRowValue(row, ["수화주주소", "주소", "받는분주소"]);
-      const qty = parseNumberValue(getRowValue(row, ["수량", "박스수량", "건수"]));
-      const fare = parseNumberValue(getRowValue(row, ["총운임", "운임", "총배송비"]));
-      const delivery = normalizeWaybillDelivery(getRowValue(row, ["운송상품", "운송상품명", "운송방법"]));
-      const pay = normalizeWaybillPay(getRowValue(row, ["지불방법", "운임구분"]));
-      const branch = getRowValue(row, ["도착지", "도착영업소", "도착지점", "도착영업소명"]);
+      const qty = parseNumberValue(
+        getRowValue(row, ["수량", "박스수량", "건수"]),
+      );
+      const fare = parseNumberValue(
+        getRowValue(row, ["총운임", "운임", "총배송비"]),
+      );
+      const delivery = normalizeWaybillDelivery(
+        getRowValue(row, ["운송상품", "운송상품명", "운송방법"]),
+      );
+      const pay = normalizeWaybillPay(
+        getRowValue(row, ["지불방법", "운임구분"]),
+      );
+      const branch = getRowValue(row, [
+        "도착지",
+        "도착영업소",
+        "도착지점",
+        "도착영업소명",
+      ]);
       const waybillNo = normalizeDigits(
-        getRowValue(row, ["운송장번호", "송장번호", "운송장", "운송장No", "운송장 NO"])
+        getRowValue(row, [
+          "운송장번호",
+          "송장번호",
+          "운송장",
+          "운송장No",
+          "운송장 NO",
+        ]),
       );
 
       return {
@@ -581,7 +661,7 @@ function parseWaybillUploadRows(rows: Record<string, unknown>[]): WaybillUploadR
         item.address ||
         item.qty > 0 ||
         item.fare > 0 ||
-        item.waybillNo
+        item.waybillNo,
     );
 }
 
@@ -590,7 +670,10 @@ function scoreWaybillPair(shipment: SavedShipment, upload: WaybillUploadRow) {
   const uploadQty = normalizeQtyForCompare(upload.qty);
   const shipmentFare = Number(String(shipment.fare).replace(/,/g, "")) || 0;
   const shipmentPhone = normalizeDigits(shipment.receiverPhone);
-  const shipmentListName = displayReceiverName(shipment.sender, shipment.receiver);
+  const shipmentListName = displayReceiverName(
+    shipment.sender,
+    shipment.receiver,
+  );
   const uploadListName = buildWaybillListName(upload.sender, upload.receiver);
 
   let score = 0;
@@ -605,19 +688,43 @@ function scoreWaybillPair(shipment: SavedShipment, upload: WaybillUploadRow) {
   else score -= 2;
 
   if (shipmentFare === upload.fare) score += 3;
-  else if (shipmentFare > 0 && upload.fare > 0 && Math.abs(shipmentFare - upload.fare) <= 100) score += 1;
+  else if (
+    shipmentFare > 0 &&
+    upload.fare > 0 &&
+    Math.abs(shipmentFare - upload.fare) <= 100
+  )
+    score += 1;
 
   if (valuesClose(shipment.receiver, upload.receiver)) score += 7;
-  if (valuesClose(shipment.sender, upload.sender) || valuesClose(shipment.sender, simplifyWaybillSenderName(upload.sender))) score += 4;
+  if (
+    valuesClose(shipment.sender, upload.sender) ||
+    valuesClose(shipment.sender, simplifyWaybillSenderName(upload.sender))
+  )
+    score += 4;
   if (valuesClose(shipmentListName, uploadListName)) score += 6;
 
-  if (shipmentPhone && upload.receiverPhone && shipmentPhone === upload.receiverPhone) score += 4;
+  if (
+    shipmentPhone &&
+    upload.receiverPhone &&
+    shipmentPhone === upload.receiverPhone
+  )
+    score += 4;
 
-  if (shipment.delivery === "정기" && shipment.branch && upload.branch && valuesClose(shipment.branch, upload.branch)) {
+  if (
+    shipment.delivery === "정기" &&
+    shipment.branch &&
+    upload.branch &&
+    valuesClose(shipment.branch, upload.branch)
+  ) {
     score += 4;
   }
 
-  if (shipment.delivery === "택배" && shipment.address && upload.address && addressesClose(shipment.address, upload.address)) {
+  if (
+    shipment.delivery === "택배" &&
+    shipment.address &&
+    upload.address &&
+    addressesClose(shipment.address, upload.address)
+  ) {
     score += 4;
   }
 
@@ -626,9 +733,13 @@ function scoreWaybillPair(shipment: SavedShipment, upload: WaybillUploadRow) {
 
 function buildWaybillVerificationRows(
   shipments: SavedShipment[],
-  uploads: WaybillUploadRow[]
+  uploads: WaybillUploadRow[],
 ): WaybillVerificationRow[] {
-  const scoredPairs: Array<{ shipmentIndex: number; uploadIndex: number; score: number }> = [];
+  const scoredPairs: Array<{
+    shipmentIndex: number;
+    uploadIndex: number;
+    score: number;
+  }> = [];
 
   shipments.forEach((shipment, shipmentIndex) => {
     uploads.forEach((upload, uploadIndex) => {
@@ -643,10 +754,16 @@ function buildWaybillVerificationRows(
 
   const matchedShipmentIndexes = new Set<number>();
   const matchedUploadIndexes = new Set<number>();
-  const matchedPairs: Array<{ shipment: SavedShipment; upload: WaybillUploadRow }> = [];
+  const matchedPairs: Array<{
+    shipment: SavedShipment;
+    upload: WaybillUploadRow;
+  }> = [];
 
   for (const pair of scoredPairs) {
-    if (matchedShipmentIndexes.has(pair.shipmentIndex) || matchedUploadIndexes.has(pair.uploadIndex)) {
+    if (
+      matchedShipmentIndexes.has(pair.shipmentIndex) ||
+      matchedUploadIndexes.has(pair.uploadIndex)
+    ) {
       continue;
     }
 
@@ -670,7 +787,10 @@ function buildWaybillVerificationRows(
       reasons.push("수화주명 확인");
     }
 
-    if (shipment.sender !== "상화시스템" && !valuesClose(shipment.sender, simplifyWaybillSenderName(upload.sender))) {
+    if (
+      shipment.sender !== "상화시스템" &&
+      !valuesClose(shipment.sender, simplifyWaybillSenderName(upload.sender))
+    ) {
       reasons.push("발화주명 확인");
     }
 
@@ -690,11 +810,21 @@ function buildWaybillVerificationRows(
       reasons.push("총운임 확인");
     }
 
-    if (shipment.delivery === "정기" && shipment.branch && upload.branch && !valuesClose(shipment.branch, upload.branch)) {
-      reasons.push("도착지 확인");
+    if (
+      shipment.delivery === "정기" &&
+      shipment.branch &&
+      upload.branch &&
+      !valuesClose(shipment.branch, upload.branch)
+    ) {
+      reasons.push("도착영업소 확인");
     }
 
-    if (shipment.delivery === "택배" && shipment.address && upload.address && !addressesClose(shipment.address, upload.address)) {
+    if (
+      shipment.delivery === "택배" &&
+      shipment.address &&
+      upload.address &&
+      !addressesClose(shipment.address, upload.address)
+    ) {
       reasons.push("주소 확인");
     }
 
@@ -729,7 +859,9 @@ function buildWaybillVerificationRows(
       qtyText: String(normalizeQtyForCompare(shipment.qty)),
       deliveryText: displayDelivery(shipment.delivery),
       payText: shipment.pay,
-      fareText: (Number(String(shipment.fare).replace(/,/g, "")) || 0).toLocaleString("ko-KR"),
+      fareText: (
+        Number(String(shipment.fare).replace(/,/g, "")) || 0
+      ).toLocaleString("ko-KR"),
       waybillNo: "",
       reasons: ["발송데이터에 없음"],
     });
@@ -755,7 +887,9 @@ function buildWaybillVerificationRows(
   return rows;
 }
 
-function parseOrderStatusExcelRows(rows: Record<string, unknown>[]): OrderStatusRow[] {
+function parseOrderStatusExcelRows(
+  rows: Record<string, unknown>[],
+): OrderStatusRow[] {
   return rows
     .map((row, index) => {
       const qty = parseNumberValue(getRowValue(row, ["수량"]));
@@ -773,7 +907,9 @@ function parseOrderStatusExcelRows(rows: Record<string, unknown>[]): OrderStatus
     .filter((row) => row.clientName && row.itemCode);
 }
 
-function parseSalesStatusExcelRows(rows: Record<string, unknown>[]): SalesStatusRow[] {
+function parseSalesStatusExcelRows(
+  rows: Record<string, unknown>[],
+): SalesStatusRow[] {
   return rows
     .map((row, index) => {
       const qty = parseNumberValue(getRowValue(row, ["수량"]));
@@ -822,14 +958,14 @@ function parsePdaClipboardText(text: string): PdaRow[] {
 function buildPresenceVerificationRows(
   orderRows: OrderStatusRow[],
   pdaRows: PdaRow[],
-  salesRows: SalesStatusRow[]
+  salesRows: SalesStatusRow[],
 ): PresenceVerificationRow[] {
   const orderMap = sumRowsByKey(orderRows);
   const pdaMap = sumRowsByKey(pdaRows);
   const salesMap = sumRowsByKey(salesRows);
 
   const allKeys = Array.from(
-    new Set([...orderMap.keys(), ...pdaMap.keys(), ...salesMap.keys()])
+    new Set([...orderMap.keys(), ...pdaMap.keys(), ...salesMap.keys()]),
   );
 
   return allKeys.map((key, index) => {
@@ -837,7 +973,8 @@ function buildPresenceVerificationRows(
     const pda = pdaMap.get(key);
     const sales = salesMap.get(key);
 
-    const clientName = order?.clientName || pda?.clientName || sales?.clientName || "";
+    const clientName =
+      order?.clientName || pda?.clientName || sales?.clientName || "";
     const itemCode = order?.itemCode || pda?.itemCode || sales?.itemCode || "";
     const pdaExempt = isPdaExemptItemCode(itemCode);
 
@@ -870,7 +1007,8 @@ function buildPresenceVerificationRows(
         if (!pdaExists) reasons.push("PDA 없음");
         if (!salesExists) reasons.push("판매현황 없음");
       } else {
-        if (orderQty !== pdaOrderQty) reasons.push("주문서/PDA 주문수량 불일치");
+        if (orderQty !== pdaOrderQty)
+          reasons.push("주문서/PDA 주문수량 불일치");
         if (orderQty !== salesQty) reasons.push("주문서/판매현황 수량 불일치");
         if (pdaOrderQty !== salesQty) reasons.push("PDA/판매현황 수량 불일치");
 
@@ -898,15 +1036,12 @@ function buildPresenceVerificationRows(
 
 function buildQtyVerificationRows(
   pdaRows: PdaRow[],
-  salesRows: SalesStatusRow[]
+  salesRows: SalesStatusRow[],
 ): QtyVerificationRow[] {
   const pdaMap = sumRowsByKey(pdaRows);
   const salesMap = sumRowsByKey(salesRows);
 
-  const allKeys = Array.from(new Set([
-    ...pdaMap.keys(),
-    ...salesMap.keys(),
-  ]));
+  const allKeys = Array.from(new Set([...pdaMap.keys(), ...salesMap.keys()]));
 
   return allKeys.map((key, index) => {
     const pda = pdaMap.get(key);
@@ -947,7 +1082,14 @@ function buildQtyVerificationRows(
   });
 }
 
-function sumRowsByKey<T extends { clientName: string; itemCode: string; orderQty: number; shippedQty: number }>(rows: T[]) {
+function sumRowsByKey<
+  T extends {
+    clientName: string;
+    itemCode: string;
+    orderQty: number;
+    shippedQty: number;
+  },
+>(rows: T[]) {
   const map = new Map<
     string,
     {
@@ -1014,12 +1156,13 @@ function focusNextFormField(current: HTMLElement, reverse = false) {
   if (typeof document === "undefined") return;
 
   const scope =
-    (current.closest('[data-enter-scope="form"]') as HTMLElement | null) ?? document.body;
+    (current.closest('[data-enter-scope="form"]') as HTMLElement | null) ??
+    document.body;
 
   const candidates = Array.from(
     scope.querySelectorAll<HTMLElement>(
-      "input:not([type='hidden']):not([disabled]), select:not([disabled]), textarea:not([disabled])"
-    )
+      "input:not([type='hidden']):not([disabled]), select:not([disabled]), textarea:not([disabled])",
+    ),
   ).filter((element) => element.offsetParent !== null);
 
   const currentIndex = candidates.indexOf(current);
@@ -1037,7 +1180,8 @@ function focusNextFormField(current: HTMLElement, reverse = false) {
 }
 
 function handleEnterMoveNext(event: ReactKeyboardEvent<HTMLElement>) {
-  if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+  if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing)
+    return;
   if (event.currentTarget instanceof HTMLTextAreaElement) return;
 
   event.preventDefault();
@@ -1081,6 +1225,49 @@ function getSeoulDateKey(input: string | Date) {
 
 function getTodaySeoulDateKey() {
   return getSeoulDateKey(new Date());
+}
+
+function addDaysToDateKey(dateKey: string, days: number) {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day + days));
+
+  return [
+    date.getUTCFullYear(),
+    String(date.getUTCMonth() + 1).padStart(2, "0"),
+    String(date.getUTCDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+function getSeoulDayUtcRange(dateKey: string) {
+  const nextDateKey = addDaysToDateKey(dateKey, 1);
+
+  return {
+    startUtc: new Date(`${dateKey}T00:00:00+09:00`).toISOString(),
+    endUtc: new Date(`${nextDateKey}T00:00:00+09:00`).toISOString(),
+  };
+}
+
+function isValidDateRange(fromDate: string, toDate: string) {
+  return Boolean(fromDate && toDate && fromDate <= toDate);
+}
+
+function isDateKeyInRange(dateKey: string, fromDate: string, toDate: string) {
+  return dateKey >= fromDate && dateKey <= toDate;
+}
+
+function formatDateKeyKo(dateKey: string) {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  if (!year || !month || !day) return dateKey;
+  return `${year}. ${month}. ${day}.`;
+}
+
+function formatDateRangeKo(fromDate: string, toDate: string) {
+  if (fromDate === toDate) return formatDateKeyKo(fromDate);
+  return `${formatDateKeyKo(fromDate)} ~ ${formatDateKeyKo(toDate)}`;
+}
+
+function buildShipmentDuplicateKey(sender: string, receiver: string) {
+  return normalizeLooseText(displayReceiverName(sender, receiver));
 }
 
 function isJejuDestination(params: {
@@ -1192,18 +1379,23 @@ function normalizeHeaderKey(value: unknown) {
 }
 
 function getRowValue(row: Record<string, unknown>, keys: string[]) {
-  const normalizedEntries = Object.entries(row).map(([key, value]) => [
-    normalizeHeaderKey(key),
-    value,
-  ] as const);
+  const normalizedEntries = Object.entries(row).map(
+    ([key, value]) => [normalizeHeaderKey(key), value] as const,
+  );
 
   for (const key of keys) {
     const normalizedKey = normalizeHeaderKey(key);
-    const found = normalizedEntries.find(([rowKey]) => rowKey === normalizedKey);
+    const found = normalizedEntries.find(
+      ([rowKey]) => rowKey === normalizedKey,
+    );
 
     if (found) {
       const value = found[1];
-      if (value !== undefined && value !== null && String(value).trim() !== "") {
+      if (
+        value !== undefined &&
+        value !== null &&
+        String(value).trim() !== ""
+      ) {
         return String(value).trim();
       }
     }
@@ -1213,13 +1405,17 @@ function getRowValue(row: Record<string, unknown>, keys: string[]) {
 }
 
 function findHeaderRowIndex(sheetRows: unknown[][], requiredHeaders: string[]) {
-  const normalizedRequired = requiredHeaders.map((header) => normalizeHeaderKey(header));
+  const normalizedRequired = requiredHeaders.map((header) =>
+    normalizeHeaderKey(header),
+  );
 
   for (let i = 0; i < sheetRows.length; i += 1) {
     const row = Array.isArray(sheetRows[i]) ? sheetRows[i] : [];
     const normalizedRow = row.map((cell) => normalizeHeaderKey(cell));
 
-    const matched = normalizedRequired.every((header) => normalizedRow.includes(header));
+    const matched = normalizedRequired.every((header) =>
+      normalizedRow.includes(header),
+    );
     if (matched) return i;
   }
 
@@ -1229,7 +1425,7 @@ function findHeaderRowIndex(sheetRows: unknown[][], requiredHeaders: string[]) {
 function readSheetRowsFromDetectedHeader(
   XLSX: any,
   sheet: any,
-  requiredHeaders: string[]
+  requiredHeaders: string[],
 ): Record<string, unknown>[] {
   const rawRows = XLSX.utils.sheet_to_json(sheet, {
     header: 1,
@@ -1314,7 +1510,7 @@ function toTemplateRow(
     receiver: string;
     branch: string;
     currentPostalCode?: string;
-  }) => string
+  }) => string,
 ) {
   const safePostal = resolvePostalCodeValue({
     delivery: shipment.delivery,
@@ -1329,10 +1525,7 @@ function toTemplateRow(
     수화주전화1: shipment.receiverPhone || "",
     수화주전화2: "",
     수화주명: shipment.receiver || "",
-    주소:
-      shipment.delivery === "택배"
-        ? shipment.address?.trim() || " "
-        : " ",
+    주소: shipment.delivery === "택배" ? shipment.address?.trim() || " " : " ",
     수량: qty,
     품명: shipment.item || "부품",
     포장: shipment.pack || "박스",
@@ -1384,7 +1577,12 @@ export default function Home() {
     return "출고등록";
   });
 
-  const today = new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const today = new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
 
   const [session, setSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -1443,21 +1641,34 @@ export default function Home() {
 
   const [filterKeyword, setFilterKeyword] = useState("");
   const [payFilter, setPayFilter] = useState<"전체" | PayType>("전체");
-  const [deliveryFilter, setDeliveryFilter] = useState<"전체" | DeliveryType>("전체");
+  const [deliveryFilter, setDeliveryFilter] = useState<"전체" | DeliveryType>(
+    "전체",
+  );
   const [directOnly, setDirectOnly] = useState(false);
   const [waybillUncheckedOnly, setWaybillUncheckedOnly] = useState(false);
   const [pdaUncheckedOnly, setPdaUncheckedOnly] = useState(false);
-  const [listScope, setListScope] = useState<"today" | "all">("today");
+  const [listDateFromDraft, setListDateFromDraft] = useState(() =>
+    getTodaySeoulDateKey(),
+  );
+  const [listDateToDraft, setListDateToDraft] = useState(() =>
+    getTodaySeoulDateKey(),
+  );
+  const [listDateFrom, setListDateFrom] = useState(() =>
+    getTodaySeoulDateKey(),
+  );
+  const [listDateTo, setListDateTo] = useState(() => getTodaySeoulDateKey());
 
   const [receiverMasterKeyword, setReceiverMasterKeyword] = useState("");
   const [senderMasterKeyword, setSenderMasterKeyword] = useState("");
   const [branchMasterKeyword, setBranchMasterKeyword] = useState("");
 
-  const [receiverMasterMode, setReceiverMasterMode] = useState<MasterMode>("new");
+  const [receiverMasterMode, setReceiverMasterMode] =
+    useState<MasterMode>("new");
   const [senderMasterMode, setSenderMasterMode] = useState<MasterMode>("new");
   const [branchMasterMode, setBranchMasterMode] = useState<MasterMode>("new");
 
-  const [selectedReceiverMasterName, setSelectedReceiverMasterName] = useState("");
+  const [selectedReceiverMasterName, setSelectedReceiverMasterName] =
+    useState("");
   const [selectedSenderMasterName, setSelectedSenderMasterName] = useState("");
   const [selectedBranchMasterName, setSelectedBranchMasterName] = useState("");
 
@@ -1488,10 +1699,30 @@ export default function Home() {
   const [addrSearched, setAddrSearched] = useState(false);
 
   const [waybillUploadFileName, setWaybillUploadFileName] = useState("");
-  const [waybillUploadRows, setWaybillUploadRows] = useState<WaybillUploadRow[]>([]);
+  const [waybillUploadRows, setWaybillUploadRows] = useState<
+    WaybillUploadRow[]
+  >([]);
   const [verificationKeyword, setVerificationKeyword] = useState("");
-  const [verificationMismatchOnly, setVerificationMismatchOnly] = useState(false);
+  const [verificationMismatchOnly, setVerificationMismatchOnly] =
+    useState(false);
   const [copiedWaybillMessageId, setCopiedWaybillMessageId] = useState("");
+  const [waybillHistoryRows, setWaybillHistoryRows] = useState<
+    DatedWaybillUploadRow[]
+  >([]);
+  const [waybillHistoryKeyword, setWaybillHistoryKeyword] = useState("");
+  const [waybillHistoryLoading, setWaybillHistoryLoading] = useState(false);
+  const [waybillDateFromDraft, setWaybillDateFromDraft] = useState(() =>
+    getTodaySeoulDateKey(),
+  );
+  const [waybillDateToDraft, setWaybillDateToDraft] = useState(() =>
+    getTodaySeoulDateKey(),
+  );
+  const [waybillDateFrom, setWaybillDateFrom] = useState(() =>
+    getTodaySeoulDateKey(),
+  );
+  const [waybillDateTo, setWaybillDateTo] = useState(() =>
+    getTodaySeoulDateKey(),
+  );
 
   const [verifyTab, setVerifyTab] = useState<VerifySubTab>("대신 발송검증");
 
@@ -1503,13 +1734,21 @@ export default function Home() {
   const [salesFileName, setSalesFileName] = useState("");
 
   const [presenceKeyword, setPresenceKeyword] = useState("");
-  const [presenceViewFilter, setPresenceViewFilter] = useState<VerifyViewFilter>("전체");
+  const [presenceViewFilter, setPresenceViewFilter] =
+    useState<VerifyViewFilter>("전체");
 
   const [qtyKeyword, setQtyKeyword] = useState("");
   const [qtyViewFilter, setQtyViewFilter] = useState<VerifyViewFilter>("전체");
+  const [qtySalesStatusRows, setQtySalesStatusRows] = useState<
+    SalesStatusRow[]
+  >([]);
+  const [qtyPdaRows, setQtyPdaRows] = useState<PdaRow[]>([]);
+  const [qtySalesFileName, setQtySalesFileName] = useState("");
+  const [qtyPdaPasteText, setQtyPdaPasteText] = useState("");
 
   const orderUploadRef = useRef<HTMLInputElement | null>(null);
   const salesUploadRef = useRef<HTMLInputElement | null>(null);
+  const qtySalesUploadRef = useRef<HTMLInputElement | null>(null);
   const [pdaPasteText, setPdaPasteText] = useState("");
 
   const loadShipmentsFromDb = async () => {
@@ -1579,7 +1818,9 @@ export default function Home() {
 
   const getVerifySessionDate = () => getTodaySeoulDateKey();
 
-  const buildEmptySharedVerifyState = (sessionDate: string): SharedVerifyStateRow => ({
+  const buildEmptySharedVerifyState = (
+    sessionDate: string,
+  ): SharedVerifyStateRow => ({
     session_date: sessionDate,
     waybill_upload_rows: [],
     waybill_upload_file_name: "",
@@ -1589,19 +1830,36 @@ export default function Home() {
     order_file_name: "",
     sales_file_name: "",
     pda_paste_text: "",
+    qty_sales_status_rows: [],
+    qty_pda_rows: [],
+    qty_sales_file_name: "",
+    qty_pda_paste_text: "",
   });
 
   const applySharedVerifyState = (row: SharedVerifyStateRow) => {
-    setWaybillUploadRows(Array.isArray(row.waybill_upload_rows) ? row.waybill_upload_rows : []);
+    setWaybillUploadRows(
+      Array.isArray(row.waybill_upload_rows) ? row.waybill_upload_rows : [],
+    );
     setWaybillUploadFileName(row.waybill_upload_file_name || "");
 
-    setOrderStatusRows(Array.isArray(row.order_status_rows) ? row.order_status_rows : []);
-    setSalesStatusRows(Array.isArray(row.sales_status_rows) ? row.sales_status_rows : []);
+    setOrderStatusRows(
+      Array.isArray(row.order_status_rows) ? row.order_status_rows : [],
+    );
+    setSalesStatusRows(
+      Array.isArray(row.sales_status_rows) ? row.sales_status_rows : [],
+    );
     setPdaRows(Array.isArray(row.pda_rows) ? row.pda_rows : []);
 
     setOrderFileName(row.order_file_name || "");
     setSalesFileName(row.sales_file_name || "");
     setPdaPasteText(row.pda_paste_text || "");
+
+    setQtySalesStatusRows(
+      Array.isArray(row.qty_sales_status_rows) ? row.qty_sales_status_rows : [],
+    );
+    setQtyPdaRows(Array.isArray(row.qty_pda_rows) ? row.qty_pda_rows : []);
+    setQtySalesFileName(row.qty_sales_file_name || "");
+    setQtyPdaPasteText(row.qty_pda_paste_text || "");
   };
 
   const loadSharedVerifyStateFromDb = async () => {
@@ -1626,7 +1884,9 @@ export default function Home() {
     applySharedVerifyState(normalizeSharedVerifyState(data, sessionDate));
   };
 
-  const saveSharedVerifyStateToDb = async (patch: Partial<SharedVerifyStateRow> = {}) => {
+  const saveSharedVerifyStateToDb = async (
+    patch: Partial<SharedVerifyStateRow> = {},
+  ) => {
     const sessionDate = getVerifySessionDate();
 
     const { data: existing, error: fetchError } = await supabase
@@ -1661,23 +1921,69 @@ export default function Home() {
     }
   };
 
+  const loadWaybillHistoryFromDb = async (fromDate: string, toDate: string) => {
+    if (!isValidDateRange(fromDate, toDate)) return;
+
+    setWaybillHistoryLoading(true);
+
+    const { data, error } = await supabase
+      .from(SHARED_VERIFY_STATE_TABLE)
+      .select("session_date, waybill_upload_rows")
+      .gte("session_date", fromDate)
+      .lte("session_date", toDate)
+      .order("session_date", { ascending: false });
+
+    setWaybillHistoryLoading(false);
+
+    if (error) {
+      console.error("운송장번호 이력 조회 실패", error);
+      alert("운송장번호 이력 조회 실패: " + error.message);
+      return;
+    }
+
+    const rows: DatedWaybillUploadRow[] = (data ?? []).flatMap(
+      (stateRow: any) => {
+        const sessionDate = asString(stateRow?.session_date);
+        const uploads = Array.isArray(stateRow?.waybill_upload_rows)
+          ? (stateRow.waybill_upload_rows as WaybillUploadRow[])
+          : [];
+
+        return uploads.map((upload, index) => ({
+          ...upload,
+          sessionDate,
+          historyId: `${sessionDate}-${upload.id || index + 1}`,
+        }));
+      },
+    );
+
+    setWaybillHistoryRows(rows);
+  };
+
   const ensureMasterSeedData = async () => {
-    const [
-      receiverCountResult,
-      senderCountResult,
-      branchCountResult,
-    ] = await Promise.all([
-      supabase.from("receiver_master").select("*", { count: "exact", head: true }),
-      supabase.from("sender_master").select("*", { count: "exact", head: true }),
-      supabase.from("branch_master").select("*", { count: "exact", head: true }),
-    ]);
+    const [receiverCountResult, senderCountResult, branchCountResult] =
+      await Promise.all([
+        supabase
+          .from("receiver_master")
+          .select("*", { count: "exact", head: true }),
+        supabase
+          .from("sender_master")
+          .select("*", { count: "exact", head: true }),
+        supabase
+          .from("branch_master")
+          .select("*", { count: "exact", head: true }),
+      ]);
 
     if (receiverCountResult.error) {
-      console.error("receiver_master count 조회 실패", receiverCountResult.error);
+      console.error(
+        "receiver_master count 조회 실패",
+        receiverCountResult.error,
+      );
     } else if ((receiverCountResult.count ?? 0) === 0) {
       const { error } = await supabase
         .from("receiver_master")
-        .upsert(toReceiverMasterRows(initialReceiverList), { onConflict: "name" });
+        .upsert(toReceiverMasterRows(initialReceiverList), {
+          onConflict: "name",
+        });
 
       if (error) {
         console.error("receiver_master 초기 데이터 반영 실패", error);
@@ -1699,17 +2005,17 @@ export default function Home() {
     if (branchCountResult.error) {
       console.error("branch_master count 조회 실패", branchCountResult.error);
     } else if ((branchCountResult.count ?? 0) === 0) {
-      const { error } = await supabase
-        .from("branch_master")
-        .upsert(
-          toBranchMasterRows(
-            Object.entries(initialBranchPostalMap).map(([branch, postalCode]) => ({
+      const { error } = await supabase.from("branch_master").upsert(
+        toBranchMasterRows(
+          Object.entries(initialBranchPostalMap).map(
+            ([branch, postalCode]) => ({
               branch,
               postalCode,
-            }))
+            }),
           ),
-          { onConflict: "branch" }
-        );
+        ),
+        { onConflict: "branch" },
+      );
 
       if (error) {
         console.error("branch_master 초기 데이터 반영 실패", error);
@@ -1724,23 +2030,30 @@ export default function Home() {
     if (alreadyMigrated === "done") return;
 
     try {
-      const [
-        receiverCountResult,
-        senderCountResult,
-        branchCountResult,
-      ] = await Promise.all([
-        supabase.from("receiver_master").select("*", { count: "exact", head: true }),
-        supabase.from("sender_master").select("*", { count: "exact", head: true }),
-        supabase.from("branch_master").select("*", { count: "exact", head: true }),
-      ]);
+      const [receiverCountResult, senderCountResult, branchCountResult] =
+        await Promise.all([
+          supabase
+            .from("receiver_master")
+            .select("*", { count: "exact", head: true }),
+          supabase
+            .from("sender_master")
+            .select("*", { count: "exact", head: true }),
+          supabase
+            .from("branch_master")
+            .select("*", { count: "exact", head: true }),
+        ]);
 
       const rawReceiver = localStorage.getItem(LEGACY_RECEIVER_MASTER_KEY);
       const rawSender = localStorage.getItem(LEGACY_SENDER_MASTER_KEY);
       const rawBranch = localStorage.getItem(LEGACY_BRANCH_MASTER_KEY);
 
-      const parsedReceiver: Party[] = rawReceiver ? JSON.parse(rawReceiver) : [];
+      const parsedReceiver: Party[] = rawReceiver
+        ? JSON.parse(rawReceiver)
+        : [];
       const parsedSender: Party[] = rawSender ? JSON.parse(rawSender) : [];
-      const parsedBranch: BranchPostalItem[] = rawBranch ? JSON.parse(rawBranch) : [];
+      const parsedBranch: BranchPostalItem[] = rawBranch
+        ? JSON.parse(rawBranch)
+        : [];
 
       if ((receiverCountResult.count ?? 0) === 0 && parsedReceiver.length > 0) {
         const { error } = await supabase
@@ -1823,9 +2136,12 @@ export default function Home() {
     clearAuthFeedback();
     setAuthBusy(true);
 
-    const { error } = await supabase.auth.resetPasswordForEmail(authEmail.trim(), {
-      redirectTo: getPasswordResetRedirectUrl(),
-    });
+    const { error } = await supabase.auth.resetPasswordForEmail(
+      authEmail.trim(),
+      {
+        redirectTo: getPasswordResetRedirectUrl(),
+      },
+    );
 
     setAuthBusy(false);
 
@@ -1834,7 +2150,9 @@ export default function Home() {
       return;
     }
 
-    setAuthMessage("비밀번호 재설정 메일을 보냈습니다. 메일의 링크를 눌러 새 비밀번호를 설정해 주세요.");
+    setAuthMessage(
+      "비밀번호 재설정 메일을 보냈습니다. 메일의 링크를 눌러 새 비밀번호를 설정해 주세요.",
+    );
   };
 
   const handleUpdatePassword = async () => {
@@ -1876,7 +2194,9 @@ export default function Home() {
     setAuthMode("login");
     setAuthPassword("");
     setAuthPasswordConfirm("");
-    setAuthMessage("비밀번호가 변경되었습니다. 새 비밀번호로 다시 로그인해 주세요.");
+    setAuthMessage(
+      "비밀번호가 변경되었습니다. 새 비밀번호로 다시 로그인해 주세요.",
+    );
   };
 
   const handleSignOut = async () => {
@@ -1915,7 +2235,9 @@ export default function Home() {
             }
           }
 
-          const { data: { session } } = await supabase.auth.getSession();
+          const {
+            data: { session },
+          } = await supabase.auth.getSession();
 
           if (!mounted) return;
 
@@ -1928,10 +2250,16 @@ export default function Home() {
           }
 
           if (code || mode) {
-            window.history.replaceState({}, document.title, window.location.pathname);
+            window.history.replaceState(
+              {},
+              document.title,
+              window.location.pathname,
+            );
           }
         } else {
-          const { data: { session } } = await supabase.auth.getSession();
+          const {
+            data: { session },
+          } = await supabase.auth.getSession();
           if (!mounted) return;
           setSession(session ?? null);
         }
@@ -1945,7 +2273,9 @@ export default function Home() {
 
     void initAuth();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, nextSession) => {
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, nextSession) => {
       if (!mounted) return;
 
       setSession(nextSession ?? null);
@@ -2003,6 +2333,11 @@ export default function Home() {
   }, [tab]);
 
   useEffect(() => {
+    if (!session || tab !== "운송장번호") return;
+    void loadWaybillHistoryFromDb(waybillDateFrom, waybillDateTo);
+  }, [tab, session?.user.id, waybillDateFrom, waybillDateTo]);
+
+  useEffect(() => {
     if (!session) return;
 
     const channel = supabase
@@ -2012,21 +2347,21 @@ export default function Home() {
         { event: "*", schema: "public", table: "receiver_master" },
         () => {
           void loadReceiverMasterFromDb();
-        }
+        },
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "sender_master" },
         () => {
           void loadSenderMasterFromDb();
-        }
+        },
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "branch_master" },
         () => {
           void loadBranchMasterFromDb();
-        }
+        },
       )
       .subscribe();
 
@@ -2044,18 +2379,30 @@ export default function Home() {
         "postgres_changes",
         { event: "*", schema: "public", table: "shared_verify_state" },
         (payload) => {
-          const row = payload.new as SharedVerifyStateRow | undefined;
-          if (!row) return;
-          if (row.session_date !== getVerifySessionDate()) return;
-          void loadSharedVerifyStateFromDb();
-        }
+          const row = (payload.new || payload.old) as
+            | SharedVerifyStateRow
+            | undefined;
+          const sessionDate = row?.session_date;
+          if (!sessionDate) return;
+
+          if (sessionDate === getVerifySessionDate()) {
+            void loadSharedVerifyStateFromDb();
+          }
+
+          if (
+            tab === "운송장번호" &&
+            isDateKeyInRange(sessionDate, waybillDateFrom, waybillDateTo)
+          ) {
+            void loadWaybillHistoryFromDb(waybillDateFrom, waybillDateTo);
+          }
+        },
       )
       .subscribe();
 
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [session?.user.id]);
+  }, [session?.user.id, tab, waybillDateFrom, waybillDateTo]);
 
   useEffect(() => {
     if (!showAddrSearch) return;
@@ -2076,44 +2423,113 @@ export default function Home() {
     branch: string;
     currentPostalCode?: string;
   }) => {
-    if (params.currentPostalCode?.trim()) return params.currentPostalCode.trim();
+    if (params.currentPostalCode?.trim())
+      return params.currentPostalCode.trim();
 
-    const receiverItem = receiverMaster.find((item) => item.name === params.receiver);
+    const receiverItem = receiverMaster.find(
+      (item) => item.name === params.receiver,
+    );
 
     if (params.delivery === "택배") {
       return receiverItem?.postalCode?.trim() || "";
     }
 
-    const branchItem = branchMaster.find((item) => item.branch === params.branch);
-    return branchItem?.postalCode?.trim() || receiverItem?.postalCode?.trim() || "";
+    const branchItem = branchMaster.find(
+      (item) => item.branch === params.branch,
+    );
+    return (
+      branchItem?.postalCode?.trim() || receiverItem?.postalCode?.trim() || ""
+    );
   };
 
   const receiverMatches = useMemo(
     () => getMatches(receiverMaster, receiver),
-    [receiverMaster, receiver]
+    [receiverMaster, receiver],
   );
 
   const senderMatches = useMemo(
     () => getMatches(senderMaster, sender),
-    [senderMaster, sender]
+    [senderMaster, sender],
   );
 
   const receiverExistsInMaster = useMemo(() => {
     const trimmed = receiver.trim();
-    return !!trimmed && receiverMaster.some((item) => item.name.trim() === trimmed);
+    return (
+      !!trimmed && receiverMaster.some((item) => item.name.trim() === trimmed)
+    );
   }, [receiverMaster, receiver]);
 
   const senderExistsInMaster = useMemo(() => {
     const trimmed = sender.trim();
-    return !!trimmed && senderMaster.some((item) => item.name.trim() === trimmed);
+    return (
+      !!trimmed && senderMaster.some((item) => item.name.trim() === trimmed)
+    );
   }, [senderMaster, sender]);
 
-  const filteredShipments = useMemo(() => {
-    const todayKey = getTodaySeoulDateKey();
+  const handleListDateSearch = () => {
+    if (!isValidDateRange(listDateFromDraft, listDateToDraft)) {
+      alert("조회 시작일은 종료일보다 늦을 수 없습니다.");
+      return;
+    }
 
+    setListDateFrom(listDateFromDraft);
+    setListDateTo(listDateToDraft);
+    setSelectedIds([]);
+    void loadShipmentsFromDb();
+  };
+
+  const showTodayShipmentList = () => {
+    const todayKey = getTodaySeoulDateKey();
+    setListDateFromDraft(todayKey);
+    setListDateToDraft(todayKey);
+    setListDateFrom(todayKey);
+    setListDateTo(todayKey);
+    setSelectedIds([]);
+    void loadShipmentsFromDb();
+  };
+
+  const handleWaybillDateSearch = () => {
+    if (!isValidDateRange(waybillDateFromDraft, waybillDateToDraft)) {
+      alert("조회 시작일은 종료일보다 늦을 수 없습니다.");
+      return;
+    }
+
+    const rangeChanged =
+      waybillDateFrom !== waybillDateFromDraft ||
+      waybillDateTo !== waybillDateToDraft;
+
+    setWaybillDateFrom(waybillDateFromDraft);
+    setWaybillDateTo(waybillDateToDraft);
+    setCopiedWaybillMessageId("");
+
+    if (!rangeChanged) {
+      void loadWaybillHistoryFromDb(waybillDateFromDraft, waybillDateToDraft);
+    }
+  };
+
+  const showTodayWaybillHistory = () => {
+    const todayKey = getTodaySeoulDateKey();
+    setWaybillDateFromDraft(todayKey);
+    setWaybillDateToDraft(todayKey);
+    const rangeChanged =
+      waybillDateFrom !== todayKey || waybillDateTo !== todayKey;
+
+    setWaybillDateFrom(todayKey);
+    setWaybillDateTo(todayKey);
+    setCopiedWaybillMessageId("");
+
+    if (!rangeChanged) {
+      void loadWaybillHistoryFromDb(todayKey, todayKey);
+    }
+  };
+
+  const filteredShipments = useMemo(() => {
     return savedShipments.filter((shipment) => {
       const keyword = filterKeyword.trim().toLowerCase();
-      const displayName = displayReceiverName(shipment.sender, shipment.receiver).toLowerCase();
+      const displayName = displayReceiverName(
+        shipment.sender,
+        shipment.receiver,
+      ).toLowerCase();
 
       const matchesKeyword =
         !keyword ||
@@ -2122,16 +2538,23 @@ export default function Home() {
         shipment.receiver.toLowerCase().includes(keyword) ||
         shipment.memo.toLowerCase().includes(keyword);
 
-      const matchesPay = payFilter === "전체" ? true : shipment.pay === payFilter;
+      const matchesPay =
+        payFilter === "전체" ? true : shipment.pay === payFilter;
       const matchesDelivery =
         deliveryFilter === "전체" ? true : shipment.delivery === deliveryFilter;
-      const matchesDirect = directOnly ? shipment.sender !== "상화시스템" : true;
-      const matchesWaybill = waybillUncheckedOnly ? !shipment.checklist.waybill : true;
+      const matchesDirect = directOnly
+        ? shipment.sender !== "상화시스템"
+        : true;
+      const matchesWaybill = waybillUncheckedOnly
+        ? !shipment.checklist.waybill
+        : true;
       const matchesPda = pdaUncheckedOnly ? !shipment.checklist.pda : true;
-      const matchesDate =
-        listScope === "all"
-          ? true
-          : getSeoulDateKey(shipment.createdAt) === todayKey;
+      const shipmentDateKey = getSeoulDateKey(shipment.createdAt);
+      const matchesDate = isDateKeyInRange(
+        shipmentDateKey,
+        listDateFrom,
+        listDateTo,
+      );
 
       return (
         matchesDate &&
@@ -2143,7 +2566,6 @@ export default function Home() {
         matchesPda
       );
     });
-  
   }, [
     savedShipments,
     filterKeyword,
@@ -2152,28 +2574,33 @@ export default function Home() {
     directOnly,
     waybillUncheckedOnly,
     pdaUncheckedOnly,
-    listScope,
+    listDateFrom,
+    listDateTo,
   ]);
 
   const sortedShipments = useMemo(
     () =>
       [...filteredShipments].sort(
-        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        (a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
       ),
-    [filteredShipments]
+    [filteredShipments],
   );
 
   const summaryCount = filteredShipments.length;
   const summaryQty = filteredShipments.reduce(
     (sum, shipment) => sum + sumCeilQuantity(shipment.qty),
-    0
+    0,
   );
 
   const allFilteredIds = filteredShipments.map((item) => item.id);
   const allFilteredSelected =
-    allFilteredIds.length > 0 && allFilteredIds.every((id) => selectedIds.includes(id));
+    allFilteredIds.length > 0 &&
+    allFilteredIds.every((id) => selectedIds.includes(id));
 
-  const detailProgress = editForm ? checklistProgress(editForm.checklist) : null;
+  const detailProgress = editForm
+    ? checklistProgress(editForm.checklist)
+    : null;
 
   const filteredReceiverMaster = receiverMaster.filter((item) => {
     const keyword = receiverMasterKeyword.trim().toLowerCase();
@@ -2218,7 +2645,7 @@ export default function Home() {
         receiver: party.name,
         branch: party.branch || "",
         currentPostalCode: "",
-      })
+      }),
     );
     setNote(party.note || "");
     setReceiverFocused(false);
@@ -2229,7 +2656,7 @@ export default function Home() {
         pack,
         address: party.address || "",
         branch: party.branch || "",
-      })
+      }),
     );
 
     window.setTimeout(() => {
@@ -2267,7 +2694,7 @@ export default function Home() {
         pack,
         address,
         branch,
-      })
+      }),
     );
   };
 
@@ -2287,9 +2714,7 @@ export default function Home() {
     } catch (error) {
       console.error("주소검색 실패", error);
       alert(
-        error instanceof Error
-          ? error.message
-          : "주소검색에 실패했습니다."
+        error instanceof Error ? error.message : "주소검색에 실패했습니다.",
       );
       setAddrResults([]);
       setAddrSearched(true);
@@ -2322,9 +2747,7 @@ export default function Home() {
       }),
     };
 
-    const { error } = await supabase
-      .from("receiver_master")
-      .insert([payload]);
+    const { error } = await supabase.from("receiver_master").insert([payload]);
 
     if (error) {
       alert("수화주 마스터 신규저장 실패: " + error.message);
@@ -2353,9 +2776,7 @@ export default function Home() {
       note: senderNote ?? "",
     };
 
-    const { error } = await supabase
-      .from("sender_master")
-      .insert([payload]);
+    const { error } = await supabase.from("sender_master").insert([payload]);
 
     if (error) {
       alert("발화주 마스터 신규저장 실패: " + error.message);
@@ -2393,7 +2814,49 @@ export default function Home() {
     if (!qty.trim()) return alert("수량을 입력해 주세요.");
     if (!fare.trim()) return alert("운임을 입력해 주세요.");
     if (delivery === "택배" && address.trim().length > 50) {
-      return alert("주소는 50자 이하로 입력해 주세요. 대신택배 업로드 주소칸이 50자를 넘으면 터집니다. 아주 예민한 친구예요.");
+      return alert(
+        "주소는 50자 이하로 입력해 주세요. 대신택배 업로드 주소칸이 50자를 넘으면 터집니다. 아주 예민한 친구예요.",
+      );
+    }
+
+    const todayKey = getTodaySeoulDateKey();
+    const { startUtc, endUtc } = getSeoulDayUtcRange(todayKey);
+    const { data: todayRows, error: duplicateCheckError } = await supabase
+      .from("shipments")
+      .select("id, receiver, sender, created_at")
+      .gte("created_at", startUtc)
+      .lt("created_at", endUtc);
+
+    if (duplicateCheckError) {
+      console.error("중복 출고 확인 실패", duplicateCheckError);
+      alert(
+        "중복 출고 여부를 확인하지 못해 저장을 중단했습니다. 잠시 후 다시 시도해 주세요.",
+      );
+      return;
+    }
+
+    const targetDisplayName = displayReceiverName(
+      sender.trim(),
+      receiver.trim(),
+    );
+    const targetDuplicateKey = buildShipmentDuplicateKey(sender, receiver);
+    const duplicateRows = (todayRows ?? []).filter((row: any) => {
+      return (
+        buildShipmentDuplicateKey(
+          asString(row?.sender),
+          asString(row?.receiver),
+        ) === targetDuplicateKey
+      );
+    });
+
+    if (duplicateRows.length > 0) {
+      const confirmed = window.confirm(
+        `⚠ 중복 출고 확인\n\n` +
+          `오늘 출고목록에 이미 [${targetDisplayName}] 발송정보가 ${duplicateRows.length}건 저장되어 있습니다.\n\n` +
+          `그래도 새 출고건으로 저장할까요?`,
+      );
+
+      if (!confirmed) return;
     }
 
     const payload = {
@@ -2422,9 +2885,7 @@ export default function Home() {
       closed_done: false,
     };
 
-    const { error } = await supabase
-      .from("shipments")
-      .insert([payload]);
+    const { error } = await supabase.from("shipments").insert([payload]);
 
     if (error) {
       alert("DB 저장 실패: " + error.message);
@@ -2436,7 +2897,7 @@ export default function Home() {
     alert("DB 저장 완료");
   };
 
-    const handleDelete = async (id: string) => {
+  const handleDelete = async (id: string) => {
     const numericId = Number(id);
 
     const { error } = await supabase
@@ -2456,12 +2917,13 @@ export default function Home() {
     if (detailShipmentId === id) closeDetail();
   };
 
-  
   const updateChecklistColumns = async (
     shipmentIds: string[],
-    values: Partial<{ pda: boolean; waybill: boolean; closed_done: boolean }>
+    values: Partial<{ pda: boolean; waybill: boolean; closed_done: boolean }>,
   ) => {
-    const numericIds = shipmentIds.map((id) => Number(id)).filter((id) => !Number.isNaN(id));
+    const numericIds = shipmentIds
+      .map((id) => Number(id))
+      .filter((id) => !Number.isNaN(id));
     if (numericIds.length === 0) return;
 
     const { error } = await supabase
@@ -2478,7 +2940,10 @@ export default function Home() {
     await loadShipmentsFromDb();
   };
 
-  const handleChecklistToggle = async (shipmentId: string, key: keyof Checklist) => {
+  const handleChecklistToggle = async (
+    shipmentId: string,
+    key: keyof Checklist,
+  ) => {
     const current = savedShipments.find((item) => item.id === shipmentId);
     if (!current) return;
 
@@ -2531,16 +2996,14 @@ export default function Home() {
         rows.map((item) => item.id),
         allChecked
           ? { closed_done: false }
-          : { pda: true, waybill: true, closed_done: true }
+          : { pda: true, waybill: true, closed_done: true },
       );
       return;
     }
 
     await updateChecklistColumns(
       rows.map((item) => item.id),
-      key === "pda"
-        ? { pda: !allChecked }
-        : { waybill: !allChecked }
+      key === "pda" ? { pda: !allChecked } : { waybill: !allChecked },
     );
   };
 
@@ -2550,7 +3013,7 @@ export default function Home() {
     const confirmed = window.confirm(
       nextValue
         ? "현재 목록의 체크리스트를 전체 체크할까요?"
-        : "현재 목록의 체크리스트를 전체 해제할까요?"
+        : "현재 목록의 체크리스트를 전체 해제할까요?",
     );
     if (!confirmed) return;
 
@@ -2558,11 +3021,10 @@ export default function Home() {
       filteredShipments.map((item) => item.id),
       nextValue
         ? { pda: true, waybill: true, closed_done: true }
-        : { pda: false, waybill: false, closed_done: false }
+        : { pda: false, waybill: false, closed_done: false },
     );
   };
 
-  
   const openDetail = (shipment: SavedShipment) => {
     setDetailShipmentId(shipment.id);
     setEditForm({ ...shipment, checklist: { ...shipment.checklist } });
@@ -2575,7 +3037,10 @@ export default function Home() {
     setEditForm(null);
   };
 
-  const updateEditField = <K extends keyof SavedShipment>(key: K, value: SavedShipment[K]) => {
+  const updateEditField = <K extends keyof SavedShipment>(
+    key: K,
+    value: SavedShipment[K],
+  ) => {
     setEditForm((prev) => {
       if (!prev) return prev;
       return { ...prev, [key]: value };
@@ -2634,7 +3099,6 @@ export default function Home() {
     alert("상세정보 저장 완료");
   };
 
-  
   const resetFilters = () => {
     setFilterKeyword("");
     setPayFilter("전체");
@@ -2671,13 +3135,10 @@ export default function Home() {
     await loadShipmentsFromDb();
 
     setSelectedIds((prev) =>
-      prev.filter((id) => !todayIds.includes(Number(id)))
+      prev.filter((id) => !todayIds.includes(Number(id))),
     );
 
-    if (
-      detailShipmentId &&
-      todayIds.includes(Number(detailShipmentId))
-    ) {
+    if (detailShipmentId && todayIds.includes(Number(detailShipmentId))) {
       closeDetail();
     }
 
@@ -2686,13 +3147,15 @@ export default function Home() {
 
   const toggleSelectOne = (id: string) => {
     setSelectedIds((prev) =>
-      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
     );
   };
 
   const toggleSelectAllFiltered = () => {
     if (allFilteredSelected) {
-      setSelectedIds((prev) => prev.filter((id) => !allFilteredIds.includes(id)));
+      setSelectedIds((prev) =>
+        prev.filter((id) => !allFilteredIds.includes(id)),
+      );
       return;
     }
     setSelectedIds((prev) => Array.from(new Set([...prev, ...allFilteredIds])));
@@ -2720,7 +3183,7 @@ export default function Home() {
             .slice(0, 8)
             .map((row) => `- ${displayReceiverName(row.sender, row.receiver)}`)
             .join("\n") +
-          "\n\n상세정보 수정에서 우편번호를 먼저 입력해 주세요."
+          "\n\n상세정보 수정에서 우편번호를 먼저 입력해 주세요.",
       );
     }
 
@@ -2741,25 +3204,32 @@ export default function Home() {
 
       const now = new Date();
       const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(
-        now.getDate()
+        now.getDate(),
       ).padStart(2, "0")}_${String(now.getHours()).padStart(2, "0")}${String(
-        now.getMinutes()
+        now.getMinutes(),
       ).padStart(2, "0")}`;
 
-      XLSX.writeFile(workbook, `대신택배_일괄업로드_${fileLabel}_${stamp}.xlsx`);
+      XLSX.writeFile(
+        workbook,
+        `대신택배_일괄업로드_${fileLabel}_${stamp}.xlsx`,
+      );
 
       await updateChecklistColumns(
         exportOrderRows.map((row) => row.id),
-        { waybill: true }
+        { waybill: true },
       );
     } catch (error) {
       console.error(error);
-      alert('엑셀 다운로드 기능을 쓰려면 먼저 "npm install xlsx"를 실행해 주세요.');
+      alert(
+        '엑셀 다운로드 기능을 쓰려면 먼저 "npm install xlsx"를 실행해 주세요.',
+      );
     }
   };
 
   const exportSelected = async () => {
-    const rows = sortedShipments.filter((item) => selectedIds.includes(item.id));
+    const rows = sortedShipments.filter((item) =>
+      selectedIds.includes(item.id),
+    );
     await exportRows(rows, "선택");
   };
 
@@ -2767,7 +3237,9 @@ export default function Home() {
     await exportRows(sortedShipments, "전체");
   };
 
-  const exportMasterTemplate = async (kind: "receiver" | "sender" | "branch") => {
+  const exportMasterTemplate = async (
+    kind: "receiver" | "sender" | "branch",
+  ) => {
     try {
       const XLSX = await import("xlsx");
       const rows =
@@ -2789,11 +3261,15 @@ export default function Home() {
       XLSX.writeFile(wb, `${sheetName}.xlsx`);
     } catch (error) {
       console.error(error);
-      alert('템플릿 다운로드를 쓰려면 먼저 "npm install xlsx"를 실행해 주세요.');
+      alert(
+        '템플릿 다운로드를 쓰려면 먼저 "npm install xlsx"를 실행해 주세요.',
+      );
     }
   };
 
-  const exportCurrentMaster = async (kind: "receiver" | "sender" | "branch") => {
+  const exportCurrentMaster = async (
+    kind: "receiver" | "sender" | "branch",
+  ) => {
     try {
       const XLSX = await import("xlsx");
       const rows =
@@ -2830,7 +3306,9 @@ export default function Home() {
       XLSX.writeFile(wb, `${sheetName}.xlsx`);
     } catch (error) {
       console.error(error);
-      alert('엑셀 다운로드 기능을 사용하려면 먼저 "npm install xlsx"를 실행해 주세요.');
+      alert(
+        '엑셀 다운로드 기능을 사용하려면 먼저 "npm install xlsx"를 실행해 주세요.',
+      );
     }
   };
 
@@ -2840,13 +3318,23 @@ export default function Home() {
       const buffer = await file.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: "array" });
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" }) as Record<string, unknown>[];
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" }) as Record<
+        string,
+        unknown
+      >[];
 
       const parsed = rows
         .map((row) => ({
           name: getRowValue(row, ["name", "수화주명", "업체명"]),
-          aliases: parseAliases(getRowValue(row, ["aliases", "검색명", "별칭"])),
-          phone: getRowValue(row, ["phone", "전화번호", "수화주전화", "수화주전화1"]),
+          aliases: parseAliases(
+            getRowValue(row, ["aliases", "검색명", "별칭"]),
+          ),
+          phone: getRowValue(row, [
+            "phone",
+            "전화번호",
+            "수화주전화",
+            "수화주전화1",
+          ]),
           address: getRowValue(row, ["address", "주소"]),
           branch: getRowValue(row, ["branch", "도착영업소", "영업소"]),
           postal_code: getRowValue(row, ["postalCode", "우편번호"]),
@@ -2882,12 +3370,17 @@ export default function Home() {
       const buffer = await file.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: "array" });
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" }) as Record<string, unknown>[];
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" }) as Record<
+        string,
+        unknown
+      >[];
 
       const parsed = rows
         .map((row) => ({
           name: getRowValue(row, ["name", "발화주명", "업체명"]),
-          aliases: parseAliases(getRowValue(row, ["aliases", "검색명", "별칭"])),
+          aliases: parseAliases(
+            getRowValue(row, ["aliases", "검색명", "별칭"]),
+          ),
           phone: getRowValue(row, ["phone", "전화번호", "발화주전화번호"]),
           note: getRowValue(row, ["note", "특기사항"]),
         }))
@@ -2921,7 +3414,10 @@ export default function Home() {
       const buffer = await file.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: "array" });
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" }) as Record<string, unknown>[];
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" }) as Record<
+        string,
+        unknown
+      >[];
 
       const parsed = rows
         .map((row) => ({
@@ -3063,9 +3559,7 @@ export default function Home() {
         return;
       }
     } else {
-      const { error } = await supabase
-        .from("sender_master")
-        .insert([payload]);
+      const { error } = await supabase.from("sender_master").insert([payload]);
 
       if (error) {
         alert("발화주 저장 실패: " + error.message);
@@ -3104,9 +3598,7 @@ export default function Home() {
         return;
       }
     } else {
-      const { error } = await supabase
-        .from("branch_master")
-        .insert([payload]);
+      const { error } = await supabase.from("branch_master").insert([payload]);
 
       if (error) {
         alert("영업소 저장 실패: " + error.message);
@@ -3175,7 +3667,9 @@ export default function Home() {
       const buffer = await file.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: "array" });
       const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(firstSheet, { defval: "" }) as Record<string, unknown>[];
+      const rows = XLSX.utils.sheet_to_json(firstSheet, {
+        defval: "",
+      }) as Record<string, unknown>[];
       const parsedRows = parseWaybillUploadRows(rows);
 
       if (parsedRows.length === 0) {
@@ -3193,6 +3687,14 @@ export default function Home() {
         waybill_upload_rows: parsedRows,
         waybill_upload_file_name: file.name,
       });
+
+      const todayKey = getTodaySeoulDateKey();
+      if (
+        tab === "운송장번호" &&
+        isDateKeyInRange(todayKey, waybillDateFrom, waybillDateTo)
+      ) {
+        await loadWaybillHistoryFromDb(waybillDateFrom, waybillDateTo);
+      }
     } catch (error) {
       console.error(error);
       alert("대신 발송데이터 업로드 중 오류가 발생했습니다.");
@@ -3213,7 +3715,9 @@ export default function Home() {
       ]);
 
       if (rows.length === 0) {
-        alert("주문서현황 파일에서 헤더(거래처명 / 품목코드 / 수량)를 찾지 못했습니다.");
+        alert(
+          "주문서현황 파일에서 헤더(거래처명 / 품목코드 / 수량)를 찾지 못했습니다.",
+        );
         return;
       }
 
@@ -3251,7 +3755,9 @@ export default function Home() {
       ]);
 
       if (rows.length === 0) {
-        alert("판매현황 파일에서 헤더(거래처명 / 품목코드 / 수량)를 찾지 못했습니다.");
+        alert(
+          "판매현황 파일에서 헤더(거래처명 / 품목코드 / 수량)를 찾지 못했습니다.",
+        );
         return;
       }
 
@@ -3303,6 +3809,70 @@ export default function Home() {
     });
   };
 
+  const handleQtySalesStatusUpload = async (file: File) => {
+    try {
+      const XLSX = await import("xlsx");
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: "array" });
+      const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+
+      const rows = readSheetRowsFromDetectedHeader(XLSX, firstSheet, [
+        "거래처명",
+        "품목코드",
+        "수량",
+      ]);
+
+      if (rows.length === 0) {
+        alert(
+          "판매현황 파일에서 헤더(거래처명 / 품목코드 / 수량)를 찾지 못했습니다.",
+        );
+        return;
+      }
+
+      const parsed = parseSalesStatusExcelRows(rows);
+
+      if (parsed.length === 0) {
+        alert("판매현황 데이터는 읽었지만 실제 항목이 0건입니다.");
+        return;
+      }
+
+      setQtySalesStatusRows(parsed);
+      setQtySalesFileName(file.name);
+
+      await saveSharedVerifyStateToDb({
+        qty_sales_status_rows: parsed,
+        qty_sales_file_name: file.name,
+      });
+    } catch (error) {
+      console.error(error);
+      alert("출고수량 검증용 판매현황 업로드 중 오류가 발생했습니다.");
+    }
+  };
+
+  const handleQtyPdaPasteApply = async () => {
+    const parsed = parsePdaClipboardText(qtyPdaPasteText);
+    setQtyPdaRows(parsed);
+
+    await saveSharedVerifyStateToDb({
+      qty_pda_rows: parsed,
+      qty_pda_paste_text: qtyPdaPasteText,
+    });
+  };
+
+  const handleQtyVerifyReset = async () => {
+    setQtySalesStatusRows([]);
+    setQtyPdaRows([]);
+    setQtySalesFileName("");
+    setQtyPdaPasteText("");
+
+    await saveSharedVerifyStateToDb({
+      qty_sales_status_rows: [],
+      qty_pda_rows: [],
+      qty_sales_file_name: "",
+      qty_pda_paste_text: "",
+    });
+  };
+
   const resetWaybillUpload = async () => {
     setWaybillUploadRows([]);
     setWaybillUploadFileName("");
@@ -3314,23 +3884,35 @@ export default function Home() {
       waybill_upload_rows: [],
       waybill_upload_file_name: "",
     });
+
+    const todayKey = getTodaySeoulDateKey();
+    if (
+      tab === "운송장번호" &&
+      isDateKeyInRange(todayKey, waybillDateFrom, waybillDateTo)
+    ) {
+      await loadWaybillHistoryFromDb(waybillDateFrom, waybillDateTo);
+    }
   };
 
   const todayShipments = useMemo(() => {
     const todayKey = getTodaySeoulDateKey();
-    return savedShipments.filter((shipment) => getSeoulDateKey(shipment.createdAt) === todayKey);
+    return savedShipments.filter(
+      (shipment) => getSeoulDateKey(shipment.createdAt) === todayKey,
+    );
   }, [savedShipments]);
 
   const waybillVerificationRows = useMemo(
     () => buildWaybillVerificationRows(todayShipments, waybillUploadRows),
-    [todayShipments, waybillUploadRows]
+    [todayShipments, waybillUploadRows],
   );
 
   const filteredWaybillVerificationRows = useMemo(() => {
     const keyword = verificationKeyword.trim().toLowerCase();
 
     return waybillVerificationRows.filter((row) => {
-      const matchesMismatch = verificationMismatchOnly ? row.status !== "일치" : true;
+      const matchesMismatch = verificationMismatchOnly
+        ? row.status !== "일치"
+        : true;
       const haystack = [
         row.shipmentListName,
         row.uploadListName,
@@ -3352,10 +3934,18 @@ export default function Home() {
     return {
       shipmentCount: todayShipments.length,
       uploadCount: waybillUploadRows.length,
-      matchedCount: waybillVerificationRows.filter((row) => row.status === "일치").length,
-      warningCount: waybillVerificationRows.filter((row) => row.status === "확인필요").length,
-      shipmentOnlyCount: waybillVerificationRows.filter((row) => row.status === "출고목록만").length,
-      uploadOnlyCount: waybillVerificationRows.filter((row) => row.status === "발송데이터만").length,
+      matchedCount: waybillVerificationRows.filter(
+        (row) => row.status === "일치",
+      ).length,
+      warningCount: waybillVerificationRows.filter(
+        (row) => row.status === "확인필요",
+      ).length,
+      shipmentOnlyCount: waybillVerificationRows.filter(
+        (row) => row.status === "출고목록만",
+      ).length,
+      uploadOnlyCount: waybillVerificationRows.filter(
+        (row) => row.status === "발송데이터만",
+      ).length,
     };
   }, [todayShipments, waybillUploadRows, waybillVerificationRows]);
 
@@ -3363,19 +3953,25 @@ export default function Home() {
     return new Set(
       waybillVerificationRows
         .filter((row) => row.shipmentId && row.status !== "일치")
-        .map((row) => row.shipmentId as string)
+        .map((row) => row.shipmentId as string),
     );
   }, [waybillVerificationRows]);
 
   const presenceVerificationRows = useMemo(() => {
-    return buildPresenceVerificationRows(orderStatusRows, pdaRows, salesStatusRows);
+    return buildPresenceVerificationRows(
+      orderStatusRows,
+      pdaRows,
+      salesStatusRows,
+    );
   }, [orderStatusRows, pdaRows, salesStatusRows]);
 
   const filteredPresenceVerificationRows = useMemo(() => {
     const keyword = presenceKeyword.trim().toLowerCase();
 
     return presenceVerificationRows.filter((row) => {
-      const haystack = [row.clientName, row.itemCode, row.reasons.join(" ")].join(" ").toLowerCase();
+      const haystack = [row.clientName, row.itemCode, row.reasons.join(" ")]
+        .join(" ")
+        .toLowerCase();
       const matchesStatus =
         presenceViewFilter === "전체"
           ? true
@@ -3388,9 +3984,8 @@ export default function Home() {
   }, [presenceVerificationRows, presenceKeyword, presenceViewFilter]);
 
   const qtyVerificationRows = useMemo(() => {
-    return buildQtyVerificationRows(pdaRows, salesStatusRows);
-  }, [pdaRows, salesStatusRows]);
-
+    return buildQtyVerificationRows(qtyPdaRows, qtySalesStatusRows);
+  }, [qtyPdaRows, qtySalesStatusRows]);
 
   const filteredQtyVerificationRows = useMemo(() => {
     const keyword = qtyKeyword.trim().toLowerCase();
@@ -3412,10 +4007,12 @@ export default function Home() {
   }, [qtyVerificationRows, qtyKeyword, qtyViewFilter]);
 
   const waybillMessageRows = useMemo(() => {
-    return waybillUploadRows
+    return waybillHistoryRows
       .filter((row) => row.waybillNo)
       .map((row) => ({
-        id: row.id,
+        id: row.historyId,
+        sessionDate: row.sessionDate,
+        waybillNo: row.waybillNo,
         listName: buildWaybillListName(row.sender, row.receiver),
         message: buildWaybillMessageText({
           receiver: row.receiver,
@@ -3426,7 +4023,19 @@ export default function Home() {
         }),
       }))
       .filter((row) => row.message);
-  }, [waybillUploadRows]);
+  }, [waybillHistoryRows]);
+
+  const filteredWaybillMessageRows = useMemo(() => {
+    const keyword = waybillHistoryKeyword.trim().toLowerCase();
+    if (!keyword) return waybillMessageRows;
+
+    return waybillMessageRows.filter((row) => {
+      const haystack = [row.listName, row.message, row.waybillNo]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(keyword);
+    });
+  }, [waybillMessageRows, waybillHistoryKeyword]);
 
   const handleCopyWaybillMessage = async (id: string, text: string) => {
     const copied = await copyTextSilently(text);
@@ -3440,7 +4049,14 @@ export default function Home() {
 
   const waybillUploadControls = (
     <div style={verifyUploadBar}>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 8,
+          alignItems: "center",
+        }}
+      >
         <button
           type="button"
           style={smallBlueBtn}
@@ -3501,10 +4117,14 @@ export default function Home() {
         <div style={authShell}>
           <div style={authCard}>
             <div style={authBrand}>🚚 상화시스템 출고관리</div>
-            <div style={authSubtitle}>로그인 후 시스템에 들어갈 수 있습니다.</div>
+            <div style={authSubtitle}>
+              로그인 후 시스템에 들어갈 수 있습니다.
+            </div>
 
             {authError ? <div style={authErrorBox}>{authError}</div> : null}
-            {authMessage ? <div style={authSuccessBox}>{authMessage}</div> : null}
+            {authMessage ? (
+              <div style={authSuccessBox}>{authMessage}</div>
+            ) : null}
 
             {authMode === "login" && (
               <div style={authForm}>
@@ -3533,7 +4153,12 @@ export default function Home() {
                   }}
                 />
 
-                <button type="button" style={authPrimaryBtn} onClick={() => void handleSignIn()} disabled={authBusy}>
+                <button
+                  type="button"
+                  style={authPrimaryBtn}
+                  onClick={() => void handleSignIn()}
+                  disabled={authBusy}
+                >
                   {authBusy ? "로그인 중..." : "로그인"}
                 </button>
 
@@ -3564,8 +4189,15 @@ export default function Home() {
                   autoComplete="email"
                 />
 
-                <button type="button" style={authPrimaryBtn} onClick={() => void handleSendPasswordReset()} disabled={authBusy}>
-                  {authBusy ? "메일 보내는 중..." : "비밀번호 재설정 메일 보내기"}
+                <button
+                  type="button"
+                  style={authPrimaryBtn}
+                  onClick={() => void handleSendPasswordReset()}
+                  disabled={authBusy}
+                >
+                  {authBusy
+                    ? "메일 보내는 중..."
+                    : "비밀번호 재설정 메일 보내기"}
                 </button>
 
                 <button
@@ -3608,12 +4240,18 @@ export default function Home() {
                   }}
                 />
 
-                <button type="button" style={authPrimaryBtn} onClick={() => void handleUpdatePassword()} disabled={authBusy}>
+                <button
+                  type="button"
+                  style={authPrimaryBtn}
+                  onClick={() => void handleUpdatePassword()}
+                  disabled={authBusy}
+                >
                   {authBusy ? "변경 중..." : "비밀번호 변경"}
                 </button>
 
                 <div style={authHintText}>
-                  재설정 메일 링크로 들어온 경우에만 비밀번호를 바꿀 수 있습니다.
+                  재설정 메일 링크로 들어온 경우에만 비밀번호를 바꿀 수
+                  있습니다.
                 </div>
               </div>
             )}
@@ -3626,17 +4264,23 @@ export default function Home() {
   return (
     <main style={page}>
       <div style={card}>
-        <div style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: "20px"
-        }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: "20px",
+          }}
+        >
           <h1 style={title}>🚚 상화시스템 출고관리</h1>
 
           <div style={headerRightWrap}>
             <div style={userBadge}>{session.user.email || "로그인 사용자"}</div>
-            <button type="button" style={logoutBtn} onClick={() => void handleSignOut()}>
+            <button
+              type="button"
+              style={logoutBtn}
+              onClick={() => void handleSignOut()}
+            >
               로그아웃
             </button>
             <div style={dateBadge}>{`${today}`}</div>
@@ -3644,7 +4288,15 @@ export default function Home() {
         </div>
 
         <div style={tabWrap}>
-          {(["출고등록", "출고목록", "운송장번호", "발송검증", "마스터관리"] as TabType[]).map((item) => (
+          {(
+            [
+              "출고등록",
+              "출고목록",
+              "운송장번호",
+              "발송검증",
+              "마스터관리",
+            ] as TabType[]
+          ).map((item) => (
             <button
               key={item}
               type="button"
@@ -3671,7 +4323,9 @@ export default function Home() {
                       value={receiver}
                       setValue={(v) => {
                         setReceiver(v);
-                        const matched = receiverMaster.find((item) => item.name === v.trim());
+                        const matched = receiverMaster.find(
+                          (item) => item.name === v.trim(),
+                        );
                         setNote(matched?.note || "");
                       }}
                       matches={receiverMatches}
@@ -3693,11 +4347,15 @@ export default function Home() {
                   <div style={quickMasterRow}>
                     <button
                       type="button"
-                      style={receiverExistsInMaster ? disabledSmallBtn : smallGrayBtn}
+                      style={
+                        receiverExistsInMaster ? disabledSmallBtn : smallGrayBtn
+                      }
                       onClick={() => void saveCurrentReceiverToMaster()}
                       disabled={!receiver.trim() || receiverExistsInMaster}
                     >
-                      {receiverExistsInMaster ? "수화주 마스터 등록됨" : "수화주 마스터 신규저장"}
+                      {receiverExistsInMaster
+                        ? "수화주 마스터 등록됨"
+                        : "수화주 마스터 신규저장"}
                     </button>
                   </div>
                 </Section>
@@ -3721,7 +4379,7 @@ export default function Home() {
                             receiver,
                             branch,
                             currentPostalCode: "",
-                          })
+                          }),
                         );
                         setFare(
                           suggestFareByQty({
@@ -3730,7 +4388,7 @@ export default function Home() {
                             pack,
                             address,
                             branch,
-                          })
+                          }),
                         );
                       }}
                       options={["정기", "택배"]}
@@ -3750,7 +4408,9 @@ export default function Home() {
                       value={sender}
                       setValue={(v) => {
                         setSender(v);
-                        const matched = senderMaster.find((item) => item.name === v.trim());
+                        const matched = senderMaster.find(
+                          (item) => item.name === v.trim(),
+                        );
                         setSenderNote(matched?.note || "");
                       }}
                       matches={senderMatches}
@@ -3772,11 +4432,15 @@ export default function Home() {
                   <div style={quickMasterRow}>
                     <button
                       type="button"
-                      style={senderExistsInMaster ? disabledSmallBtn : smallGrayBtn}
+                      style={
+                        senderExistsInMaster ? disabledSmallBtn : smallGrayBtn
+                      }
                       onClick={() => void saveCurrentSenderToMaster()}
                       disabled={!sender.trim() || senderExistsInMaster}
                     >
-                      {senderExistsInMaster ? "발화주 마스터 등록됨" : "발화주 마스터 신규저장"}
+                      {senderExistsInMaster
+                        ? "발화주 마스터 등록됨"
+                        : "발화주 마스터 신규저장"}
                     </button>
                   </div>
                 </Section>
@@ -3798,7 +4462,7 @@ export default function Home() {
                             pack: v,
                             address,
                             branch,
-                          })
+                          }),
                         );
                       }}
                     />
@@ -3823,11 +4487,16 @@ export default function Home() {
                                 pack,
                                 address: v,
                                 branch,
-                              })
+                              }),
                             );
                           }}
                           onKeyDown={(e) => {
-                            if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return;
+                            if (
+                              e.key !== "Enter" ||
+                              e.shiftKey ||
+                              e.nativeEvent.isComposing
+                            )
+                              return;
                             e.preventDefault();
                             openAddressSearch(e.currentTarget.value);
                           }}
@@ -3863,7 +4532,7 @@ export default function Home() {
                             receiver,
                             branch: v,
                             currentPostalCode: "",
-                          })
+                          }),
                         );
                         setFare(
                           suggestFareByQty({
@@ -3872,14 +4541,14 @@ export default function Home() {
                             pack,
                             address,
                             branch: v,
-                          })
+                          }),
                         );
                       }}
                     />
                   )}
                 </Section>
 
-                <div style={{ marginTop: 135 }}>
+                <div style={{ marginTop: 20 }}>
                   <Section title="메모사항">
                     <Input label="메모" value={memo} set={setMemo} />
                   </Section>
@@ -3897,40 +4566,61 @@ export default function Home() {
           <div style={{ marginTop: 8 }}>
             <h2 style={listTitle}>출고목록</h2>
 
-            <div style={{ marginBottom: "10px", fontWeight: "bold", color: "#555"}}>
-              {listScope === "today"
-                ? `📅 기준일자: 금일 (${today})`
-                : "📅 기준일자: 전체"}
+            <div
+              style={{
+                marginBottom: "10px",
+                fontWeight: "bold",
+                color: "#555",
+              }}
+            >
+              📅 조회기간: {formatDateRangeKo(listDateFrom, listDateTo)}
             </div>
 
-            <div style={scopeBar}>
-              <div style={scopeToggleWrap}>
-                <button
-                  type="button"
-                  style={{
-                    ...scopeToggleBtn,
-                    background: listScope === "today" ? "#2563eb" : "#e5e7eb",
-                    color: listScope === "today" ? "#fff" : "#111827",
-                  }}
-                  onClick={() => setListScope("today")}
-                >
-                  오늘만
-                </button>
+            <div style={dateRangeBar}>
+              <div style={dateRangeControls}>
+                <div style={dateField}>
+                  <div style={filterLabel}>시작일</div>
+                  <input
+                    type="date"
+                    style={dateInput}
+                    value={listDateFromDraft}
+                    onChange={(e) => setListDateFromDraft(e.target.value)}
+                  />
+                </div>
+
+                <div style={dateRangeSeparator}>~</div>
+
+                <div style={dateField}>
+                  <div style={filterLabel}>종료일</div>
+                  <input
+                    type="date"
+                    style={dateInput}
+                    value={listDateToDraft}
+                    onChange={(e) => setListDateToDraft(e.target.value)}
+                  />
+                </div>
 
                 <button
                   type="button"
-                  style={{
-                    ...scopeToggleBtn,
-                    background: listScope === "all" ? "#2563eb" : "#e5e7eb",
-                    color: listScope === "all" ? "#fff" : "#111827",
-                  }}
-                  onClick={() => setListScope("all")}
+                  style={smallBlueBtn}
+                  onClick={handleListDateSearch}
                 >
-                  전체
+                  조회
+                </button>
+                <button
+                  type="button"
+                  style={smallGrayBtn}
+                  onClick={showTodayShipmentList}
+                >
+                  오늘
                 </button>
               </div>
 
-              <button type="button" style={smallRedBtn} onClick={clearTodayShipments}>
+              <button
+                type="button"
+                style={smallRedBtn}
+                onClick={clearTodayShipments}
+              >
                 오늘 목록 비우기
               </button>
             </div>
@@ -3951,7 +4641,9 @@ export default function Home() {
                 <select
                   style={filterSelect}
                   value={payFilter}
-                  onChange={(e) => setPayFilter(e.target.value as "전체" | PayType)}
+                  onChange={(e) =>
+                    setPayFilter(e.target.value as "전체" | PayType)
+                  }
                 >
                   <option value="전체">전체</option>
                   <option value="착불">착불</option>
@@ -4001,19 +4693,32 @@ export default function Home() {
                 PDA 미체크
               </label>
 
-              <button type="button" style={resetFilterBtn} onClick={resetFilters}>
+              <button
+                type="button"
+                style={resetFilterBtn}
+                onClick={resetFilters}
+              >
                 필터 초기화
               </button>
             </div>
 
             <div style={exportBar}>
-
               <div style={exportRight}>
-                <span style={selectedCountText}>선택 {selectedIds.length}건</span>
-                <button type="button" style={exportBtnSecondary} onClick={exportSelected}>
+                <span style={selectedCountText}>
+                  선택 {selectedIds.length}건
+                </span>
+                <button
+                  type="button"
+                  style={exportBtnSecondary}
+                  onClick={exportSelected}
+                >
                   선택 엑셀 다운로드
                 </button>
-                <button type="button" style={exportBtnPrimary} onClick={exportFilteredAll}>
+                <button
+                  type="button"
+                  style={exportBtnPrimary}
+                  onClick={exportFilteredAll}
+                >
                   현재목록 전체 엑셀 다운로드
                 </button>
               </div>
@@ -4042,7 +4747,9 @@ export default function Home() {
                       >
                         <span>체크리스트</span>
 
-                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        <div
+                          style={{ display: "flex", gap: 6, flexWrap: "wrap" }}
+                        >
                           <button
                             type="button"
                             style={smallChecklistBtn}
@@ -4079,20 +4786,40 @@ export default function Home() {
                       <div style={ovQty}>수량</div>
                       <div style={ovFare}>운임</div>
 
-                      <div style={{ ...ovCheck, ...checkStartBorder }}>전체</div>
+                      <div style={{ ...ovCheck, ...checkStartBorder }}>
+                        전체
+                      </div>
 
                       <div style={ovCheck}>
-                        <button type="button" style={headerActionBtn} onClick={() => void handleChecklistColumnToggle("pda")}>
+                        <button
+                          type="button"
+                          style={headerActionBtn}
+                          onClick={() =>
+                            void handleChecklistColumnToggle("pda")
+                          }
+                        >
                           PDA
                         </button>
                       </div>
                       <div style={ovCheck}>
-                        <button type="button" style={headerActionBtn} onClick={() => void handleChecklistColumnToggle("waybill")}>
+                        <button
+                          type="button"
+                          style={headerActionBtn}
+                          onClick={() =>
+                            void handleChecklistColumnToggle("waybill")
+                          }
+                        >
                           운송장
                         </button>
                       </div>
                       <div style={ovCheck}>
-                        <button type="button" style={headerActionBtn} onClick={() => void handleChecklistColumnToggle("closedDone")}>
+                        <button
+                          type="button"
+                          style={headerActionBtn}
+                          onClick={() =>
+                            void handleChecklistColumnToggle("closedDone")
+                          }
+                        >
                           종결완료
                         </button>
                       </div>
@@ -4103,7 +4830,8 @@ export default function Home() {
 
                     {sortedShipments.map((shipment) => {
                       const isToday =
-                        new Date(shipment.createdAt).toDateString() === new Date().toDateString();
+                        new Date(shipment.createdAt).toDateString() ===
+                        new Date().toDateString();
 
                       const isChecklistDone =
                         shipment.checklist.pda &&
@@ -4119,472 +4847,711 @@ export default function Home() {
                             opacity: isChecklistDone ? 0.78 : 1,
                           }}
                         >
+                          <div style={ovSelect}>
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.includes(shipment.id)}
+                              onChange={() => toggleSelectOne(shipment.id)}
+                            />
+                          </div>
 
-                        <div style={ovSelect}>
-                          <input
-                            type="checkbox"
-                            checked={selectedIds.includes(shipment.id)}
-                            onChange={() => toggleSelectOne(shipment.id)}
-                          />
-                        </div>
-
-                        <div
-                          style={{
-                            ...ovDate,
-                            color: isToday ? "#2563eb" : "#6b7280",
-                            fontWeight: isToday ? "bold" : "normal",
-                          }}
-                        >
-                          {new Date(shipment.createdAt).toLocaleDateString("ko-KR")}
-                        </div>
-
-                        <div style={ovCompany}>
-                          <button
-                            type="button"
-                            style={companyLinkBtn}
-                            onClick={() => openDetail(shipment)}
+                          <div
+                            style={{
+                              ...ovDate,
+                              color: isToday ? "#2563eb" : "#6b7280",
+                              fontWeight: isToday ? "bold" : "normal",
+                            }}
                           >
-                            {displayReceiverName(shipment.sender, shipment.receiver)}
-                          </button>
-                        </div>
+                            {new Date(shipment.createdAt).toLocaleDateString(
+                              "ko-KR",
+                            )}
+                          </div>
 
-                        <div style={ovPay}>{shipment.pay}</div>
-                        <div style={ovDelivery}>{displayDelivery(shipment.delivery)}</div>
-                        <div style={ovQty}>{ceilQuantityDisplay(shipment.qty, shipment.pack)}</div>
-                        <div style={ovFare}>{formatFare(shipment.fare)}</div>
+                          <div style={ovCompany}>
+                            <button
+                              type="button"
+                              style={companyLinkBtn}
+                              onClick={() => openDetail(shipment)}
+                            >
+                              {displayReceiverName(
+                                shipment.sender,
+                                shipment.receiver,
+                              )}
+                            </button>
+                          </div>
 
-                        <div style={{ ...ovCheck, ...checkStartBorder }}>
-                          <button
-                            type="button"
-                            style={rowActionBtn}
-                            onClick={() => void handleChecklistRowToggle(shipment.id)}
-                          >
-                            전체
-                          </button>
-                        </div>
+                          <div style={ovPay}>{shipment.pay}</div>
+                          <div style={ovDelivery}>
+                            {displayDelivery(shipment.delivery)}
+                          </div>
+                          <div style={ovQty}>
+                            {ceilQuantityDisplay(shipment.qty, shipment.pack)}
+                          </div>
+                          <div style={ovFare}>{formatFare(shipment.fare)}</div>
 
-                        <div style={ovCheck}>
-                          <input
-                            type="checkbox"
-                            style={checkboxStyle}
-                            checked={shipment.checklist.pda}
-                            onChange={() => void handleChecklistToggle(shipment.id, "pda")}
-                          />
-                        </div>
+                          <div style={{ ...ovCheck, ...checkStartBorder }}>
+                            <button
+                              type="button"
+                              style={rowActionBtn}
+                              onClick={() =>
+                                void handleChecklistRowToggle(shipment.id)
+                              }
+                            >
+                              전체
+                            </button>
+                          </div>
 
-                        <div style={ovCheck}>
-                          <input
-                            type="checkbox"
-                            style={checkboxStyle}
-                            checked={shipment.checklist.waybill}
-                            onChange={() => void handleChecklistToggle(shipment.id, "waybill")}
-                          />
-                        </div>
+                          <div style={ovCheck}>
+                            <input
+                              type="checkbox"
+                              style={checkboxStyle}
+                              checked={shipment.checklist.pda}
+                              onChange={() =>
+                                void handleChecklistToggle(shipment.id, "pda")
+                              }
+                            />
+                          </div>
 
-                        <div style={ovCheck}>
-                          <input
-                            type="checkbox"
-                            style={checkboxStyle}
-                            checked={shipment.checklist.closedDone}
-                            onChange={() => void handleChecklistToggle(shipment.id, "closedDone")}
-                          />
-                        </div>
+                          <div style={ovCheck}>
+                            <input
+                              type="checkbox"
+                              style={checkboxStyle}
+                              checked={shipment.checklist.waybill}
+                              onChange={() =>
+                                void handleChecklistToggle(
+                                  shipment.id,
+                                  "waybill",
+                                )
+                              }
+                            />
+                          </div>
 
-                        <div style={ovCheck}>
-                          {waybillWarningShipmentIds.has(shipment.id) ? (
-                            <span style={warningMark}>!</span>
-                          ) : (
-                            <span style={{ color: "transparent" }}>!</span>
-                          )}
-                        </div>
+                          <div style={ovCheck}>
+                            <input
+                              type="checkbox"
+                              style={checkboxStyle}
+                              checked={shipment.checklist.closedDone}
+                              onChange={() =>
+                                void handleChecklistToggle(
+                                  shipment.id,
+                                  "closedDone",
+                                )
+                              }
+                            />
+                          </div>
 
-                        <div style={ovDelete}>
-                          <button type="button" style={deleteBtn} onClick={() => handleDelete(shipment.id)}>
-                            삭제
-                          </button>
+                          <div style={ovCheck}>
+                            {waybillWarningShipmentIds.has(shipment.id) ? (
+                              <span style={warningMark}>!</span>
+                            ) : (
+                              <span style={{ color: "transparent" }}>!</span>
+                            )}
+                          </div>
+
+                          <div style={ovDelete}>
+                            <button
+                              type="button"
+                              style={deleteBtn}
+                              onClick={() => handleDelete(shipment.id)}
+                            >
+                              삭제
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
-                    </div>
+                      );
+                    })}
                   </div>
+                </div>
 
-                  <div style={summaryBar}>
-                    <span>건수: {summaryCount}건</span>
-                    <span>총수량: {summaryQty}</span>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
+                <div style={summaryBar}>
+                  <span>건수: {summaryCount}건</span>
+                  <span>총수량: {summaryQty}</span>
+                </div>
+              </>
+            )}
+          </div>
+        )}
 
         {tab === "발송검증" && (
           <div style={{ marginTop: 8 }}>
-          <h2 style={listTitle}>발송검증</h2>
+            <h2 style={listTitle}>발송검증</h2>
 
-          <div style={tabWrap}>
-            {(["대신 발송검증", "일치 검증", "출고수량 검증"] as VerifySubTab[]).map((item) => (
-              <button
-                key={item}
-                type="button"
-                onClick={() => setVerifyTab(item)}
-                style={{
-                  ...tabButton,
-                  background: verifyTab === item ? "#2563eb" : "#e5e7eb",
-                  color: verifyTab === item ? "#fff" : "#111827",
-                }}
-              >
-                {item}
-              </button>
-            ))}
-          </div>
+            <div style={tabWrap}>
+              {(
+                [
+                  "대신 발송검증",
+                  "일치 검증",
+                  "출고수량 검증",
+                ] as VerifySubTab[]
+              ).map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  onClick={() => setVerifyTab(item)}
+                  style={{
+                    ...tabButton,
+                    background: verifyTab === item ? "#2563eb" : "#e5e7eb",
+                    color: verifyTab === item ? "#fff" : "#111827",
+                  }}
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
 
-          {verifyTab === "대신 발송검증" && (
-            <>
-              <div style={verifyInfoText}>
-                대신 발송데이터 내려받는 법: [대신택배물류시스템 접속] → [일자별조회] → [목록전체선택] → [엑셀저장]
-              </div>
-
-              {waybillUploadControls}
-
-              <div style={verifySummaryGrid}>
-                <div style={verifySummaryItem}>
-                  <div style={verifySummaryLabel}>오늘 출고목록</div>
-                  <div style={verifySummaryValue}>{waybillVerificationSummary.shipmentCount}건</div>
+            {verifyTab === "대신 발송검증" && (
+              <>
+                <div style={verifyInfoText}>
+                  대신 발송데이터 내려받는 법: [대신택배물류시스템 접속] →
+                  [일자별조회] → [목록전체선택] → [엑셀저장]
                 </div>
-                <div style={verifySummaryItem}>
-                  <div style={verifySummaryLabel}>발송데이터</div>
-                  <div style={verifySummaryValue}>{waybillVerificationSummary.uploadCount}건</div>
-                </div>
-                <div style={verifySummaryItem}>
-                  <div style={verifySummaryLabel}>일치</div>
-                  <div style={{ ...verifySummaryValue, color: "#15803d" }}>
-                    {waybillVerificationSummary.matchedCount}건
+
+                {waybillUploadControls}
+
+                <div style={verifySummaryGrid}>
+                  <div style={verifySummaryItem}>
+                    <div style={verifySummaryLabel}>오늘 출고목록</div>
+                    <div style={verifySummaryValue}>
+                      {waybillVerificationSummary.shipmentCount}건
+                    </div>
+                  </div>
+                  <div style={verifySummaryItem}>
+                    <div style={verifySummaryLabel}>발송데이터</div>
+                    <div style={verifySummaryValue}>
+                      {waybillVerificationSummary.uploadCount}건
+                    </div>
+                  </div>
+                  <div style={verifySummaryItem}>
+                    <div style={verifySummaryLabel}>일치</div>
+                    <div style={{ ...verifySummaryValue, color: "#15803d" }}>
+                      {waybillVerificationSummary.matchedCount}건
+                    </div>
+                  </div>
+                  <div style={verifySummaryItem}>
+                    <div style={verifySummaryLabel}>확인필요</div>
+                    <div style={{ ...verifySummaryValue, color: "#b45309" }}>
+                      {waybillVerificationSummary.warningCount}건
+                    </div>
+                  </div>
+                  <div style={verifySummaryItem}>
+                    <div style={verifySummaryLabel}>출고목록만</div>
+                    <div style={{ ...verifySummaryValue, color: "#dc2626" }}>
+                      {waybillVerificationSummary.shipmentOnlyCount}건
+                    </div>
+                  </div>
+                  <div style={verifySummaryItem}>
+                    <div style={verifySummaryLabel}>발송데이터만</div>
+                    <div style={{ ...verifySummaryValue, color: "#7c3aed" }}>
+                      {waybillVerificationSummary.uploadOnlyCount}건
+                    </div>
                   </div>
                 </div>
-                <div style={verifySummaryItem}>
-                  <div style={verifySummaryLabel}>확인필요</div>
-                  <div style={{ ...verifySummaryValue, color: "#b45309" }}>
-                    {waybillVerificationSummary.warningCount}건
-                  </div>
-                </div>
-                <div style={verifySummaryItem}>
-                  <div style={verifySummaryLabel}>출고목록만</div>
-                  <div style={{ ...verifySummaryValue, color: "#dc2626" }}>
-                    {waybillVerificationSummary.shipmentOnlyCount}건
-                  </div>
-                </div>
-                <div style={verifySummaryItem}>
-                  <div style={verifySummaryLabel}>발송데이터만</div>
-                  <div style={{ ...verifySummaryValue, color: "#7c3aed" }}>
-                    {waybillVerificationSummary.uploadOnlyCount}건
-                  </div>
-                </div>
-              </div>
 
-              <div style={verifyFilterBar}>
-                <div style={{ ...filterFieldWide, minWidth: 260 }}>
-                  <div style={filterLabel}>검색</div>
-                  <input
-                    style={filterInput}
-                    value={verificationKeyword}
-                    onChange={(e) => setVerificationKeyword(e.target.value)}
-                    placeholder="업체명, 운송장번호, 확인사항 검색"
+                <div style={verifyFilterBar}>
+                  <div style={{ ...filterFieldWide, minWidth: 260 }}>
+                    <div style={filterLabel}>검색</div>
+                    <input
+                      style={filterInput}
+                      value={verificationKeyword}
+                      onChange={(e) => setVerificationKeyword(e.target.value)}
+                      placeholder="업체명, 운송장번호, 확인사항 검색"
+                    />
+                  </div>
+
+                  <label style={{ ...filterCheckLabel, paddingBottom: 0 }}>
+                    <input
+                      type="checkbox"
+                      checked={verificationMismatchOnly}
+                      onChange={(e) =>
+                        setVerificationMismatchOnly(e.target.checked)
+                      }
+                    />
+                    불일치만 보기
+                  </label>
+                </div>
+
+                {waybillUploadRows.length === 0 ? (
+                  <div style={emptyText}>
+                    대신택배 발송데이터 엑셀파일 업로드 시, 검증 결과 확인 가능.
+                  </div>
+                ) : filteredWaybillVerificationRows.length === 0 ? (
+                  <div style={emptyText}>조건에 맞는 검증 결과가 없습니다.</div>
+                ) : (
+                  <div style={verifyTableWrap}>
+                    <table style={verifyTable}>
+                      <thead>
+                        <tr>
+                          <th style={verifyHeaderCell}>상태</th>
+                          <th style={verifyHeaderCell}>출고목록</th>
+                          <th style={verifyHeaderCell}>발송데이터</th>
+                          <th style={verifyHeaderCell}>수량</th>
+                          <th style={verifyHeaderCell}>운송</th>
+                          <th style={verifyHeaderCell}>지불</th>
+                          <th style={verifyHeaderCell}>총운임</th>
+                          <th style={verifyHeaderCell}>확인사항</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredWaybillVerificationRows.map((row) => (
+                          <tr key={row.id}>
+                            <td style={verifyCell}>
+                              <span
+                                style={{
+                                  ...verifyBadge,
+                                  background:
+                                    row.status === "일치"
+                                      ? "#dcfce7"
+                                      : row.status === "확인필요"
+                                        ? "#fef3c7"
+                                        : row.status === "출고목록만"
+                                          ? "#fee2e2"
+                                          : "#ede9fe",
+                                  color:
+                                    row.status === "일치"
+                                      ? "#166534"
+                                      : row.status === "확인필요"
+                                        ? "#92400e"
+                                        : row.status === "출고목록만"
+                                          ? "#b91c1c"
+                                          : "#6d28d9",
+                                }}
+                              >
+                                {row.status}
+                              </span>
+                            </td>
+                            <td style={verifyCell}>
+                              {row.shipmentListName || "-"}
+                            </td>
+                            <td style={verifyCell}>
+                              {row.uploadListName || "-"}
+                            </td>
+                            <td style={verifyCell}>{row.qtyText || "-"}</td>
+                            <td style={verifyCell}>
+                              {row.deliveryText || "-"}
+                            </td>
+                            <td style={verifyCell}>{row.payText || "-"}</td>
+                            <td style={verifyCell}>{row.fareText || "-"}</td>
+                            <td style={verifyCell}>
+                              {row.reasons.join(", ") || "-"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
+            )}
+
+            {verifyTab === "일치 검증" && (
+              <>
+                <div style={verifyUploadBar}>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      style={smallBlueBtn}
+                      onClick={() => orderUploadRef.current?.click()}
+                    >
+                      주문서현황 업로드
+                    </button>
+                    <button
+                      type="button"
+                      style={smallBlueBtn}
+                      onClick={() => salesUploadRef.current?.click()}
+                    >
+                      판매현황 업로드
+                    </button>
+                    <button
+                      type="button"
+                      style={smallGrayBtn}
+                      onClick={handlePdaPasteApply}
+                    >
+                      PDA 복붙 반영
+                    </button>
+                    <button
+                      type="button"
+                      style={smallRedBtn}
+                      onClick={handleVerifyReset}
+                    >
+                      검증 데이터 초기화
+                    </button>
+
+                    <input
+                      ref={orderUploadRef}
+                      type="file"
+                      accept=".xls,.xlsx"
+                      style={{ display: "none" }}
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (file) await handleOrderStatusUpload(file);
+                        e.currentTarget.value = "";
+                      }}
+                    />
+
+                    <input
+                      ref={salesUploadRef}
+                      type="file"
+                      accept=".xls,.xlsx"
+                      style={{ display: "none" }}
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (file) await handleSalesStatusUpload(file);
+                        e.currentTarget.value = "";
+                      }}
+                    />
+                  </div>
+
+                  <div style={verifyUploadFileName}>
+                    주문서: {orderFileName || "없음"} ({orderStatusRows.length}
+                    건)
+                    {" / "}
+                    판매: {salesFileName || "없음"} ({salesStatusRows.length}건)
+                    {" / "}
+                    PDA: {pdaRows.length}건
+                  </div>
+                </div>
+
+                <div style={{ marginBottom: 14 }}>
+                  <div style={filterLabel}>PDA 복붙</div>
+                  <textarea
+                    style={verifyTextArea}
+                    value={pdaPasteText}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setPdaPasteText(value);
+                      void saveSharedVerifyStateToDb({ pda_paste_text: value });
+                    }}
+                    placeholder="PDA 화면 전체선택 → 복사 → 여기에 붙여넣기"
                   />
                 </div>
 
-                <label style={{ ...filterCheckLabel, paddingBottom: 0 }}>
-                  <input
-                    type="checkbox"
-                    checked={verificationMismatchOnly}
-                    onChange={(e) => setVerificationMismatchOnly(e.target.checked)}
-                  />
-                  불일치만 보기
-                </label>
-              </div>
+                <div style={verifyFilterBar}>
+                  <div style={{ ...filterFieldWide, minWidth: 260 }}>
+                    <div style={filterLabel}>검색</div>
+                    <input
+                      style={filterInput}
+                      value={presenceKeyword}
+                      onChange={(e) => setPresenceKeyword(e.target.value)}
+                      placeholder="거래처명, 품목코드, 확인사항 검색"
+                    />
+                  </div>
 
-              {waybillUploadRows.length === 0 ? (
-                <div style={emptyText}>대신택배 발송데이터 엑셀파일 업로드 시, 검증 결과 확인 가능.</div>
-              ) : filteredWaybillVerificationRows.length === 0 ? (
-                <div style={emptyText}>조건에 맞는 검증 결과가 없습니다.</div>
-              ) : (
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 8,
+                      alignItems: "center",
+                      paddingBottom: 0,
+                    }}
+                  >
+                    {(["전체", "불일치만", "일치만"] as VerifyViewFilter[]).map(
+                      (item) => (
+                        <button
+                          key={item}
+                          type="button"
+                          style={{
+                            ...scopeToggleBtn,
+                            background:
+                              presenceViewFilter === item
+                                ? "#2563eb"
+                                : "#e5e7eb",
+                            color:
+                              presenceViewFilter === item ? "#fff" : "#111827",
+                          }}
+                          onClick={() => setPresenceViewFilter(item)}
+                        >
+                          {item}
+                        </button>
+                      ),
+                    )}
+                  </div>
+                </div>
                 <div style={verifyTableWrap}>
                   <table style={verifyTable}>
                     <thead>
                       <tr>
                         <th style={verifyHeaderCell}>상태</th>
-                        <th style={verifyHeaderCell}>출고목록</th>
-                        <th style={verifyHeaderCell}>발송데이터</th>
-                        <th style={verifyHeaderCell}>수량</th>
-                        <th style={verifyHeaderCell}>운송</th>
-                        <th style={verifyHeaderCell}>지불</th>
-                        <th style={verifyHeaderCell}>총운임</th>
+                        <th style={verifyHeaderCell}>거래처명</th>
+                        <th style={verifyHeaderCell}>품목코드</th>
+                        <th style={verifyHeaderCell}>주문서 수량</th>
+                        <th style={verifyHeaderCell}>PDA 주문수량</th>
+                        <th style={verifyHeaderCell}>판매현황 수량</th>
                         <th style={verifyHeaderCell}>확인사항</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredWaybillVerificationRows.map((row) => (
+                      {filteredPresenceVerificationRows.map((row) => (
                         <tr key={row.id}>
+                          <td style={verifyCell}>{row.status}</td>
+                          <td style={verifyCell}>{row.clientName}</td>
+                          <td style={verifyCell}>{row.itemCode}</td>
                           <td style={verifyCell}>
-                            <span
-                              style={{
-                                ...verifyBadge,
-                                background:
-                                  row.status === "일치"
-                                    ? "#dcfce7"
-                                    : row.status === "확인필요"
-                                      ? "#fef3c7"
-                                      : row.status === "출고목록만"
-                                        ? "#fee2e2"
-                                        : "#ede9fe",
-                                color:
-                                  row.status === "일치"
-                                    ? "#166534"
-                                    : row.status === "확인필요"
-                                      ? "#92400e"
-                                      : row.status === "출고목록만"
-                                        ? "#b91c1c"
-                                        : "#6d28d9",
-                              }}
-                            >
-                              {row.status}
-                            </span>
+                            {row.orderExists ? row.orderQty : "-"}
                           </td>
-                          <td style={verifyCell}>{row.shipmentListName || "-"}</td>
-                          <td style={verifyCell}>{row.uploadListName || "-"}</td>
-                          <td style={verifyCell}>{row.qtyText || "-"}</td>
-                          <td style={verifyCell}>{row.deliveryText || "-"}</td>
-                          <td style={verifyCell}>{row.payText || "-"}</td>
-                          <td style={verifyCell}>{row.fareText || "-"}</td>
-                          <td style={verifyCell}>{row.reasons.join(", ") || "-"}</td>
+                          <td style={verifyCell}>
+                            {row.pdaExists ? row.pdaOrderQty : "-"}
+                          </td>
+                          <td style={verifyCell}>
+                            {row.salesExists ? row.salesQty : "-"}
+                          </td>
+                          <td style={verifyCell}>
+                            {row.reasons.join(", ") || "-"}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
-              )}
-            </>
-          )}
+              </>
+            )}
 
-          {verifyTab === "일치 검증" && (
-            <>
-              <div style={verifyUploadBar}>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <button type="button" style={smallBlueBtn} onClick={() => orderUploadRef.current?.click()}>
-                    주문서현황 업로드
-                  </button>
-                  <button type="button" style={smallBlueBtn} onClick={() => salesUploadRef.current?.click()}>
-                    판매현황 업로드
-                  </button>
-                  <button type="button" style={smallGrayBtn} onClick={handlePdaPasteApply}>
-                    PDA 복붙 반영
-                  </button>
-                  <button type="button" style={smallRedBtn} onClick={handleVerifyReset}>
-                    검증 데이터 초기화
-                  </button>
-
-                  <input
-                    ref={orderUploadRef}
-                    type="file"
-                    accept=".xls,.xlsx"
-                    style={{ display: "none" }}
-                    onChange={async (e) => {
-                      const file = e.target.files?.[0];
-                      if (file) await handleOrderStatusUpload(file);
-                      e.currentTarget.value = "";
-                    }}
-                  />
-
-                  <input
-                    ref={salesUploadRef}
-                    type="file"
-                    accept=".xls,.xlsx"
-                    style={{ display: "none" }}
-                    onChange={async (e) => {
-                      const file = e.target.files?.[0];
-                      if (file) await handleSalesStatusUpload(file);
-                      e.currentTarget.value = "";
-                    }}
-                  />
-                </div>
-
-                <div style={verifyUploadFileName}>
-                  주문서: {orderFileName || "없음"} ({orderStatusRows.length}건)
-                  {" / "}
-                  판매: {salesFileName || "없음"} ({salesStatusRows.length}건)
-                  {" / "}
-                  PDA: {pdaRows.length}건
-                </div>
-              </div>
-
-              <div style={{ marginBottom: 14 }}>
-                <div style={filterLabel}>PDA 복붙</div>
-                <textarea
-                  style={verifyTextArea}
-                  value={pdaPasteText}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    setPdaPasteText(value);
-                    void saveSharedVerifyStateToDb({ pda_paste_text: value });
-                  }}
-                  placeholder="PDA 화면 전체선택 → 복사 → 여기에 붙여넣기"
-                />
-              </div>
-
-              <div style={verifyFilterBar}>
-                <div style={{ ...filterFieldWide, minWidth: 260 }}>
-                  <div style={filterLabel}>검색</div>
-                  <input
-                    style={filterInput}
-                    value={presenceKeyword}
-                    onChange={(e) => setPresenceKeyword(e.target.value)}
-                    placeholder="거래처명, 품목코드, 확인사항 검색"
-                  />
-                </div>
-
-                <div style={{ display: "flex", gap: 8, alignItems: "center", paddingBottom: 0 }}>
-                  {(["전체", "불일치만", "일치만"] as VerifyViewFilter[]).map((item) => (
+            {verifyTab === "출고수량 검증" && (
+              <>
+                <div style={verifyUploadBar}>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     <button
-                      key={item}
                       type="button"
-                      style={{
-                        ...scopeToggleBtn,
-                        background: presenceViewFilter === item ? "#2563eb" : "#e5e7eb",
-                        color: presenceViewFilter === item ? "#fff" : "#111827",
-                      }}
-                      onClick={() => setPresenceViewFilter(item)}
+                      style={smallBlueBtn}
+                      onClick={() => qtySalesUploadRef.current?.click()}
                     >
-                      {item}
+                      판매현황 업로드
                     </button>
-                  ))}
-                </div>
-              </div>
-              <div style={verifyTableWrap}>
-                <table style={verifyTable}>
-                  <thead>
-                    <tr>
-                      <th style={verifyHeaderCell}>상태</th>
-                      <th style={verifyHeaderCell}>거래처명</th>
-                      <th style={verifyHeaderCell}>품목코드</th>
-                      <th style={verifyHeaderCell}>주문서 수량</th>
-                      <th style={verifyHeaderCell}>PDA 주문수량</th>
-                      <th style={verifyHeaderCell}>판매현황 수량</th>
-                      <th style={verifyHeaderCell}>확인사항</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredPresenceVerificationRows.map((row) => (
-                      <tr key={row.id}>
-                        <td style={verifyCell}>{row.status}</td>
-                        <td style={verifyCell}>{row.clientName}</td>
-                        <td style={verifyCell}>{row.itemCode}</td>
-                        <td style={verifyCell}>{row.orderExists ? row.orderQty : "-"}</td>
-                        <td style={verifyCell}>{row.pdaExists ? row.pdaOrderQty : "-"}</td>
-                        <td style={verifyCell}>{row.salesExists ? row.salesQty : "-"}</td>
-                        <td style={verifyCell}>{row.reasons.join(", ") || "-"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          )}
+                    <button
+                      type="button"
+                      style={smallGrayBtn}
+                      onClick={handleQtyPdaPasteApply}
+                    >
+                      PDA 복붙 반영
+                    </button>
+                    <button
+                      type="button"
+                      style={smallRedBtn}
+                      onClick={handleQtyVerifyReset}
+                    >
+                      검증 데이터 초기화
+                    </button>
 
-          {verifyTab === "출고수량 검증" && (
-            <>
-              <div style={verifyFilterBar}>
-                <div style={{ ...filterFieldWide, minWidth: 260 }}>
-                  <div style={filterLabel}>검색</div>
-                  <input
-                    style={filterInput}
-                    value={qtyKeyword}
-                    onChange={(e) => setQtyKeyword(e.target.value)}
-                    placeholder="거래처명, 품목코드, 확인사항 검색"
+                    <input
+                      ref={qtySalesUploadRef}
+                      type="file"
+                      accept=".xls,.xlsx"
+                      style={{ display: "none" }}
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (file) await handleQtySalesStatusUpload(file);
+                        e.currentTarget.value = "";
+                      }}
+                    />
+                  </div>
+
+                  <div style={verifyUploadFileName}>
+                    판매: {qtySalesFileName || "없음"} (
+                    {qtySalesStatusRows.length}건)
+                    {" / "}
+                    PDA: {qtyPdaRows.length}건
+                  </div>
+                </div>
+
+                <div style={{ marginBottom: 14 }}>
+                  <div style={filterLabel}>PDA 복붙</div>
+                  <textarea
+                    style={verifyTextArea}
+                    value={qtyPdaPasteText}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setQtyPdaPasteText(value);
+                      void saveSharedVerifyStateToDb({
+                        qty_pda_paste_text: value,
+                      });
+                    }}
+                    placeholder="PDA 화면 전체선택 → 복사 → 여기에 붙여넣기"
                   />
                 </div>
 
-                <div style={{ display: "flex", gap: 8, alignItems: "center", paddingBottom: 0 }}>
-                  {(["전체", "불일치만", "일치만"] as VerifyViewFilter[]).map((item) => (
-                    <button
-                      key={item}
-                      type="button"
-                      style={{
-                        ...scopeToggleBtn,
-                        background: qtyViewFilter === item ? "#2563eb" : "#e5e7eb",
-                        color: qtyViewFilter === item ? "#fff" : "#111827",
-                      }}
-                      onClick={() => setQtyViewFilter(item)}
-                    >
-                      {item}
-                    </button>
-                  ))}
+                <div style={verifyFilterBar}>
+                  <div style={{ ...filterFieldWide, minWidth: 260 }}>
+                    <div style={filterLabel}>검색</div>
+                    <input
+                      style={filterInput}
+                      value={qtyKeyword}
+                      onChange={(e) => setQtyKeyword(e.target.value)}
+                      placeholder="거래처명, 품목코드, 확인사항 검색"
+                    />
+                  </div>
+
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 8,
+                      alignItems: "center",
+                      paddingBottom: 0,
+                    }}
+                  >
+                    {(["전체", "불일치만", "일치만"] as VerifyViewFilter[]).map(
+                      (item) => (
+                        <button
+                          key={item}
+                          type="button"
+                          style={{
+                            ...scopeToggleBtn,
+                            background:
+                              qtyViewFilter === item ? "#2563eb" : "#e5e7eb",
+                            color: qtyViewFilter === item ? "#fff" : "#111827",
+                          }}
+                          onClick={() => setQtyViewFilter(item)}
+                        >
+                          {item}
+                        </button>
+                      ),
+                    )}
+                  </div>
                 </div>
-              </div>
-              <div style={verifyTableWrap}>
-                <table style={verifyTable}>
-                  <thead>
-                    <tr>
-                      <th style={verifyHeaderCell}>상태</th>
-                      <th style={verifyHeaderCell}>거래처명</th>
-                      <th style={verifyHeaderCell}>품목코드</th>
-                      <th style={verifyHeaderCell}>PDA 출고수량</th>
-                      <th style={verifyHeaderCell}>판매현황 출고수량</th>
-                      <th style={verifyHeaderCell}>차이</th>
-                      <th style={verifyHeaderCell}>확인사항</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredQtyVerificationRows.map((row) => (
-                      <tr key={row.id}>
-                        <td style={verifyCell}>{row.status}</td>
-                        <td style={verifyCell}>{row.clientName}</td>
-                        <td style={verifyCell}>{row.itemCode}</td>
-                        <td style={verifyCell}>{row.pdaQty}</td>
-                        <td style={verifyCell}>{row.salesQty}</td>
-                        <td style={verifyCell}>{row.diffQty}</td>
-                        <td style={verifyCell}>{row.reasons.join(", ") || "-"}</td>
+                <div style={verifyTableWrap}>
+                  <table style={verifyTable}>
+                    <thead>
+                      <tr>
+                        <th style={verifyHeaderCell}>상태</th>
+                        <th style={verifyHeaderCell}>거래처명</th>
+                        <th style={verifyHeaderCell}>품목코드</th>
+                        <th style={verifyHeaderCell}>PDA 출고수량</th>
+                        <th style={verifyHeaderCell}>판매현황 출고수량</th>
+                        <th style={verifyHeaderCell}>차이</th>
+                        <th style={verifyHeaderCell}>확인사항</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          )}
-        </div>
+                    </thead>
+                    <tbody>
+                      {filteredQtyVerificationRows.map((row) => (
+                        <tr key={row.id}>
+                          <td style={verifyCell}>{row.status}</td>
+                          <td style={verifyCell}>{row.clientName}</td>
+                          <td style={verifyCell}>{row.itemCode}</td>
+                          <td style={verifyCell}>{row.pdaQty}</td>
+                          <td style={verifyCell}>{row.salesQty}</td>
+                          <td style={verifyCell}>{row.diffQty}</td>
+                          <td style={verifyCell}>
+                            {row.reasons.join(", ") || "-"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </div>
         )}
-      
 
         {tab === "운송장번호" && (
           <div style={{ marginTop: 8 }}>
             <h2 style={listTitle}>운송장번호</h2>
 
             <div style={verifyInfoText}>
-              대신택배 발송데이터를 업로드하여 생성된 운송장번호 / 안내문구를 확인하세요.
+              대신택배 발송데이터를 업로드하여 생성된 운송장번호 / 안내문구를
+              확인하세요.
             </div>
 
             {waybillUploadControls}
 
-            {waybillMessageRows.length === 0 ? (
-              <div style={emptyText}>발송문구를 클릭하거나, 오른쪽 [복사]버튼을 눌러 문구를 복사 후, 거래처에 카톡발송</div>
+            <div
+              style={{
+                marginBottom: "10px",
+                fontWeight: "bold",
+                color: "#555",
+              }}
+            >
+              📅 조회기간: {formatDateRangeKo(waybillDateFrom, waybillDateTo)}
+            </div>
+
+            <div style={dateRangeBar}>
+              <div style={dateRangeControls}>
+                <div style={dateField}>
+                  <div style={filterLabel}>시작일</div>
+                  <input
+                    type="date"
+                    style={dateInput}
+                    value={waybillDateFromDraft}
+                    onChange={(e) => setWaybillDateFromDraft(e.target.value)}
+                  />
+                </div>
+
+                <div style={dateRangeSeparator}>~</div>
+
+                <div style={dateField}>
+                  <div style={filterLabel}>종료일</div>
+                  <input
+                    type="date"
+                    style={dateInput}
+                    value={waybillDateToDraft}
+                    onChange={(e) => setWaybillDateToDraft(e.target.value)}
+                  />
+                </div>
+
+                <button
+                  type="button"
+                  style={smallBlueBtn}
+                  onClick={handleWaybillDateSearch}
+                >
+                  조회
+                </button>
+                <button
+                  type="button"
+                  style={smallGrayBtn}
+                  onClick={showTodayWaybillHistory}
+                >
+                  오늘
+                </button>
+              </div>
+            </div>
+
+            <div style={verifyFilterBar}>
+              <div style={{ ...filterFieldWide, minWidth: 300 }}>
+                <div style={filterLabel}>업체명 검색</div>
+                <input
+                  style={filterInput}
+                  value={waybillHistoryKeyword}
+                  onChange={(e) => setWaybillHistoryKeyword(e.target.value)}
+                  placeholder="발화주-수화주 또는 수화주명 검색"
+                />
+              </div>
+            </div>
+
+            {waybillHistoryLoading ? (
+              <div style={emptyText}>
+                운송장번호 이력을 조회하는 중입니다...
+              </div>
+            ) : waybillMessageRows.length === 0 ? (
+              <div style={emptyText}>
+                선택한 기간에 저장된 운송장번호가 없습니다.
+              </div>
+            ) : filteredWaybillMessageRows.length === 0 ? (
+              <div style={emptyText}>
+                검색한 업체명에 맞는 운송장번호가 없습니다.
+              </div>
             ) : (
               <div style={verifyTableWrap}>
                 <table style={verifyTable}>
                   <thead>
                     <tr>
+                      <th style={verifyHeaderCell}>발송일</th>
                       <th style={verifyHeaderCell}>목록</th>
                       <th style={verifyHeaderCell}>운송장번호 안내문구</th>
                       <th style={verifyHeaderCell}>복사</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {waybillMessageRows.map((row) => (
+                    {filteredWaybillMessageRows.map((row) => (
                       <tr key={row.id}>
+                        <td style={verifyCell}>
+                          {formatDateKeyKo(row.sessionDate)}
+                        </td>
                         <td style={verifyCell}>{row.listName}</td>
                         <td style={verifyCell}>
                           <button
                             type="button"
                             style={messageCellButton}
-                            onClick={() => void handleCopyWaybillMessage(row.id, row.message)}
+                            onClick={() =>
+                              void handleCopyWaybillMessage(row.id, row.message)
+                            }
                           >
                             {row.message}
                           </button>
@@ -4592,10 +5559,18 @@ export default function Home() {
                         <td style={verifyCell}>
                           <button
                             type="button"
-                            style={copiedWaybillMessageId === row.id ? smallBlueBtn : smallGrayBtn}
-                            onClick={() => void handleCopyWaybillMessage(row.id, row.message)}
+                            style={
+                              copiedWaybillMessageId === row.id
+                                ? smallBlueBtn
+                                : smallGrayBtn
+                            }
+                            onClick={() =>
+                              void handleCopyWaybillMessage(row.id, row.message)
+                            }
                           >
-                            {copiedWaybillMessageId === row.id ? "복사됨" : "복사"}
+                            {copiedWaybillMessageId === row.id
+                              ? "복사됨"
+                              : "복사"}
                           </button>
                         </td>
                       </tr>
@@ -4616,7 +5591,11 @@ export default function Home() {
                 <div style={masterTitleRow}>
                   <h3 style={masterTitle}>수화주 마스터</h3>
                   <div style={masterActionRow}>
-                    <button type="button" style={smallGrayBtn} onClick={resetReceiverForm}>
+                    <button
+                      type="button"
+                      style={smallGrayBtn}
+                      onClick={resetReceiverForm}
+                    >
                       신규
                     </button>
                     <button
@@ -4669,20 +5648,28 @@ export default function Home() {
                       type="button"
                       style={{
                         ...masterListItem,
-                        background: selectedReceiverMasterName === item.name ? "#eff6ff" : "#fff",
+                        background:
+                          selectedReceiverMasterName === item.name
+                            ? "#eff6ff"
+                            : "#fff",
                         borderColor:
-                          selectedReceiverMasterName === item.name ? "#60a5fa" : "#e5e7eb",
+                          selectedReceiverMasterName === item.name
+                            ? "#60a5fa"
+                            : "#e5e7eb",
                       }}
                       onClick={() => {
                         setReceiverMasterMode("edit");
                         setSelectedReceiverMasterName(item.name);
                         setReceiverAliasesInput(aliasesToText(item.aliases));
-                        setReceiverForm({ ...item, aliases: item.aliases || [] });
+                        setReceiverForm({
+                          ...item,
+                          aliases: item.aliases || [],
+                        });
                       }}
                     >
                       <div style={masterListName}>{item.name}</div>
                       <div style={masterListSub}>
-                        {(item.phone || "-")} / {(item.branch || "-")}
+                        {item.phone || "-"} / {item.branch || "-"}
                       </div>
                     </button>
                   ))}
@@ -4692,7 +5679,9 @@ export default function Home() {
                   <Input
                     label="수화주명"
                     value={receiverForm.name}
-                    set={(v) => setReceiverForm((prev) => ({ ...prev, name: v }))}
+                    set={(v) =>
+                      setReceiverForm((prev) => ({ ...prev, name: v }))
+                    }
                   />
                   <Input
                     label="검색명(콤마로 구분)"
@@ -4702,7 +5691,9 @@ export default function Home() {
                   <Input
                     label="전화번호"
                     value={receiverForm.phone || ""}
-                    set={(v) => setReceiverForm((prev) => ({ ...prev, phone: v }))}
+                    set={(v) =>
+                      setReceiverForm((prev) => ({ ...prev, phone: v }))
+                    }
                   />
                   <div>
                     <div style={labelStyle}>주소</div>
@@ -4710,33 +5701,52 @@ export default function Home() {
                       style={input}
                       value={receiverForm.address || ""}
                       onChange={(e) =>
-                        setReceiverForm((prev) => ({ ...prev, address: e.target.value }))
+                        setReceiverForm((prev) => ({
+                          ...prev,
+                          address: e.target.value,
+                        }))
                       }
                       onBlur={async () => {
                         if (!receiverForm.address?.trim()) return;
                         try {
-                          const zip = await lookupPostalCodeByAddress(receiverForm.address);
+                          const zip = await lookupPostalCodeByAddress(
+                            receiverForm.address,
+                          );
                           if (zip) {
-                            setReceiverForm((prev) => ({ ...prev, postalCode: zip }));
+                            setReceiverForm((prev) => ({
+                              ...prev,
+                              postalCode: zip,
+                            }));
                           }
                         } catch {
                           // ignore
                         }
                       }}
                     />
-                    <div style={{ marginTop: 8, display: "flex", justifyContent: "flex-end" }}>
+                    <div
+                      style={{
+                        marginTop: 8,
+                        display: "flex",
+                        justifyContent: "flex-end",
+                      }}
+                    >
                       <button
                         type="button"
                         style={smallGrayBtn}
                         onClick={async () => {
                           try {
-                            const zip = await lookupPostalCodeByAddress(receiverForm.address || "");
-                            setReceiverForm((prev) => ({ ...prev, postalCode: zip }));
+                            const zip = await lookupPostalCodeByAddress(
+                              receiverForm.address || "",
+                            );
+                            setReceiverForm((prev) => ({
+                              ...prev,
+                              postalCode: zip,
+                            }));
                           } catch (error) {
                             alert(
                               error instanceof Error
                                 ? error.message
-                                : "우편번호 자동채움에 실패했습니다."
+                                : "우편번호 자동채움에 실패했습니다.",
                             );
                           }
                         }}
@@ -4748,30 +5758,48 @@ export default function Home() {
                   <Input
                     label="도착영업소"
                     value={receiverForm.branch || ""}
-                    set={(v) => setReceiverForm((prev) => ({ ...prev, branch: v }))}
+                    set={(v) =>
+                      setReceiverForm((prev) => ({ ...prev, branch: v }))
+                    }
                   />
                   <Input
                     label="우편번호"
                     value={receiverForm.postalCode || ""}
-                    set={(v) => setReceiverForm((prev) => ({ ...prev, postalCode: v }))}
+                    set={(v) =>
+                      setReceiverForm((prev) => ({ ...prev, postalCode: v }))
+                    }
                   />
                   <Input
                     label="특기사항"
                     value={receiverForm.note || ""}
-                    set={(v) => setReceiverForm((prev) => ({ ...prev, note: v }))}
+                    set={(v) =>
+                      setReceiverForm((prev) => ({ ...prev, note: v }))
+                    }
                   />
                 </div>
 
                 <div style={masterBtnRow}>
-                  <button type="button" style={smallGrayBtn} onClick={resetReceiverForm}>
+                  <button
+                    type="button"
+                    style={smallGrayBtn}
+                    onClick={resetReceiverForm}
+                  >
                     초기화
                   </button>
                   {receiverMasterMode === "edit" && (
-                    <button type="button" style={smallRedBtn} onClick={deleteReceiverMaster}>
+                    <button
+                      type="button"
+                      style={smallRedBtn}
+                      onClick={deleteReceiverMaster}
+                    >
                       삭제
                     </button>
                   )}
-                  <button type="button" style={smallBlueBtn} onClick={saveReceiverMaster}>
+                  <button
+                    type="button"
+                    style={smallBlueBtn}
+                    onClick={saveReceiverMaster}
+                  >
                     저장
                   </button>
                 </div>
@@ -4781,7 +5809,11 @@ export default function Home() {
                 <div style={masterTitleRow}>
                   <h3 style={masterTitle}>발화주 마스터</h3>
                   <div style={masterActionRow}>
-                    <button type="button" style={smallGrayBtn} onClick={resetSenderForm}>
+                    <button
+                      type="button"
+                      style={smallGrayBtn}
+                      onClick={resetSenderForm}
+                    >
                       신규
                     </button>
                     <button
@@ -4834,9 +5866,14 @@ export default function Home() {
                       type="button"
                       style={{
                         ...masterListItem,
-                        background: selectedSenderMasterName === item.name ? "#eff6ff" : "#fff",
+                        background:
+                          selectedSenderMasterName === item.name
+                            ? "#eff6ff"
+                            : "#fff",
                         borderColor:
-                          selectedSenderMasterName === item.name ? "#60a5fa" : "#e5e7eb",
+                          selectedSenderMasterName === item.name
+                            ? "#60a5fa"
+                            : "#e5e7eb",
                       }}
                       onClick={() => {
                         setSenderMasterMode("edit");
@@ -4846,7 +5883,10 @@ export default function Home() {
                       }}
                     >
                       <div style={masterListName}>{item.name}</div>
-                      <div style={masterListSub}>{item.phone || "-"}{item.note ? ` / ${item.note}` : ""}</div>
+                      <div style={masterListSub}>
+                        {item.phone || "-"}
+                        {item.note ? ` / ${item.note}` : ""}
+                      </div>
                     </button>
                   ))}
                 </div>
@@ -4865,7 +5905,9 @@ export default function Home() {
                   <Input
                     label="전화번호"
                     value={senderForm.phone || ""}
-                    set={(v) => setSenderForm((prev) => ({ ...prev, phone: v }))}
+                    set={(v) =>
+                      setSenderForm((prev) => ({ ...prev, phone: v }))
+                    }
                   />
                   <Input
                     label="특기사항"
@@ -4875,15 +5917,27 @@ export default function Home() {
                 </div>
 
                 <div style={masterBtnRow}>
-                  <button type="button" style={smallGrayBtn} onClick={resetSenderForm}>
+                  <button
+                    type="button"
+                    style={smallGrayBtn}
+                    onClick={resetSenderForm}
+                  >
                     초기화
                   </button>
                   {senderMasterMode === "edit" && (
-                    <button type="button" style={smallRedBtn} onClick={deleteSenderMaster}>
+                    <button
+                      type="button"
+                      style={smallRedBtn}
+                      onClick={deleteSenderMaster}
+                    >
                       삭제
                     </button>
                   )}
-                  <button type="button" style={smallBlueBtn} onClick={saveSenderMaster}>
+                  <button
+                    type="button"
+                    style={smallBlueBtn}
+                    onClick={saveSenderMaster}
+                  >
                     저장
                   </button>
                 </div>
@@ -4893,7 +5947,11 @@ export default function Home() {
                 <div style={masterTitleRow}>
                   <h3 style={masterTitle}>영업소 우편번호</h3>
                   <div style={masterActionRow}>
-                    <button type="button" style={smallGrayBtn} onClick={resetBranchForm}>
+                    <button
+                      type="button"
+                      style={smallGrayBtn}
+                      onClick={resetBranchForm}
+                    >
                       신규
                     </button>
                     <button
@@ -4946,9 +6004,14 @@ export default function Home() {
                       type="button"
                       style={{
                         ...masterListItem,
-                        background: selectedBranchMasterName === item.branch ? "#eff6ff" : "#fff",
+                        background:
+                          selectedBranchMasterName === item.branch
+                            ? "#eff6ff"
+                            : "#fff",
                         borderColor:
-                          selectedBranchMasterName === item.branch ? "#60a5fa" : "#e5e7eb",
+                          selectedBranchMasterName === item.branch
+                            ? "#60a5fa"
+                            : "#e5e7eb",
                       }}
                       onClick={() => {
                         setBranchMasterMode("edit");
@@ -4966,25 +6029,41 @@ export default function Home() {
                   <Input
                     label="영업소명"
                     value={branchForm.branch}
-                    set={(v) => setBranchForm((prev) => ({ ...prev, branch: v }))}
+                    set={(v) =>
+                      setBranchForm((prev) => ({ ...prev, branch: v }))
+                    }
                   />
                   <Input
                     label="우편번호"
                     value={branchForm.postalCode}
-                    set={(v) => setBranchForm((prev) => ({ ...prev, postalCode: v }))}
+                    set={(v) =>
+                      setBranchForm((prev) => ({ ...prev, postalCode: v }))
+                    }
                   />
                 </div>
 
                 <div style={masterBtnRow}>
-                  <button type="button" style={smallGrayBtn} onClick={resetBranchForm}>
+                  <button
+                    type="button"
+                    style={smallGrayBtn}
+                    onClick={resetBranchForm}
+                  >
                     초기화
                   </button>
                   {branchMasterMode === "edit" && (
-                    <button type="button" style={smallRedBtn} onClick={deleteBranchMaster}>
+                    <button
+                      type="button"
+                      style={smallRedBtn}
+                      onClick={deleteBranchMaster}
+                    >
                       삭제
                     </button>
                   )}
-                  <button type="button" style={smallBlueBtn} onClick={saveBranchMaster}>
+                  <button
+                    type="button"
+                    style={smallBlueBtn}
+                    onClick={saveBranchMaster}
+                  >
                     저장
                   </button>
                 </div>
@@ -5005,8 +6084,14 @@ export default function Home() {
                 </div>
 
                 <div style={modalHeaderRight}>
-                  {detailProgress && <ProgressBadge checklist={editForm.checklist} />}
-                  <button type="button" style={modalCloseBtn} onClick={closeDetail}>
+                  {detailProgress && (
+                    <ProgressBadge checklist={editForm.checklist} />
+                  )}
+                  <button
+                    type="button"
+                    style={modalCloseBtn}
+                    onClick={closeDetail}
+                  >
                     닫기
                   </button>
                 </div>
@@ -5026,8 +6111,10 @@ export default function Home() {
                 />
               </div>
 
-              <div style={{...modalSectionTitle, marginTop: 40}}>운송정보</div>
-              
+              <div style={{ ...modalSectionTitle, marginTop: 40 }}>
+                운송정보
+              </div>
+
               <div style={{ ...detailEditGrid, marginTop: 10 }}>
                 <Toggle<PayType>
                   label="지불방법"
@@ -5047,7 +6134,7 @@ export default function Home() {
                         receiver: editForm.receiver,
                         branch: editForm.branch,
                         currentPostalCode: "",
-                      })
+                      }),
                     );
                     updateEditField(
                       "fare",
@@ -5057,7 +6144,7 @@ export default function Home() {
                         pack: editForm.pack,
                         address: editForm.address,
                         branch: editForm.branch,
-                      })
+                      }),
                     );
                   }}
                   options={["정기", "택배"]}
@@ -5078,7 +6165,7 @@ export default function Home() {
                         pack: editForm.pack,
                         address: editForm.address,
                         branch: editForm.branch,
-                      })
+                      }),
                     );
                   }}
                 />
@@ -5102,7 +6189,7 @@ export default function Home() {
                             pack: editForm.pack,
                             address: editForm.address,
                             branch: editForm.branch,
-                          })
+                          }),
                         )
                       }
                     >
@@ -5112,7 +6199,9 @@ export default function Home() {
                 </div>
               </div>
 
-              <div style={{ ...modalSectionTitle, marginTop: 40}}>도착지 정보</div>
+              <div style={{ ...modalSectionTitle, marginTop: 40 }}>
+                도착지 정보
+              </div>
               <div style={{ marginTop: 10 }}>
                 {editForm.delivery === "택배" ? (
                   <Input
@@ -5128,7 +6217,7 @@ export default function Home() {
                           pack: editForm.pack,
                           address: v,
                           branch: editForm.branch,
-                        })
+                        }),
                       );
                     }}
                   />
@@ -5145,7 +6234,7 @@ export default function Home() {
                           receiver: editForm.receiver,
                           branch: v,
                           currentPostalCode: "",
-                        })
+                        }),
                       );
                       updateEditField(
                         "fare",
@@ -5155,7 +6244,7 @@ export default function Home() {
                           pack: editForm.pack,
                           address: editForm.address,
                           branch: v,
-                        })
+                        }),
                       );
                     }}
                   />
@@ -5169,7 +6258,9 @@ export default function Home() {
                     <input
                       style={input}
                       value={editForm.postalCode}
-                      onChange={(e) => updateEditField("postalCode", e.target.value)}
+                      onChange={(e) =>
+                        updateEditField("postalCode", e.target.value)
+                      }
                     />
                     <button
                       type="button"
@@ -5177,7 +6268,9 @@ export default function Home() {
                       onClick={async () => {
                         try {
                           if (editForm.delivery === "택배") {
-                            const zip = await lookupPostalCodeByAddress(editForm.address);
+                            const zip = await lookupPostalCodeByAddress(
+                              editForm.address,
+                            );
                             updateEditField("postalCode", zip);
                           } else {
                             updateEditField(
@@ -5187,14 +6280,14 @@ export default function Home() {
                                 receiver: editForm.receiver,
                                 branch: editForm.branch,
                                 currentPostalCode: "",
-                              })
+                              }),
                             );
                           }
                         } catch (error) {
                           alert(
                             error instanceof Error
                               ? error.message
-                              : "우편번호 자동채움에 실패했습니다."
+                              : "우편번호 자동채움에 실패했습니다.",
                           );
                         }
                       }}
@@ -5206,10 +6299,16 @@ export default function Home() {
                 <div />
               </div>
 
-              <div style={{ ...modalSectionTitle, marginTop: 40}}>품목/포장</div>
+              <div style={{ ...modalSectionTitle, marginTop: 40 }}>
+                품목/포장
+              </div>
 
               <div style={{ ...detailEditGrid, marginTop: 10 }}>
-                <Input label="품명" value={editForm.item} set={(v) => updateEditField("item", v)} />
+                <Input
+                  label="품명"
+                  value={editForm.item}
+                  set={(v) => updateEditField("item", v)}
+                />
                 <Input
                   label="포장형태"
                   value={editForm.pack}
@@ -5223,13 +6322,15 @@ export default function Home() {
                         pack: v,
                         address: editForm.address,
                         branch: editForm.branch,
-                      })
+                      }),
                     );
                   }}
                 />
-              </div>             
+              </div>
 
-              <div style={{ ...modalSectionTitle, marginTop: 40}}>보내는 사람</div>
+              <div style={{ ...modalSectionTitle, marginTop: 40 }}>
+                보내는 사람
+              </div>
               <div style={detailEditGrid}>
                 <Input
                   label="발화주명"
@@ -5244,18 +6345,30 @@ export default function Home() {
               </div>
 
               <div style={{ marginTop: 40 }}>
-                <Input label="메모사항" value={editForm.memo} set={(v) => updateEditField("memo", v)} />
+                <Input
+                  label="메모사항"
+                  value={editForm.memo}
+                  set={(v) => updateEditField("memo", v)}
+                />
               </div>
 
               <div style={{ marginTop: 40 }}>
-                <Input label="거래처 특기사항" value={editForm.note} set={(v) => updateEditField("note", v)} />
+                <Input
+                  label="거래처 특기사항"
+                  value={editForm.note}
+                  set={(v) => updateEditField("note", v)}
+                />
               </div>
 
               <div style={modalFooter}>
                 <button type="button" style={cancelBtn} onClick={closeDetail}>
                   취소
                 </button>
-                <button type="button" style={modalSaveBtn} onClick={handleSaveDetail}>
+                <button
+                  type="button"
+                  style={modalSaveBtn}
+                  onClick={handleSaveDetail}
+                >
                   저장
                 </button>
               </div>
@@ -5273,7 +6386,12 @@ export default function Home() {
                 value={addrKeyword}
                 onChange={(e) => setAddrKeyword(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return;
+                  if (
+                    e.key !== "Enter" ||
+                    e.shiftKey ||
+                    e.nativeEvent.isComposing
+                  )
+                    return;
                   e.preventDefault();
                   void handleAddressSearch();
                 }}
@@ -5288,11 +6406,15 @@ export default function Home() {
               </button>
 
               <div style={{ marginTop: 10, maxHeight: 300, overflow: "auto" }}>
-                {addrKeyword.trim() && addrSearched && addrResults.length === 0 && (
-                  <div style={{ marginTop: 12, color: "#6b7280", fontSize: 14 }}>
-                    검색 결과가 없습니다. 검색어를 더 자세히 입력해 주세요.
-                  </div>
-                )}
+                {addrKeyword.trim() &&
+                  addrSearched &&
+                  addrResults.length === 0 && (
+                    <div
+                      style={{ marginTop: 12, color: "#6b7280", fontSize: 14 }}
+                    >
+                      검색 결과가 없습니다. 검색어를 더 자세히 입력해 주세요.
+                    </div>
+                  )}
                 {addrResults.map((item, idx) => (
                   <div
                     key={idx}
@@ -5313,7 +6435,7 @@ export default function Home() {
                           pack,
                           address: item.roadAddr,
                           branch,
-                        })
+                        }),
                       );
 
                       setAddrResults([]);
@@ -5428,7 +6550,9 @@ function AutocompleteInput({
           if (e.key === "ArrowDown" && matches.length > 0) {
             e.preventDefault();
             setFocused(true);
-            setHighlightedIndex((prev) => Math.min(prev + 1, matches.length - 1));
+            setHighlightedIndex((prev) =>
+              Math.min(prev + 1, matches.length - 1),
+            );
             return;
           }
 
@@ -5523,15 +6647,9 @@ function Toggle<T extends string>({
   );
 }
 
-function Section({
-  title,
-  children,
-}: {
-  title: string;
-  children: ReactNode;
-}) {
+function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div style={{ marginBottom: 50 }}>
+    <div style={{ marginBottom: 32 }}>
       <h2 style={section}>{title}</h2>
       {children}
     </div>
@@ -5580,7 +6698,7 @@ async function lookupPostalCodeByAddress(address: string) {
   const exact = results.find(
     (item: any) =>
       String(item.roadAddr || "").replace(/\s/g, "") ===
-      String(address || "").replace(/\s/g, "")
+      String(address || "").replace(/\s/g, ""),
   );
 
   return exact?.zipNo || results[0]?.zipNo || "";
@@ -5590,7 +6708,6 @@ function ProgressBadge({ checklist }: { checklist: Checklist }) {
   const progress = checklistProgress(checklist);
   return <div style={progressBadge}>완료율 {progress.percent}%</div>;
 }
-
 
 const verifyUploadBar: CSSProperties = {
   display: "flex",
@@ -5920,7 +7037,7 @@ const labelStyle: CSSProperties = {
 
 const saveBtn: CSSProperties = {
   width: "100%",
-  marginTop: 20,
+  marginTop: 4,
   padding: 15,
   background: "#2563eb",
   color: "#fff",
@@ -5993,6 +7110,46 @@ const scopeBar: CSSProperties = {
   alignItems: "center",
   gap: 12,
   marginBottom: 12,
+};
+
+const dateRangeBar: CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "flex-end",
+  gap: 12,
+  flexWrap: "wrap",
+  padding: "14px 16px",
+  background: "#f8fafc",
+  border: "1px solid #e5e7eb",
+  borderRadius: 14,
+  marginBottom: 14,
+};
+
+const dateRangeControls: CSSProperties = {
+  display: "flex",
+  alignItems: "flex-end",
+  gap: 8,
+  flexWrap: "wrap",
+};
+
+const dateField: CSSProperties = {
+  display: "grid",
+  gap: 6,
+};
+
+const dateInput: CSSProperties = {
+  minWidth: 150,
+  padding: "10px 12px",
+  borderRadius: 10,
+  border: "1px solid #d1d5db",
+  fontSize: 14,
+  background: "#fff",
+};
+
+const dateRangeSeparator: CSSProperties = {
+  paddingBottom: 10,
+  color: "#6b7280",
+  fontWeight: 800,
 };
 
 const scopeToggleWrap: CSSProperties = {
@@ -6128,7 +7285,8 @@ const overviewWrap: CSSProperties = {
 
 const groupHeaderRow: CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "52px 1.3fr 2.6fr 0.9fr 0.9fr 1fr 1.1fr 70px 70px 70px 90px 40px 88px",
+  gridTemplateColumns:
+    "52px 1.3fr 2.6fr 0.9fr 0.9fr 1fr 1.1fr 70px 70px 70px 90px 40px 88px",
   gap: 10,
   alignItems: "center",
   fontSize: 13,
@@ -6157,7 +7315,8 @@ const groupAction: CSSProperties = {
 
 const overviewRow: CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "52px 1.3fr 2.6fr 0.9fr 0.9fr 1fr 1.1fr 70px 70px 70px 90px 40px 88px",
+  gridTemplateColumns:
+    "52px 1.3fr 2.6fr 0.9fr 0.9fr 1fr 1.1fr 70px 70px 70px 90px 40px 88px",
   gap: 10,
   alignItems: "center",
   padding: "16px 14px",
@@ -6323,8 +7482,6 @@ const progressBadge: CSSProperties = {
   fontSize: 14,
   background: "#fff",
 };
-
-
 
 const modalSectionTitle: CSSProperties = {
   fontSize: 17,
