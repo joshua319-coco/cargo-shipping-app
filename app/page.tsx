@@ -1633,6 +1633,7 @@ export default function Home() {
   const [senderFocused, setSenderFocused] = useState(false);
 
   const [savedShipments, setSavedShipments] = useState<SavedShipment[]>([]);
+  const [shipmentListLoading, setShipmentListLoading] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const [detailOpen, setDetailOpen] = useState(false);
@@ -1751,19 +1752,39 @@ export default function Home() {
   const qtySalesUploadRef = useRef<HTMLInputElement | null>(null);
   const [pdaPasteText, setPdaPasteText] = useState("");
 
-  const loadShipmentsFromDb = async () => {
-    const { data, error } = await supabase
-      .from("shipments")
-      .select("*")
-      .order("created_at", { ascending: false });
+  const loadShipmentsFromDb = async (
+    options: { alertOnError?: boolean; showLoading?: boolean } = {},
+  ) => {
+    const { alertOnError = false, showLoading = false } = options;
 
-    if (error) {
-      console.error("DB 조회 실패", error);
-      return;
+    if (showLoading) {
+      setShipmentListLoading(true);
     }
 
-    const normalized: SavedShipment[] = (data ?? []).map(normalizeShipment);
-    persistShipments(normalized);
+    try {
+      const { data, error } = await supabase
+        .from("shipments")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error("DB 조회 실패", error);
+
+        if (alertOnError) {
+          alert("출고목록 조회 실패: " + error.message);
+        }
+
+        return false;
+      }
+
+      const normalized: SavedShipment[] = (data ?? []).map(normalizeShipment);
+      persistShipments(normalized);
+      return true;
+    } finally {
+      if (showLoading) {
+        setShipmentListLoading(false);
+      }
+    }
   };
 
   const loadReceiverMasterFromDb = async () => {
@@ -2374,6 +2395,25 @@ export default function Home() {
     if (!session) return;
 
     const channel = supabase
+      .channel("shipments-sync")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "shipments" },
+        () => {
+          void loadShipmentsFromDb();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [session?.user.id]);
+
+  useEffect(() => {
+    if (!session) return;
+
+    const channel = supabase
       .channel("shared-verify-sync")
       .on(
         "postgres_changes",
@@ -2466,7 +2506,7 @@ export default function Home() {
     );
   }, [senderMaster, sender]);
 
-  const handleListDateSearch = () => {
+  const handleListDateSearch = async () => {
     if (!isValidDateRange(listDateFromDraft, listDateToDraft)) {
       alert("조회 시작일은 종료일보다 늦을 수 없습니다.");
       return;
@@ -2475,17 +2515,26 @@ export default function Home() {
     setListDateFrom(listDateFromDraft);
     setListDateTo(listDateToDraft);
     setSelectedIds([]);
-    void loadShipmentsFromDb();
+
+    await loadShipmentsFromDb({
+      alertOnError: true,
+      showLoading: true,
+    });
   };
 
-  const showTodayShipmentList = () => {
+  const showTodayShipmentList = async () => {
     const todayKey = getTodaySeoulDateKey();
+
     setListDateFromDraft(todayKey);
     setListDateToDraft(todayKey);
     setListDateFrom(todayKey);
     setListDateTo(todayKey);
     setSelectedIds([]);
-    void loadShipmentsFromDb();
+
+    await loadShipmentsFromDb({
+      alertOnError: true,
+      showLoading: true,
+    });
   };
 
   const handleWaybillDateSearch = () => {
@@ -4603,14 +4652,16 @@ export default function Home() {
                 <button
                   type="button"
                   style={smallBlueBtn}
-                  onClick={handleListDateSearch}
+                  onClick={() => void handleListDateSearch()}
+                  disabled={shipmentListLoading}
                 >
-                  조회
+                  {shipmentListLoading ? "조회중..." : "조회"}
                 </button>
                 <button
                   type="button"
                   style={smallGrayBtn}
-                  onClick={showTodayShipmentList}
+                  onClick={() => void showTodayShipmentList()}
+                  disabled={shipmentListLoading}
                 >
                   오늘
                 </button>
@@ -4724,7 +4775,9 @@ export default function Home() {
               </div>
             </div>
 
-            {savedShipments.length === 0 ? (
+            {shipmentListLoading ? (
+              <div style={emptyText}>출고목록을 새로 조회하는 중입니다...</div>
+            ) : savedShipments.length === 0 ? (
               <div style={emptyText}>아직 저장된 출고건 없음</div>
             ) : filteredShipments.length === 0 ? (
               <div style={emptyText}>필터 조건에 맞는 출고건 없음</div>
