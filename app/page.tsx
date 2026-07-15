@@ -284,7 +284,7 @@ const initialSenderList: Party[] = [
   {
     name: "상화시스템",
     aliases: ["상화"],
-    phone: "0318059618",
+    phone: "03180595618",
   },
   {
     name: "제로100모터스",
@@ -330,7 +330,7 @@ function normalizeShipment(raw: any): SavedShipment {
     branch: raw?.branch ?? "",
     postalCode: raw?.postalCode ?? raw?.postal_code ?? "",
     sender: raw?.sender ?? "상화시스템",
-    senderPhone: raw?.senderPhone ?? raw?.sender_phone ?? "0318059618",
+    senderPhone: raw?.senderPhone ?? raw?.sender_phone ?? "03180595618",
     item: raw?.item ?? "부품",
     pack: raw?.pack ?? "박스",
     pay: raw?.pay === "선불" ? "선불" : "착불",
@@ -1614,7 +1614,7 @@ export default function Home() {
   const [note, setNote] = useState("");
 
   const [sender, setSender] = useState("상화시스템");
-  const [senderPhone, setSenderPhone] = useState("0318059618");
+  const [senderPhone, setSenderPhone] = useState("03180595618");
   const [senderNote, setSenderNote] = useState("");
 
   const [item, setItem] = useState("부품");
@@ -2844,7 +2844,7 @@ export default function Home() {
     setPostalCode("");
     setNote("");
     setSender("상화시스템");
-    setSenderPhone("0318059618");
+    setSenderPhone("03180595618");
     setSenderNote("");
     setItem("부품");
     setPack("박스");
