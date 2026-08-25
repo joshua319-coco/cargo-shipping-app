@@ -63,6 +63,42 @@ type SavedShipment = {
   checklist: Checklist;
 };
 
+type ShipmentDraft = Omit<SavedShipment, "id" | "createdAt">;
+
+type ShipmentDbPayload = {
+  receiver: string;
+  receiver_phone: string;
+  address: string;
+  branch: string;
+  postal_code: string;
+  sender: string;
+  sender_phone: string;
+  item: string;
+  pack: string;
+  pay: PayType;
+  delivery: DeliveryType;
+  qty: number;
+  fare: number;
+  memo: string;
+  note: string;
+  pda: boolean;
+  waybill: boolean;
+  closed_done: boolean;
+};
+
+type AddressSearchResult = {
+  roadAddr: string;
+  jibunAddr: string;
+  zipNo: string;
+};
+
+type SupabaseErrorLike = {
+  code?: string;
+  message?: string;
+  details?: string;
+  hint?: string;
+};
+
 type WaybillUploadRow = {
   id: string;
   sender: string;
@@ -187,6 +223,8 @@ const LEGACY_SENDER_MASTER_KEY = "sender_master_v1";
 const LEGACY_BRANCH_MASTER_KEY = "branch_master_v1";
 const MASTER_DB_MIGRATION_KEY = "master_db_migrated_v1";
 const SHARED_VERIFY_STATE_TABLE = "shared_verify_state";
+const SHIPMENT_REQUEST_ID_COLUMN = "client_request_id";
+const SHARED_VERIFY_TEXT_SAVE_DELAY_MS = 700;
 
 const TEMPLATE_SHEET_NAME = "업로드_양식 값붙여넣기(우클릭+V)";
 const TEMPLATE_HEADERS = [
@@ -312,99 +350,136 @@ const initialBranchPostalMap: Record<string, string> = {
   고양식사: "10290",
 };
 
-function normalizeChecklist(raw: any): Checklist {
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function asStringArray(value: unknown) {
+  return Array.isArray(value)
+    ? value.map((item) => asString(item)).filter(Boolean)
+    : [];
+}
+
+function normalizeChecklist(raw: unknown): Checklist {
+  const row = asRecord(raw);
+
   return {
-    pda: raw?.pda ?? raw?.processPda ?? raw?.pdaRegister ?? false,
-    waybill:
-      raw?.waybill ?? raw?.closingWaybill ?? raw?.waybillRegister ?? false,
-    closedDone: raw?.closedDone ?? raw?.closed_done ?? raw?.closeDone ?? false,
+    pda: Boolean(row.pda ?? row.processPda ?? row.pdaRegister ?? false),
+    waybill: Boolean(
+      row.waybill ?? row.closingWaybill ?? row.waybillRegister ?? false,
+    ),
+    closedDone: Boolean(
+      row.closedDone ?? row.closed_done ?? row.closeDone ?? false,
+    ),
   };
 }
 
-function normalizeShipment(raw: any): SavedShipment {
+function normalizeShipment(raw: unknown): SavedShipment {
+  const row = asRecord(raw);
+
   return {
-    id: String(raw?.id ?? Date.now()),
-    receiver: raw?.receiver ?? "",
-    receiverPhone: raw?.receiverPhone ?? raw?.receiver_phone ?? "",
-    address: raw?.address ?? "",
-    branch: raw?.branch ?? "",
-    postalCode: raw?.postalCode ?? raw?.postal_code ?? "",
-    sender: raw?.sender ?? "상화시스템",
-    senderPhone: raw?.senderPhone ?? raw?.sender_phone ?? "03180595618",
-    item: raw?.item ?? "부품",
-    pack: raw?.pack ?? "박스",
-    pay: raw?.pay === "선불" ? "선불" : "착불",
-    delivery: raw?.delivery === "정기" ? "정기" : "택배",
-    qty: String(raw?.qty ?? "1"),
-    fare: String(raw?.fare ?? "5500"),
-    memo: raw?.memo ?? "",
-    note: raw?.note ?? "",
-    createdAt: raw?.createdAt ?? raw?.created_at ?? new Date().toISOString(),
+    id: asString(row.id) || String(Date.now()),
+    receiver: asString(row.receiver),
+    receiverPhone: asString(row.receiverPhone ?? row.receiver_phone),
+    address: asString(row.address),
+    branch: asString(row.branch),
+    postalCode: asString(row.postalCode ?? row.postal_code),
+    sender: asString(row.sender) || "상화시스템",
+    senderPhone:
+      asString(row.senderPhone ?? row.sender_phone) || "03180595618",
+    item: asString(row.item) || "부품",
+    pack: asString(row.pack) || "박스",
+    pay: row.pay === "선불" ? "선불" : "착불",
+    delivery: row.delivery === "정기" ? "정기" : "택배",
+    qty: asString(row.qty) || "1",
+    fare: asString(row.fare) || "5500",
+    memo: asString(row.memo),
+    note: asString(row.note),
+    createdAt:
+      asString(row.createdAt ?? row.created_at) || new Date().toISOString(),
     checklist: normalizeChecklist(
-      raw?.checklist ?? {
-        pda: raw?.pda,
-        waybill: raw?.waybill,
-        closedDone: raw?.closed_done,
+      row.checklist ?? {
+        pda: row.pda,
+        waybill: row.waybill,
+        closedDone: row.closed_done,
       },
     ),
   };
 }
 
-function normalizeReceiverMasterRows(rows: any[]): Party[] {
-  return (rows ?? []).map((row) => ({
-    name: row?.name ?? "",
-    aliases: Array.isArray(row?.aliases) ? row.aliases : [],
-    phone: row?.phone ?? "",
-    address: row?.address ?? "",
-    branch: row?.branch ?? "",
-    note: row?.note ?? "",
-    postalCode: row?.postal_code ?? "",
-  }));
+function normalizeReceiverMasterRows(rows: unknown[]): Party[] {
+  return (rows ?? []).map((rawRow) => {
+    const row = asRecord(rawRow);
+
+    return {
+      name: asString(row.name),
+      aliases: asStringArray(row.aliases),
+      phone: asString(row.phone),
+      address: asString(row.address),
+      branch: asString(row.branch),
+      note: asString(row.note),
+      postalCode: asString(row.postal_code),
+    };
+  });
 }
 
-function normalizeSenderMasterRows(rows: any[]): Party[] {
-  return (rows ?? []).map((row) => ({
-    name: row?.name ?? "",
-    aliases: Array.isArray(row?.aliases) ? row.aliases : [],
-    phone: row?.phone ?? "",
-    note: row?.note ?? "",
-  }));
+function normalizeSenderMasterRows(rows: unknown[]): Party[] {
+  return (rows ?? []).map((rawRow) => {
+    const row = asRecord(rawRow);
+
+    return {
+      name: asString(row.name),
+      aliases: asStringArray(row.aliases),
+      phone: asString(row.phone),
+      note: asString(row.note),
+    };
+  });
 }
 
-function normalizeBranchMasterRows(rows: any[]): BranchPostalItem[] {
-  return (rows ?? []).map((row) => ({
-    branch: row?.branch ?? "",
-    postalCode: row?.postal_code ?? "",
-  }));
+function normalizeBranchMasterRows(rows: unknown[]): BranchPostalItem[] {
+  return (rows ?? []).map((rawRow) => {
+    const row = asRecord(rawRow);
+
+    return {
+      branch: asString(row.branch),
+      postalCode: asString(row.postal_code),
+    };
+  });
 }
 
 function normalizeSharedVerifyState(
-  raw: any,
+  raw: unknown,
   sessionDate: string,
 ): SharedVerifyStateRow {
+  const row = asRecord(raw);
+
   return {
-    session_date: raw?.session_date ?? sessionDate,
-    waybill_upload_rows: Array.isArray(raw?.waybill_upload_rows)
-      ? raw.waybill_upload_rows
+    session_date: asString(row.session_date) || sessionDate,
+    waybill_upload_rows: Array.isArray(row.waybill_upload_rows)
+      ? (row.waybill_upload_rows as WaybillUploadRow[])
       : [],
-    waybill_upload_file_name: raw?.waybill_upload_file_name ?? "",
-    order_status_rows: Array.isArray(raw?.order_status_rows)
-      ? raw.order_status_rows
+    waybill_upload_file_name: asString(row.waybill_upload_file_name),
+    order_status_rows: Array.isArray(row.order_status_rows)
+      ? (row.order_status_rows as OrderStatusRow[])
       : [],
-    sales_status_rows: Array.isArray(raw?.sales_status_rows)
-      ? raw.sales_status_rows
+    sales_status_rows: Array.isArray(row.sales_status_rows)
+      ? (row.sales_status_rows as SalesStatusRow[])
       : [],
-    pda_rows: Array.isArray(raw?.pda_rows) ? raw.pda_rows : [],
-    order_file_name: raw?.order_file_name ?? "",
-    sales_file_name: raw?.sales_file_name ?? "",
-    pda_paste_text: raw?.pda_paste_text ?? "",
-    qty_sales_status_rows: Array.isArray(raw?.qty_sales_status_rows)
-      ? raw.qty_sales_status_rows
+    pda_rows: Array.isArray(row.pda_rows) ? (row.pda_rows as PdaRow[]) : [],
+    order_file_name: asString(row.order_file_name),
+    sales_file_name: asString(row.sales_file_name),
+    pda_paste_text: asString(row.pda_paste_text),
+    qty_sales_status_rows: Array.isArray(row.qty_sales_status_rows)
+      ? (row.qty_sales_status_rows as SalesStatusRow[])
       : [],
-    qty_pda_rows: Array.isArray(raw?.qty_pda_rows) ? raw.qty_pda_rows : [],
-    qty_sales_file_name: raw?.qty_sales_file_name ?? "",
-    qty_pda_paste_text: raw?.qty_pda_paste_text ?? "",
-    updated_at: raw?.updated_at,
+    qty_pda_rows: Array.isArray(row.qty_pda_rows)
+      ? (row.qty_pda_rows as PdaRow[])
+      : [],
+    qty_sales_file_name: asString(row.qty_sales_file_name),
+    qty_pda_paste_text: asString(row.qty_pda_paste_text),
+    updated_at: asString(row.updated_at) || undefined,
   };
 }
 
@@ -1361,6 +1436,29 @@ function buildShipmentNote(receiverNote: string, senderNote: string) {
   return safeReceiverNote || safeSenderNote;
 }
 
+function toShipmentDbPayload(shipment: ShipmentDraft): ShipmentDbPayload {
+  return {
+    receiver: shipment.receiver,
+    receiver_phone: shipment.receiverPhone,
+    address: shipment.address,
+    branch: shipment.branch,
+    postal_code: shipment.postalCode,
+    sender: shipment.sender,
+    sender_phone: shipment.senderPhone,
+    item: shipment.item,
+    pack: shipment.pack,
+    pay: shipment.pay,
+    delivery: shipment.delivery,
+    qty: Number(shipment.qty),
+    fare: Number(String(shipment.fare).replace(/,/g, "")),
+    memo: shipment.memo,
+    note: shipment.note,
+    pda: shipment.checklist.pda,
+    waybill: shipment.checklist.waybill,
+    closed_done: shipment.checklist.closedDone,
+  };
+}
+
 function asString(value: unknown) {
   if (value === undefined || value === null) return "";
   return String(value).trim();
@@ -1368,7 +1466,96 @@ function asString(value: unknown) {
 
 function getErrorMessage(error: unknown) {
   if (error instanceof Error) return error.message;
+
+  if (error && typeof error === "object" && "message" in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string" && message.trim()) return message;
+  }
+
   return "알 수 없는 오류가 발생했습니다.";
+}
+
+function getSupabaseErrorCode(error: unknown) {
+  if (!error || typeof error !== "object" || !("code" in error)) return "";
+  const code = (error as SupabaseErrorLike).code;
+  return typeof code === "string" ? code : "";
+}
+
+function createClientRequestId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random()
+    .toString(36)
+    .slice(2)}`;
+}
+
+function isMissingShipmentRequestIdColumn(error: unknown) {
+  const code = getSupabaseErrorCode(error);
+  const message = getErrorMessage(error).toLowerCase();
+
+  return (
+    (code === "PGRST204" || code === "42703") &&
+    message.includes(SHIPMENT_REQUEST_ID_COLUMN)
+  );
+}
+
+function isShipmentRequestAlreadySaved(error: unknown) {
+  if (getSupabaseErrorCode(error) !== "23505") return false;
+  return getErrorMessage(error)
+    .toLowerCase()
+    .includes(SHIPMENT_REQUEST_ID_COLUMN);
+}
+
+async function shipmentRequestExists(requestId: string) {
+  const { data, error } = await supabase
+    .from("shipments")
+    .select("id")
+    .eq(SHIPMENT_REQUEST_ID_COLUMN, requestId)
+    .maybeSingle();
+
+  if (error) throw error;
+  return Boolean(data);
+}
+
+async function insertShipmentWithIdempotency(
+  payload: ShipmentDbPayload,
+  requestId: string,
+): Promise<"inserted" | "already-saved" | "inserted-with-client-lock-only"> {
+  const { error } = await supabase.from("shipments").insert([
+    {
+      ...payload,
+      [SHIPMENT_REQUEST_ID_COLUMN]: requestId,
+    },
+  ]);
+
+  if (!error) return "inserted";
+
+  // SQL 보강을 아직 적용하지 않은 배포도 깨지지 않도록 한시적으로 호환한다.
+  if (isMissingShipmentRequestIdColumn(error)) {
+    console.warn(
+      "shipments.client_request_id 컬럼이 없어 화면 잠금만으로 저장합니다. 제공된 SQL을 적용해 주세요.",
+    );
+
+    const { error: fallbackError } = await supabase
+      .from("shipments")
+      .insert([payload]);
+
+    if (fallbackError) throw fallbackError;
+    return "inserted-with-client-lock-only";
+  }
+
+  if (isShipmentRequestAlreadySaved(error)) return "already-saved";
+
+  // 응답이 끊겼지만 DB에는 저장된 경우를 한 번 더 확인한다.
+  try {
+    if (await shipmentRequestExists(requestId)) return "already-saved";
+  } catch (lookupError) {
+    console.warn("저장 요청 재확인 실패", lookupError);
+  }
+
+  throw error;
 }
 
 function normalizeHeaderKey(value: unknown) {
@@ -1625,7 +1812,7 @@ export default function Home() {
   const [fare, setFare] = useState("5500");
   const [memo, setMemo] = useState("");
 
-  const [addrResults, setAddrResults] = useState<any[]>([]);
+  const [addrResults, setAddrResults] = useState<AddressSearchResult[]>([]);
   const [addrKeyword, setAddrKeyword] = useState("");
   const [showAddrSearch, setShowAddrSearch] = useState(false);
 
@@ -1634,11 +1821,24 @@ export default function Home() {
 
   const [savedShipments, setSavedShipments] = useState<SavedShipment[]>([]);
   const [shipmentListLoading, setShipmentListLoading] = useState(false);
+  const [isSavingShipment, setIsSavingShipment] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+  const shipmentSaveLockRef = useRef(false);
+  const pendingShipmentRequestRef = useRef<{
+    fingerprint: string;
+    requestId: string;
+  } | null>(null);
+  const shipmentLoadSequenceRef = useRef(0);
+  const shipmentLoadingCountRef = useRef(0);
+  const checklistLockedIdsRef = useRef<Set<number>>(new Set());
+  const initializedDataRef = useRef(false);
 
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailShipmentId, setDetailShipmentId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<SavedShipment | null>(null);
+  const [isSavingDetail, setIsSavingDetail] = useState(false);
+  const detailSaveLockRef = useRef(false);
 
   const [filterKeyword, setFilterKeyword] = useState("");
   const [payFilter, setPayFilter] = useState<"전체" | PayType>("전체");
@@ -1752,12 +1952,37 @@ export default function Home() {
   const qtySalesUploadRef = useRef<HTMLInputElement | null>(null);
   const [pdaPasteText, setPdaPasteText] = useState("");
 
+  const waybillHistoryLoadSequenceRef = useRef(0);
+  const sharedVerifyLoadSequenceRef = useRef(0);
+  const sharedVerifyWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const pdaTextSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const qtyPdaTextSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const mutationLocksRef = useRef<Set<string>>(new Set());
+
+  const runLockedMutation = async <T,>(
+    key: string,
+    task: () => Promise<T>,
+  ): Promise<T | undefined> => {
+    if (mutationLocksRef.current.has(key)) return undefined;
+
+    mutationLocksRef.current.add(key);
+    try {
+      return await task();
+    } finally {
+      mutationLocksRef.current.delete(key);
+    }
+  };
+
   const loadShipmentsFromDb = async (
     options: { alertOnError?: boolean; showLoading?: boolean } = {},
   ) => {
     const { alertOnError = false, showLoading = false } = options;
+    const requestSequence = ++shipmentLoadSequenceRef.current;
 
     if (showLoading) {
+      shipmentLoadingCountRef.current += 1;
       setShipmentListLoading(true);
     }
 
@@ -1767,22 +1992,35 @@ export default function Home() {
         .select("*")
         .order("created_at", { ascending: false });
 
-      if (error) {
-        console.error("DB 조회 실패", error);
+      if (error) throw error;
 
-        if (alertOnError) {
-          alert("출고목록 조회 실패: " + error.message);
-        }
-
-        return false;
-      }
+      // 먼저 시작한 느린 조회가 나중 조회 결과를 덮지 못하게 한다.
+      if (requestSequence !== shipmentLoadSequenceRef.current) return false;
 
       const normalized: SavedShipment[] = (data ?? []).map(normalizeShipment);
-      persistShipments(normalized);
+      const validIds = new Set(normalized.map((item) => item.id));
+
+      setSavedShipments(normalized);
+      setSelectedIds((prev) => prev.filter((id) => validIds.has(id)));
       return true;
+    } catch (error) {
+      console.error("DB 조회 실패", error);
+
+      if (alertOnError) {
+        alert("출고목록 조회 실패: " + getErrorMessage(error));
+      }
+
+      return false;
     } finally {
       if (showLoading) {
-        setShipmentListLoading(false);
+        shipmentLoadingCountRef.current = Math.max(
+          0,
+          shipmentLoadingCountRef.current - 1,
+        );
+
+        if (shipmentLoadingCountRef.current === 0) {
+          setShipmentListLoading(false);
+        }
       }
     }
   };
@@ -1873,18 +2111,26 @@ export default function Home() {
 
     setOrderFileName(row.order_file_name || "");
     setSalesFileName(row.sales_file_name || "");
-    setPdaPasteText(row.pda_paste_text || "");
+
+    // 입력 중인 로컬 텍스트는 Realtime 재조회가 덮어쓰지 않게 보호한다.
+    if (!pdaTextSaveTimerRef.current) {
+      setPdaPasteText(row.pda_paste_text || "");
+    }
 
     setQtySalesStatusRows(
       Array.isArray(row.qty_sales_status_rows) ? row.qty_sales_status_rows : [],
     );
     setQtyPdaRows(Array.isArray(row.qty_pda_rows) ? row.qty_pda_rows : []);
     setQtySalesFileName(row.qty_sales_file_name || "");
-    setQtyPdaPasteText(row.qty_pda_paste_text || "");
+
+    if (!qtyPdaTextSaveTimerRef.current) {
+      setQtyPdaPasteText(row.qty_pda_paste_text || "");
+    }
   };
 
   const loadSharedVerifyStateFromDb = async () => {
     const sessionDate = getVerifySessionDate();
+    const requestSequence = ++sharedVerifyLoadSequenceRef.current;
 
     const { data, error } = await supabase
       .from(SHARED_VERIFY_STATE_TABLE)
@@ -1897,73 +2143,128 @@ export default function Home() {
       return;
     }
 
-    if (!data) {
-      applySharedVerifyState(buildEmptySharedVerifyState(sessionDate));
+    if (requestSequence !== sharedVerifyLoadSequenceRef.current) return;
+
+    applySharedVerifyState(
+      data
+        ? normalizeSharedVerifyState(data, sessionDate)
+        : buildEmptySharedVerifyState(sessionDate),
+    );
+  };
+
+  const performSharedVerifyPatch = async (
+    patch: Partial<SharedVerifyStateRow>,
+  ) => {
+    const sessionDate = getVerifySessionDate();
+    const updatePayload: Partial<SharedVerifyStateRow> = { ...patch };
+    delete updatePayload.session_date;
+    delete updatePayload.updated_at;
+
+    if (Object.keys(updatePayload).length === 0) return;
+
+    // 지정한 열만 UPDATE하므로 서로 다른 사용자의 저장이 다른 열을 덮지 않는다.
+    const { data: updatedRow, error: updateError } = await supabase
+      .from(SHARED_VERIFY_STATE_TABLE)
+      .update(updatePayload)
+      .eq("session_date", sessionDate)
+      .select("session_date")
+      .maybeSingle();
+
+    if (updateError) throw updateError;
+    if (updatedRow) return;
+
+    const insertPayload: SharedVerifyStateRow = {
+      ...buildEmptySharedVerifyState(sessionDate),
+      ...updatePayload,
+      session_date: sessionDate,
+    };
+
+    const { error: insertError } = await supabase
+      .from(SHARED_VERIFY_STATE_TABLE)
+      .insert([insertPayload]);
+
+    if (!insertError) return;
+
+    // 다른 PC가 같은 날짜 행을 아주 조금 먼저 만든 경우, 필요한 열만 재시도한다.
+    if (getSupabaseErrorCode(insertError) === "23505") {
+      const { error: retryError } = await supabase
+        .from(SHARED_VERIFY_STATE_TABLE)
+        .update(updatePayload)
+        .eq("session_date", sessionDate);
+
+      if (retryError) throw retryError;
       return;
     }
 
-    applySharedVerifyState(normalizeSharedVerifyState(data, sessionDate));
+    throw insertError;
   };
 
   const saveSharedVerifyStateToDb = async (
     patch: Partial<SharedVerifyStateRow> = {},
   ) => {
-    const sessionDate = getVerifySessionDate();
+    const queuedWrite = sharedVerifyWriteQueueRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        try {
+          await performSharedVerifyPatch(patch);
+        } catch (error) {
+          console.error("공유 검증데이터 저장 실패", error);
+          alert("검증데이터 저장 실패: " + getErrorMessage(error));
+        }
+      });
 
-    const { data: existing, error: fetchError } = await supabase
-      .from(SHARED_VERIFY_STATE_TABLE)
-      .select("*")
-      .eq("session_date", sessionDate)
-      .maybeSingle();
+    sharedVerifyWriteQueueRef.current = queuedWrite;
+    await queuedWrite;
+  };
 
-    if (fetchError) {
-      console.error("공유 검증데이터 기존값 조회 실패", fetchError);
-      alert("검증데이터 저장 실패: " + fetchError.message);
-      return;
-    }
+  const scheduleSharedVerifyTextSave = (
+    field: "pda_paste_text" | "qty_pda_paste_text",
+    value: string,
+  ) => {
+    const timerRef =
+      field === "pda_paste_text"
+        ? pdaTextSaveTimerRef
+        : qtyPdaTextSaveTimerRef;
 
-    const base = existing
-      ? normalizeSharedVerifyState(existing, sessionDate)
-      : buildEmptySharedVerifyState(sessionDate);
+    if (timerRef.current) clearTimeout(timerRef.current);
 
-    const payload: SharedVerifyStateRow = {
-      ...base,
-      ...patch,
-      session_date: sessionDate,
-    };
+    timerRef.current = setTimeout(() => {
+      timerRef.current = null;
+      void saveSharedVerifyStateToDb({ [field]: value });
+    }, SHARED_VERIFY_TEXT_SAVE_DELAY_MS);
+  };
 
-    const { error } = await supabase
-      .from(SHARED_VERIFY_STATE_TABLE)
-      .upsert(payload, { onConflict: "session_date" });
+  const cancelScheduledSharedVerifyTextSave = (
+    field: "pda_paste_text" | "qty_pda_paste_text",
+  ) => {
+    const timerRef =
+      field === "pda_paste_text"
+        ? pdaTextSaveTimerRef
+        : qtyPdaTextSaveTimerRef;
 
-    if (error) {
-      console.error("공유 검증데이터 저장 실패", error);
-      alert("검증데이터 저장 실패: " + error.message);
-    }
+    if (!timerRef.current) return;
+    clearTimeout(timerRef.current);
+    timerRef.current = null;
   };
 
   const loadWaybillHistoryFromDb = async (fromDate: string, toDate: string) => {
     if (!isValidDateRange(fromDate, toDate)) return;
 
+    const requestSequence = ++waybillHistoryLoadSequenceRef.current;
     setWaybillHistoryLoading(true);
 
-    const { data, error } = await supabase
-      .from(SHARED_VERIFY_STATE_TABLE)
-      .select("session_date, waybill_upload_rows")
-      .gte("session_date", fromDate)
-      .lte("session_date", toDate)
-      .order("session_date", { ascending: false });
+    try {
+      const { data, error } = await supabase
+        .from(SHARED_VERIFY_STATE_TABLE)
+        .select("session_date, waybill_upload_rows")
+        .gte("session_date", fromDate)
+        .lte("session_date", toDate)
+        .order("session_date", { ascending: false });
 
-    setWaybillHistoryLoading(false);
+      if (error) throw error;
+      if (requestSequence !== waybillHistoryLoadSequenceRef.current) return;
 
-    if (error) {
-      console.error("운송장번호 이력 조회 실패", error);
-      alert("운송장번호 이력 조회 실패: " + error.message);
-      return;
-    }
-
-    const rows: DatedWaybillUploadRow[] = (data ?? []).flatMap(
-      (stateRow: any) => {
+      const rows: DatedWaybillUploadRow[] = (data ?? []).flatMap((stateRow) => {
         const sessionDate = asString(stateRow?.session_date);
         const uploads = Array.isArray(stateRow?.waybill_upload_rows)
           ? (stateRow.waybill_upload_rows as WaybillUploadRow[])
@@ -1974,10 +2275,18 @@ export default function Home() {
           sessionDate,
           historyId: `${sessionDate}-${upload.id || index + 1}`,
         }));
-      },
-    );
+      });
 
-    setWaybillHistoryRows(rows);
+      setWaybillHistoryRows(rows);
+    } catch (error) {
+      if (requestSequence !== waybillHistoryLoadSequenceRef.current) return;
+      console.error("운송장번호 이력 조회 실패", error);
+      alert("운송장번호 이력 조회 실패: " + getErrorMessage(error));
+    } finally {
+      if (requestSequence === waybillHistoryLoadSequenceRef.current) {
+        setWaybillHistoryLoading(false);
+      }
+    }
   };
 
   const ensureMasterSeedData = async () => {
@@ -2064,6 +2373,13 @@ export default function Home() {
             .select("*", { count: "exact", head: true }),
         ]);
 
+      const countError =
+        receiverCountResult.error ||
+        senderCountResult.error ||
+        branchCountResult.error;
+
+      if (countError) throw countError;
+
       const rawReceiver = localStorage.getItem(LEGACY_RECEIVER_MASTER_KEY);
       const rawSender = localStorage.getItem(LEGACY_SENDER_MASTER_KEY);
       const rawBranch = localStorage.getItem(LEGACY_BRANCH_MASTER_KEY);
@@ -2081,9 +2397,7 @@ export default function Home() {
           .from("receiver_master")
           .upsert(toReceiverMasterRows(parsedReceiver), { onConflict: "name" });
 
-        if (error) {
-          console.error("기존 수화주 localStorage 마이그레이션 실패", error);
-        }
+        if (error) throw error;
       }
 
       if ((senderCountResult.count ?? 0) === 0 && parsedSender.length > 0) {
@@ -2091,9 +2405,7 @@ export default function Home() {
           .from("sender_master")
           .upsert(toSenderMasterRows(parsedSender), { onConflict: "name" });
 
-        if (error) {
-          console.error("기존 발화주 localStorage 마이그레이션 실패", error);
-        }
+        if (error) throw error;
       }
 
       if ((branchCountResult.count ?? 0) === 0 && parsedBranch.length > 0) {
@@ -2101,14 +2413,13 @@ export default function Home() {
           .from("branch_master")
           .upsert(toBranchMasterRows(parsedBranch), { onConflict: "branch" });
 
-        if (error) {
-          console.error("기존 영업소 localStorage 마이그레이션 실패", error);
-        }
+        if (error) throw error;
       }
-    } catch (error) {
-      console.error("기존 localStorage 마스터 마이그레이션 실패", error);
-    } finally {
+
       localStorage.setItem(MASTER_DB_MIGRATION_KEY, "done");
+    } catch (error) {
+      // 실패한 경우 완료 표시를 남기지 않아 다음 로그인 때 다시 시도한다.
+      console.error("기존 localStorage 마스터 마이그레이션 실패", error);
     }
   };
 
@@ -2132,19 +2443,19 @@ export default function Home() {
     clearAuthFeedback();
     setAuthBusy(true);
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email: authEmail.trim(),
-      password: authPassword,
-    });
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email: authEmail.trim(),
+        password: authPassword,
+      });
 
-    setAuthBusy(false);
-
-    if (error) {
-      setAuthError(error.message);
-      return;
+      if (error) throw error;
+      setAuthPassword("");
+    } catch (error) {
+      setAuthError(getErrorMessage(error));
+    } finally {
+      setAuthBusy(false);
     }
-
-    setAuthPassword("");
   };
 
   const handleSendPasswordReset = async () => {
@@ -2157,23 +2468,24 @@ export default function Home() {
     clearAuthFeedback();
     setAuthBusy(true);
 
-    const { error } = await supabase.auth.resetPasswordForEmail(
-      authEmail.trim(),
-      {
-        redirectTo: getPasswordResetRedirectUrl(),
-      },
-    );
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(
+        authEmail.trim(),
+        {
+          redirectTo: getPasswordResetRedirectUrl(),
+        },
+      );
 
-    setAuthBusy(false);
+      if (error) throw error;
 
-    if (error) {
-      setAuthError(error.message);
-      return;
+      setAuthMessage(
+        "비밀번호 재설정 메일을 보냈습니다. 메일의 링크를 눌러 새 비밀번호를 설정해 주세요.",
+      );
+    } catch (error) {
+      setAuthError(getErrorMessage(error));
+    } finally {
+      setAuthBusy(false);
     }
-
-    setAuthMessage(
-      "비밀번호 재설정 메일을 보냈습니다. 메일의 링크를 눌러 새 비밀번호를 설정해 주세요.",
-    );
   };
 
   const handleUpdatePassword = async () => {
@@ -2198,45 +2510,47 @@ export default function Home() {
     clearAuthFeedback();
     setAuthBusy(true);
 
-    const { error } = await supabase.auth.updateUser({
-      password: authPassword,
-    });
+    try {
+      const { error } = await supabase.auth.updateUser({
+        password: authPassword,
+      });
 
-    if (error) {
+      if (error) throw error;
+
+      const { error: signOutError } = await supabase.auth.signOut();
+      if (signOutError) throw signOutError;
+
+      setSession(null);
+      setAuthMode("login");
+      setAuthPassword("");
+      setAuthPasswordConfirm("");
+      setAuthMessage(
+        "비밀번호가 변경되었습니다. 새 비밀번호로 다시 로그인해 주세요.",
+      );
+    } catch (error) {
+      setAuthError(getErrorMessage(error));
+    } finally {
       setAuthBusy(false);
-      setAuthError(error.message);
-      return;
     }
-
-    await supabase.auth.signOut();
-
-    setAuthBusy(false);
-    setSession(null);
-    setAuthMode("login");
-    setAuthPassword("");
-    setAuthPasswordConfirm("");
-    setAuthMessage(
-      "비밀번호가 변경되었습니다. 새 비밀번호로 다시 로그인해 주세요.",
-    );
   };
 
   const handleSignOut = async () => {
     clearAuthFeedback();
     setAuthBusy(true);
 
-    const { error } = await supabase.auth.signOut();
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
 
-    setAuthBusy(false);
-
-    if (error) {
-      alert("로그아웃 실패: " + error.message);
-      return;
+      setSession(null);
+      setAuthMode("login");
+      setAuthPassword("");
+      setAuthPasswordConfirm("");
+    } catch (error) {
+      alert("로그아웃 실패: " + getErrorMessage(error));
+    } finally {
+      setAuthBusy(false);
     }
-
-    setSession(null);
-    setAuthMode("login");
-    setAuthPassword("");
-    setAuthPasswordConfirm("");
   };
 
   useEffect(() => {
@@ -2323,14 +2637,20 @@ export default function Home() {
   useEffect(() => {
     if (authLoading || !session) return;
 
+    initializedDataRef.current = false;
+
     const initialize = async () => {
-      await migrateLegacyLocalMastersToDbIfNeeded();
-      await ensureMasterSeedData();
-      await Promise.all([
-        loadShipmentsFromDb(),
-        loadAllMastersFromDb(),
-        loadSharedVerifyStateFromDb(),
-      ]);
+      try {
+        await migrateLegacyLocalMastersToDbIfNeeded();
+        await ensureMasterSeedData();
+        await Promise.all([
+          loadShipmentsFromDb(),
+          loadAllMastersFromDb(),
+          loadSharedVerifyStateFromDb(),
+        ]);
+      } finally {
+        initializedDataRef.current = true;
+      }
     };
 
     void initialize();
@@ -2342,7 +2662,7 @@ export default function Home() {
   }, [tab]);
 
   useEffect(() => {
-    if (!session) return;
+    if (!session || !initializedDataRef.current) return;
 
     if (tab === "출고등록" || tab === "마스터관리") {
       void loadAllMastersFromDb();
@@ -2453,9 +2773,14 @@ export default function Home() {
     }, 0);
   }, [showAddrSearch]);
 
-  const persistShipments = (items: SavedShipment[]) => {
-    setSavedShipments(items);
-  };
+  useEffect(() => {
+    return () => {
+      if (pdaTextSaveTimerRef.current) clearTimeout(pdaTextSaveTimerRef.current);
+      if (qtyPdaTextSaveTimerRef.current) {
+        clearTimeout(qtyPdaTextSaveTimerRef.current);
+      }
+    };
+  }, []);
 
   const resolvePostalCodeValue = (params: {
     delivery: DeliveryType;
@@ -2647,10 +2972,6 @@ export default function Home() {
     allFilteredIds.length > 0 &&
     allFilteredIds.every((id) => selectedIds.includes(id));
 
-  const detailProgress = editForm
-    ? checklistProgress(editForm.checklist)
-    : null;
-
   const filteredReceiverMaster = receiverMaster.filter((item) => {
     const keyword = receiverMasterKeyword.trim().toLowerCase();
     if (!keyword) return true;
@@ -2757,7 +3078,6 @@ export default function Home() {
   const handleAddressSearch = async () => {
     try {
       const result = await searchAddress(addrKeyword);
-      console.log("주소검색 결과", result);
       setAddrResults(result);
       setAddrSearched(true);
     } catch (error) {
@@ -2771,69 +3091,75 @@ export default function Home() {
   };
 
   const saveCurrentReceiverToMaster = async () => {
-    if (!receiver.trim()) {
-      alert("수화주명을 먼저 입력해 주세요.");
-      return;
-    }
+    await runLockedMutation("quick-receiver-master-save", async () => {
+      if (!receiver.trim()) {
+        alert("수화주명을 먼저 입력해 주세요.");
+        return;
+      }
 
-    if (receiverExistsInMaster) {
-      alert("이미 수화주 마스터에 등록된 업체입니다.");
-      return;
-    }
+      if (receiverExistsInMaster) {
+        alert("이미 수화주 마스터에 등록된 업체입니다.");
+        return;
+      }
 
-    const payload = {
-      name: receiver.trim(),
-      aliases: [],
-      phone: receiverPhone ?? "",
-      address: address ?? "",
-      branch: branch ?? "",
-      note: note ?? "",
-      postal_code: resolvePostalCodeValue({
-        delivery,
-        receiver,
-        branch,
-        currentPostalCode: postalCode,
-      }),
-    };
+      const payload = {
+        name: receiver.trim(),
+        aliases: [],
+        phone: receiverPhone ?? "",
+        address: address ?? "",
+        branch: branch ?? "",
+        note: note ?? "",
+        postal_code: resolvePostalCodeValue({
+          delivery,
+          receiver,
+          branch,
+          currentPostalCode: postalCode,
+        }),
+      };
 
-    const { error } = await supabase.from("receiver_master").insert([payload]);
+      const { error } = await supabase
+        .from("receiver_master")
+        .insert([payload]);
 
-    if (error) {
-      alert("수화주 마스터 신규저장 실패: " + error.message);
-      return;
-    }
+      if (error) {
+        alert("수화주 마스터 신규저장 실패: " + error.message);
+        return;
+      }
 
-    await loadReceiverMasterFromDb();
-    alert("수화주 마스터에 신규저장 완료");
+      await loadReceiverMasterFromDb();
+      alert("수화주 마스터에 신규저장 완료");
+    });
   };
 
   const saveCurrentSenderToMaster = async () => {
-    if (!sender.trim()) {
-      alert("발화주명을 먼저 입력해 주세요.");
-      return;
-    }
+    await runLockedMutation("quick-sender-master-save", async () => {
+      if (!sender.trim()) {
+        alert("발화주명을 먼저 입력해 주세요.");
+        return;
+      }
 
-    if (senderExistsInMaster) {
-      alert("이미 발화주 마스터에 등록된 업체입니다.");
-      return;
-    }
+      if (senderExistsInMaster) {
+        alert("이미 발화주 마스터에 등록된 업체입니다.");
+        return;
+      }
 
-    const payload = {
-      name: sender.trim(),
-      aliases: [],
-      phone: senderPhone ?? "",
-      note: senderNote ?? "",
-    };
+      const payload = {
+        name: sender.trim(),
+        aliases: [],
+        phone: senderPhone ?? "",
+        note: senderNote ?? "",
+      };
 
-    const { error } = await supabase.from("sender_master").insert([payload]);
+      const { error } = await supabase.from("sender_master").insert([payload]);
 
-    if (error) {
-      alert("발화주 마스터 신규저장 실패: " + error.message);
-      return;
-    }
+      if (error) {
+        alert("발화주 마스터 신규저장 실패: " + error.message);
+        return;
+      }
 
-    await loadSenderMasterFromDb();
-    alert("발화주 마스터에 신규저장 완료");
+      await loadSenderMasterFromDb();
+      alert("발화주 마스터에 신규저장 완료");
+    });
   };
 
   const resetForm = () => {
@@ -2858,92 +3184,122 @@ export default function Home() {
   };
 
   const handleSave = async () => {
-    if (!receiver.trim()) return alert("수화주명을 입력해 주세요.");
-    if (!sender.trim()) return alert("발화주명을 입력해 주세요.");
-    if (!qty.trim()) return alert("수량을 입력해 주세요.");
-    if (!fare.trim()) return alert("운임을 입력해 주세요.");
-    if (delivery === "택배" && address.trim().length > 50) {
-      return alert(
-        "주소는 50자 이하로 입력해 주세요. 대신택배 업로드 주소칸이 50자를 넘으면 터집니다. 아주 예민한 친구예요.",
+    // useState는 반영 전 틈이 있으므로 ref를 맨 처음 잠가야 빠른 더블클릭도 막힌다.
+    if (shipmentSaveLockRef.current) return;
+
+    shipmentSaveLockRef.current = true;
+    setIsSavingShipment(true);
+
+    try {
+      if (!receiver.trim()) return alert("수화주명을 입력해 주세요.");
+      if (!sender.trim()) return alert("발화주명을 입력해 주세요.");
+      if (!qty.trim()) return alert("수량을 입력해 주세요.");
+      if (!fare.trim()) return alert("운임을 입력해 주세요.");
+      if (delivery === "택배" && address.trim().length > 50) {
+        return alert(
+          "주소는 50자 이하로 입력해 주세요. 대신택배 업로드 주소칸이 50자를 넘으면 터집니다. 아주 예민한 친구예요.",
+        );
+      }
+
+      const todayKey = getTodaySeoulDateKey();
+      const { startUtc, endUtc } = getSeoulDayUtcRange(todayKey);
+      const { data: todayRows, error: duplicateCheckError } = await supabase
+        .from("shipments")
+        .select("id, receiver, sender, created_at")
+        .gte("created_at", startUtc)
+        .lt("created_at", endUtc);
+
+      if (duplicateCheckError) {
+        console.error("중복 출고 확인 실패", duplicateCheckError);
+        alert(
+          "중복 출고 여부를 확인하지 못해 저장을 중단했습니다. 잠시 후 다시 시도해 주세요.",
+        );
+        return;
+      }
+
+      const targetDisplayName = displayReceiverName(
+        sender.trim(),
+        receiver.trim(),
       );
-    }
+      const targetDuplicateKey = buildShipmentDuplicateKey(sender, receiver);
+      const duplicateRows = (todayRows ?? []).filter((row) => {
+        return (
+          buildShipmentDuplicateKey(
+            asString(row?.sender),
+            asString(row?.receiver),
+          ) === targetDuplicateKey
+        );
+      });
 
-    const todayKey = getTodaySeoulDateKey();
-    const { startUtc, endUtc } = getSeoulDayUtcRange(todayKey);
-    const { data: todayRows, error: duplicateCheckError } = await supabase
-      .from("shipments")
-      .select("id, receiver, sender, created_at")
-      .gte("created_at", startUtc)
-      .lt("created_at", endUtc);
+      if (duplicateRows.length > 0) {
+        const confirmed = window.confirm(
+          `⚠ 중복 출고 확인\n\n` +
+            `오늘 출고목록에 이미 [${targetDisplayName}] 발송정보가 ${duplicateRows.length}건 저장되어 있습니다.\n\n` +
+            `그래도 새 출고건으로 저장할까요?`,
+        );
 
-    if (duplicateCheckError) {
-      console.error("중복 출고 확인 실패", duplicateCheckError);
-      alert(
-        "중복 출고 여부를 확인하지 못해 저장을 중단했습니다. 잠시 후 다시 시도해 주세요.",
-      );
-      return;
-    }
+        if (!confirmed) {
+          pendingShipmentRequestRef.current = null;
+          return;
+        }
+      }
 
-    const targetDisplayName = displayReceiverName(
-      sender.trim(),
-      receiver.trim(),
-    );
-    const targetDuplicateKey = buildShipmentDuplicateKey(sender, receiver);
-    const duplicateRows = (todayRows ?? []).filter((row: any) => {
-      return (
-        buildShipmentDuplicateKey(
-          asString(row?.sender),
-          asString(row?.receiver),
-        ) === targetDuplicateKey
-      );
-    });
-
-    if (duplicateRows.length > 0) {
-      const confirmed = window.confirm(
-        `⚠ 중복 출고 확인\n\n` +
-          `오늘 출고목록에 이미 [${targetDisplayName}] 발송정보가 ${duplicateRows.length}건 저장되어 있습니다.\n\n` +
-          `그래도 새 출고건으로 저장할까요?`,
-      );
-
-      if (!confirmed) return;
-    }
-
-    const payload = {
-      receiver,
-      receiver_phone: receiverPhone,
-      address,
-      branch,
-      postal_code: resolvePostalCodeValue({
-        delivery,
+      const draft: ShipmentDraft = {
         receiver,
+        receiverPhone,
+        address,
         branch,
-        currentPostalCode: postalCode,
-      }),
-      sender,
-      sender_phone: senderPhone,
-      item,
-      pack,
-      pay,
-      delivery,
-      qty: Number(qty),
-      fare: Number(String(fare).replace(/,/g, "")),
-      memo,
-      note: buildShipmentNote(note, senderNote),
-      pda: false,
-      waybill: false,
-      closed_done: false,
-    };
+        postalCode: resolvePostalCodeValue({
+          delivery,
+          receiver,
+          branch,
+          currentPostalCode: postalCode,
+        }),
+        sender,
+        senderPhone,
+        item,
+        pack,
+        pay,
+        delivery,
+        qty,
+        fare,
+        memo,
+        note: buildShipmentNote(note, senderNote),
+        checklist: {
+          pda: false,
+          waybill: false,
+          closedDone: false,
+        },
+      };
 
-    const { error } = await supabase.from("shipments").insert([payload]);
+      const payload = toShipmentDbPayload(draft);
+      const fingerprint = JSON.stringify(payload);
+      const pendingRequest = pendingShipmentRequestRef.current;
+      const requestId =
+        pendingRequest?.fingerprint === fingerprint
+          ? pendingRequest.requestId
+          : createClientRequestId();
 
-    if (error) {
-      alert("DB 저장 실패: " + error.message);
-      return;
+      pendingShipmentRequestRef.current = { fingerprint, requestId };
+
+      const result = await insertShipmentWithIdempotency(payload, requestId);
+
+      pendingShipmentRequestRef.current = null;
+      await loadShipmentsFromDb();
+      resetForm();
+
+      alert(
+        result === "already-saved"
+          ? "이미 처리된 저장 요청입니다. 중복 생성 없이 저장 완료되었습니다."
+          : "DB 저장 완료",
+      );
+    } catch (error) {
+      console.error("DB 저장 실패", error);
+      alert("DB 저장 실패: " + getErrorMessage(error));
+    } finally {
+      shipmentSaveLockRef.current = false;
+      setIsSavingShipment(false);
     }
-
-    await loadShipmentsFromDb();
-    resetForm();
-    alert("DB 저장 완료");
   };
 
   const handleDelete = async (id: string) => {
@@ -2970,23 +3326,32 @@ export default function Home() {
     shipmentIds: string[],
     values: Partial<{ pda: boolean; waybill: boolean; closed_done: boolean }>,
   ) => {
-    const numericIds = shipmentIds
-      .map((id) => Number(id))
-      .filter((id) => !Number.isNaN(id));
+    const numericIds = Array.from(
+      new Set(
+        shipmentIds
+          .map((id) => Number(id))
+          .filter((id) => !Number.isNaN(id)),
+      ),
+    );
     if (numericIds.length === 0) return;
 
-    const { error } = await supabase
-      .from("shipments")
-      .update(values)
-      .in("id", numericIds);
+    if (numericIds.some((id) => checklistLockedIdsRef.current.has(id))) return;
+    numericIds.forEach((id) => checklistLockedIdsRef.current.add(id));
 
-    if (error) {
+    try {
+      const { error } = await supabase
+        .from("shipments")
+        .update(values)
+        .in("id", numericIds);
+
+      if (error) throw error;
+      await loadShipmentsFromDb();
+    } catch (error) {
       console.error(error);
-      alert("체크리스트 저장 실패: " + error.message);
-      return;
+      alert("체크리스트 저장 실패: " + getErrorMessage(error));
+    } finally {
+      numericIds.forEach((id) => checklistLockedIdsRef.current.delete(id));
     }
-
-    await loadShipmentsFromDb();
   };
 
   const handleChecklistToggle = async (
@@ -3097,55 +3462,47 @@ export default function Home() {
   };
 
   const handleSaveDetail = async () => {
-    if (!editForm) return;
-    if (!editForm.receiver.trim()) return alert("수화주명을 입력해 주세요.");
-    if (!editForm.sender.trim()) return alert("발화주명을 입력해 주세요.");
-    if (!editForm.qty.trim()) return alert("수량을 입력해 주세요.");
-    if (!editForm.fare.trim()) return alert("운임을 입력해 주세요.");
-    if (editForm.delivery === "택배" && editForm.address.trim().length > 50) {
-      return alert("주소는 50자 이하로 입력해 주세요.");
-    }
+    if (!editForm || detailSaveLockRef.current) return;
 
-    const payload = {
-      receiver: editForm.receiver,
-      receiver_phone: editForm.receiverPhone,
-      address: editForm.address,
-      branch: editForm.branch,
-      postal_code: resolvePostalCodeValue({
-        delivery: editForm.delivery,
-        receiver: editForm.receiver,
-        branch: editForm.branch,
-        currentPostalCode: editForm.postalCode,
-      }),
-      sender: editForm.sender,
-      sender_phone: editForm.senderPhone,
-      item: editForm.item,
-      pack: editForm.pack,
-      pay: editForm.pay,
-      delivery: editForm.delivery,
-      qty: Number(editForm.qty),
-      fare: Number(String(editForm.fare).replace(/,/g, "")),
-      memo: editForm.memo,
-      note: editForm.note,
-      pda: editForm.checklist.pda,
-      waybill: editForm.checklist.waybill,
-      closed_done: editForm.checklist.closedDone,
-    };
+    detailSaveLockRef.current = true;
+    setIsSavingDetail(true);
 
-    const { error } = await supabase
-      .from("shipments")
-      .update(payload)
-      .eq("id", Number(editForm.id));
+    try {
+      if (!editForm.receiver.trim()) return alert("수화주명을 입력해 주세요.");
+      if (!editForm.sender.trim()) return alert("발화주명을 입력해 주세요.");
+      if (!editForm.qty.trim()) return alert("수량을 입력해 주세요.");
+      if (!editForm.fare.trim()) return alert("운임을 입력해 주세요.");
+      if (editForm.delivery === "택배" && editForm.address.trim().length > 50) {
+        return alert("주소는 50자 이하로 입력해 주세요.");
+      }
 
-    if (error) {
+      const draft: ShipmentDraft = {
+        ...editForm,
+        postalCode: resolvePostalCodeValue({
+          delivery: editForm.delivery,
+          receiver: editForm.receiver,
+          branch: editForm.branch,
+          currentPostalCode: editForm.postalCode,
+        }),
+      };
+
+      const { error } = await supabase
+        .from("shipments")
+        .update(toShipmentDbPayload(draft))
+        .eq("id", Number(editForm.id));
+
+      if (error) throw error;
+
+      await loadShipmentsFromDb();
+      closeDetail();
+      alert("상세정보 저장 완료");
+    } catch (error) {
       console.error(error);
-      alert("상세정보 저장 실패: " + error.message);
-      return;
+      alert("상세정보 저장 실패: " + getErrorMessage(error));
+    } finally {
+      detailSaveLockRef.current = false;
+      setIsSavingDetail(false);
     }
-
-    await loadShipmentsFromDb();
-    closeDetail();
-    alert("상세정보 저장 완료");
   };
 
   const resetFilters = () => {
@@ -3158,40 +3515,44 @@ export default function Home() {
   };
 
   const clearTodayShipments = async () => {
-    const todayKey = getTodaySeoulDateKey();
+    await runLockedMutation("clear-today-shipments", async () => {
+      const todayKey = getTodaySeoulDateKey();
+      const todayCount = savedShipments.filter(
+        (item) => getSeoulDateKey(item.createdAt) === todayKey,
+      ).length;
 
-    const todayIds = savedShipments
-      .filter((item) => getSeoulDateKey(item.createdAt) === todayKey)
-      .map((item) => Number(item.id))
-      .filter((id) => !Number.isNaN(id));
+      if (todayCount === 0) {
+        alert("오늘 삭제할 목록이 없습니다.");
+        return;
+      }
 
-    if (todayIds.length === 0) {
-      alert("오늘 삭제할 목록이 없습니다.");
-      return;
-    }
+      const { startUtc, endUtc } = getSeoulDayUtcRange(todayKey);
+      const { data: deletedRows, error } = await supabase
+        .from("shipments")
+        .delete()
+        .gte("created_at", startUtc)
+        .lt("created_at", endUtc)
+        .select("id");
 
-    const { error } = await supabase
-      .from("shipments")
-      .delete()
-      .in("id", todayIds);
+      if (error) {
+        console.error(error);
+        alert("오늘 목록 비우기 실패: " + error.message);
+        return;
+      }
 
-    if (error) {
-      console.error(error);
-      alert("오늘 목록 비우기 실패: " + error.message);
-      return;
-    }
+      const deletedIds = new Set(
+        (deletedRows ?? []).map((row) => asString(row.id)),
+      );
 
-    await loadShipmentsFromDb();
+      await loadShipmentsFromDb();
+      setSelectedIds((prev) => prev.filter((id) => !deletedIds.has(id)));
 
-    setSelectedIds((prev) =>
-      prev.filter((id) => !todayIds.includes(Number(id))),
-    );
+      if (detailShipmentId && deletedIds.has(detailShipmentId)) {
+        closeDetail();
+      }
 
-    if (detailShipmentId && todayIds.includes(Number(detailShipmentId))) {
-      closeDetail();
-    }
-
-    alert("오늘 목록을 비웠습니다.");
+      alert("오늘 목록을 비웠습니다.");
+    });
   };
 
   const toggleSelectOne = (id: string) => {
@@ -3534,129 +3895,135 @@ export default function Home() {
   };
 
   const saveReceiverMaster = async () => {
-    const normalizedReceiverForm = {
-      ...receiverForm,
-      aliases: parseAliases(receiverAliasesInput),
-    };
+    await runLockedMutation("receiver-master-save", async () => {
+      const normalizedReceiverForm = {
+        ...receiverForm,
+        aliases: parseAliases(receiverAliasesInput),
+      };
 
-    if (!normalizedReceiverForm.name.trim()) {
-      alert("수화주명을 입력해 주세요.");
-      return;
-    }
-
-    const payload = {
-      name: normalizedReceiverForm.name.trim(),
-      aliases: normalizedReceiverForm.aliases ?? [],
-      phone: normalizedReceiverForm.phone ?? "",
-      address: normalizedReceiverForm.address ?? "",
-      branch: normalizedReceiverForm.branch ?? "",
-      note: normalizedReceiverForm.note ?? "",
-      postal_code: normalizedReceiverForm.postalCode ?? "",
-    };
-
-    if (receiverMasterMode === "edit" && selectedReceiverMasterName) {
-      const { error } = await supabase
-        .from("receiver_master")
-        .update(payload)
-        .eq("name", selectedReceiverMasterName);
-
-      if (error) {
-        alert("수화주 수정 실패: " + error.message);
+      if (!normalizedReceiverForm.name.trim()) {
+        alert("수화주명을 입력해 주세요.");
         return;
       }
-    } else {
-      const { error } = await supabase
-        .from("receiver_master")
-        .insert([payload]);
 
-      if (error) {
-        alert("수화주 저장 실패: " + error.message);
-        return;
+      const payload = {
+        name: normalizedReceiverForm.name.trim(),
+        aliases: normalizedReceiverForm.aliases ?? [],
+        phone: normalizedReceiverForm.phone ?? "",
+        address: normalizedReceiverForm.address ?? "",
+        branch: normalizedReceiverForm.branch ?? "",
+        note: normalizedReceiverForm.note ?? "",
+        postal_code: normalizedReceiverForm.postalCode ?? "",
+      };
+
+      if (receiverMasterMode === "edit" && selectedReceiverMasterName) {
+        const { error } = await supabase
+          .from("receiver_master")
+          .update(payload)
+          .eq("name", selectedReceiverMasterName);
+
+        if (error) {
+          alert("수화주 수정 실패: " + error.message);
+          return;
+        }
+      } else {
+        const { error } = await supabase
+          .from("receiver_master")
+          .insert([payload]);
+
+        if (error) {
+          alert("수화주 저장 실패: " + error.message);
+          return;
+        }
       }
-    }
 
-    await loadReceiverMasterFromDb();
-    resetReceiverForm();
+      await loadReceiverMasterFromDb();
+      resetReceiverForm();
+    });
   };
 
   const saveSenderMaster = async () => {
-    const normalizedSenderForm = {
-      ...senderForm,
-      aliases: parseAliases(senderAliasesInput),
-    };
+    await runLockedMutation("sender-master-save", async () => {
+      const normalizedSenderForm = {
+        ...senderForm,
+        aliases: parseAliases(senderAliasesInput),
+      };
 
-    if (!normalizedSenderForm.name.trim()) {
-      alert("발화주명을 입력해 주세요.");
-      return;
-    }
-
-    const payload = {
-      name: normalizedSenderForm.name.trim(),
-      aliases: normalizedSenderForm.aliases ?? [],
-      phone: normalizedSenderForm.phone ?? "",
-      note: normalizedSenderForm.note ?? "",
-    };
-
-    if (senderMasterMode === "edit" && selectedSenderMasterName) {
-      const { error } = await supabase
-        .from("sender_master")
-        .update(payload)
-        .eq("name", selectedSenderMasterName);
-
-      if (error) {
-        alert("발화주 수정 실패: " + error.message);
+      if (!normalizedSenderForm.name.trim()) {
+        alert("발화주명을 입력해 주세요.");
         return;
       }
-    } else {
-      const { error } = await supabase.from("sender_master").insert([payload]);
 
-      if (error) {
-        alert("발화주 저장 실패: " + error.message);
-        return;
+      const payload = {
+        name: normalizedSenderForm.name.trim(),
+        aliases: normalizedSenderForm.aliases ?? [],
+        phone: normalizedSenderForm.phone ?? "",
+        note: normalizedSenderForm.note ?? "",
+      };
+
+      if (senderMasterMode === "edit" && selectedSenderMasterName) {
+        const { error } = await supabase
+          .from("sender_master")
+          .update(payload)
+          .eq("name", selectedSenderMasterName);
+
+        if (error) {
+          alert("발화주 수정 실패: " + error.message);
+          return;
+        }
+      } else {
+        const { error } = await supabase.from("sender_master").insert([payload]);
+
+        if (error) {
+          alert("발화주 저장 실패: " + error.message);
+          return;
+        }
       }
-    }
 
-    await loadSenderMasterFromDb();
-    resetSenderForm();
+      await loadSenderMasterFromDb();
+      resetSenderForm();
+    });
   };
 
   const saveBranchMaster = async () => {
-    if (!branchForm.branch.trim()) {
-      alert("영업소명을 입력해 주세요.");
-      return;
-    }
-
-    if (!branchForm.postalCode.trim()) {
-      alert("우편번호를 입력해 주세요.");
-      return;
-    }
-
-    const payload = {
-      branch: branchForm.branch.trim(),
-      postal_code: branchForm.postalCode.trim(),
-    };
-
-    if (branchMasterMode === "edit" && selectedBranchMasterName) {
-      const { error } = await supabase
-        .from("branch_master")
-        .update(payload)
-        .eq("branch", selectedBranchMasterName);
-
-      if (error) {
-        alert("영업소 수정 실패: " + error.message);
+    await runLockedMutation("branch-master-save", async () => {
+      if (!branchForm.branch.trim()) {
+        alert("영업소명을 입력해 주세요.");
         return;
       }
-    } else {
-      const { error } = await supabase.from("branch_master").insert([payload]);
 
-      if (error) {
-        alert("영업소 저장 실패: " + error.message);
+      if (!branchForm.postalCode.trim()) {
+        alert("우편번호를 입력해 주세요.");
         return;
       }
-    }
 
-    await loadBranchMasterFromDb();
-    resetBranchForm();
+      const payload = {
+        branch: branchForm.branch.trim(),
+        postal_code: branchForm.postalCode.trim(),
+      };
+
+      if (branchMasterMode === "edit" && selectedBranchMasterName) {
+        const { error } = await supabase
+          .from("branch_master")
+          .update(payload)
+          .eq("branch", selectedBranchMasterName);
+
+        if (error) {
+          alert("영업소 수정 실패: " + error.message);
+          return;
+        }
+      } else {
+        const { error } = await supabase.from("branch_master").insert([payload]);
+
+        if (error) {
+          alert("영업소 저장 실패: " + error.message);
+          return;
+        }
+      }
+
+      await loadBranchMasterFromDb();
+      resetBranchForm();
+    });
   };
 
   const deleteReceiverMaster = async () => {
@@ -3831,6 +4198,7 @@ export default function Home() {
   };
 
   const handlePdaPasteApply = async () => {
+    cancelScheduledSharedVerifyTextSave("pda_paste_text");
     const parsed = parsePdaClipboardText(pdaPasteText);
     setPdaRows(parsed);
 
@@ -3841,6 +4209,7 @@ export default function Home() {
   };
 
   const handleVerifyReset = async () => {
+    cancelScheduledSharedVerifyTextSave("pda_paste_text");
     setOrderStatusRows([]);
     setSalesStatusRows([]);
     setPdaRows([]);
@@ -3899,6 +4268,7 @@ export default function Home() {
   };
 
   const handleQtyPdaPasteApply = async () => {
+    cancelScheduledSharedVerifyTextSave("qty_pda_paste_text");
     const parsed = parsePdaClipboardText(qtyPdaPasteText);
     setQtyPdaRows(parsed);
 
@@ -3909,6 +4279,7 @@ export default function Home() {
   };
 
   const handleQtyVerifyReset = async () => {
+    cancelScheduledSharedVerifyTextSave("qty_pda_paste_text");
     setQtySalesStatusRows([]);
     setQtyPdaRows([]);
     setQtySalesFileName("");
@@ -4605,8 +4976,18 @@ export default function Home() {
               </div>
             </div>
 
-            <button style={saveBtn} onClick={handleSave}>
-              저장
+            <button
+              type="button"
+              style={{
+                ...saveBtn,
+                opacity: isSavingShipment ? 0.65 : 1,
+                cursor: isSavingShipment ? "not-allowed" : "pointer",
+              }}
+              onClick={() => void handleSave()}
+              disabled={isSavingShipment}
+              aria-busy={isSavingShipment}
+            >
+              {isSavingShipment ? "저장 중..." : "저장"}
             </button>
           </>
         )}
@@ -4883,8 +5264,8 @@ export default function Home() {
 
                     {sortedShipments.map((shipment) => {
                       const isToday =
-                        new Date(shipment.createdAt).toDateString() ===
-                        new Date().toDateString();
+                        getSeoulDateKey(shipment.createdAt) ===
+                        getTodaySeoulDateKey();
 
                       const isChecklistDone =
                         shipment.checklist.pda &&
@@ -4915,8 +5296,8 @@ export default function Home() {
                               fontWeight: isToday ? "bold" : "normal",
                             }}
                           >
-                            {new Date(shipment.createdAt).toLocaleDateString(
-                              "ko-KR",
+                            {formatDateKeyKo(
+                              getSeoulDateKey(shipment.createdAt),
                             )}
                           </div>
 
@@ -5272,7 +5653,13 @@ export default function Home() {
                     onChange={(e) => {
                       const value = e.target.value;
                       setPdaPasteText(value);
-                      void saveSharedVerifyStateToDb({ pda_paste_text: value });
+                      scheduleSharedVerifyTextSave("pda_paste_text", value);
+                    }}
+                    onBlur={() => {
+                      cancelScheduledSharedVerifyTextSave("pda_paste_text");
+                      void saveSharedVerifyStateToDb({
+                        pda_paste_text: pdaPasteText,
+                      });
                     }}
                     placeholder="PDA 화면 전체선택 → 복사 → 여기에 붙여넣기"
                   />
@@ -5413,8 +5800,17 @@ export default function Home() {
                     onChange={(e) => {
                       const value = e.target.value;
                       setQtyPdaPasteText(value);
+                      scheduleSharedVerifyTextSave(
+                        "qty_pda_paste_text",
+                        value,
+                      );
+                    }}
+                    onBlur={() => {
+                      cancelScheduledSharedVerifyTextSave(
+                        "qty_pda_paste_text",
+                      );
                       void saveSharedVerifyStateToDb({
-                        qty_pda_paste_text: value,
+                        qty_pda_paste_text: qtyPdaPasteText,
                       });
                     }}
                     placeholder="PDA 화면 전체선택 → 복사 → 여기에 붙여넣기"
@@ -6137,9 +6533,7 @@ export default function Home() {
                 </div>
 
                 <div style={modalHeaderRight}>
-                  {detailProgress && (
-                    <ProgressBadge checklist={editForm.checklist} />
-                  )}
+                  <ProgressBadge checklist={editForm.checklist} />
                   <button
                     type="button"
                     style={modalCloseBtn}
@@ -6419,10 +6813,16 @@ export default function Home() {
                 </button>
                 <button
                   type="button"
-                  style={modalSaveBtn}
-                  onClick={handleSaveDetail}
+                  style={{
+                    ...modalSaveBtn,
+                    opacity: isSavingDetail ? 0.65 : 1,
+                    cursor: isSavingDetail ? "not-allowed" : "pointer",
+                  }}
+                  onClick={() => void handleSaveDetail()}
+                  disabled={isSavingDetail}
+                  aria-busy={isSavingDetail}
                 >
-                  저장
+                  {isSavingDetail ? "저장 중..." : "저장"}
                 </button>
               </div>
             </div>
@@ -6709,7 +7109,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-async function searchAddress(keyword: string) {
+async function searchAddress(keyword: string): Promise<AddressSearchResult[]> {
   const confmKey = "U01TX0FVVEgyMDI2MDQxNTIxNDQ0NzExNzkzODk=";
 
   const trimmed = keyword.trim();
@@ -6728,10 +7128,10 @@ async function searchAddress(keyword: string) {
   const res = await fetch(url);
   const data = await res.json();
 
-  console.log("Juso raw data:", data);
-
   const common = data?.results?.common;
-  const juso = data?.results?.juso || [];
+  const juso = Array.isArray(data?.results?.juso)
+    ? (data.results.juso as AddressSearchResult[])
+    : [];
 
   if (!common) {
     throw new Error("주소검색 응답 형식이 올바르지 않습니다.");
@@ -6749,7 +7149,7 @@ async function lookupPostalCodeByAddress(address: string) {
   if (!results || results.length === 0) return "";
 
   const exact = results.find(
-    (item: any) =>
+    (item) =>
       String(item.roadAddr || "").replace(/\s/g, "") ===
       String(address || "").replace(/\s/g, ""),
   );
@@ -7157,14 +7557,6 @@ const emptyText: CSSProperties = {
   fontSize: 14,
 };
 
-const scopeBar: CSSProperties = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-  gap: 12,
-  marginBottom: 12,
-};
-
 const dateRangeBar: CSSProperties = {
   display: "flex",
   justifyContent: "space-between",
@@ -7203,11 +7595,6 @@ const dateRangeSeparator: CSSProperties = {
   paddingBottom: 10,
   color: "#6b7280",
   fontWeight: 800,
-};
-
-const scopeToggleWrap: CSSProperties = {
-  display: "flex",
-  gap: 8,
 };
 
 const scopeToggleBtn: CSSProperties = {
