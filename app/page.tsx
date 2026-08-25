@@ -1835,6 +1835,7 @@ export default function Home() {
   const [savedShipments, setSavedShipments] = useState<SavedShipment[]>([]);
   const [shipmentListLoading, setShipmentListLoading] = useState(false);
   const [isSavingShipment, setIsSavingShipment] = useState(false);
+  const [saveToast, setSaveToast] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const shipmentSaveLockRef = useRef(false);
@@ -3334,11 +3335,15 @@ export default function Home() {
       await loadShipmentsFromDb();
       resetForm();
 
-      alert(
+      setSaveToast(
         result === "already-saved"
           ? "이미 처리된 저장 요청입니다. 중복 생성 없이 저장 완료되었습니다."
           : "DB 저장 완료",
       );
+
+      setTimeout(() => {
+        setSaveToast("");
+      }, 1500);
     } catch (error) {
       console.error("DB 저장 실패", error);
       alert("DB 저장 실패: " + getErrorMessage(error));
@@ -4705,6 +4710,27 @@ export default function Home() {
 
   return (
     <main style={page}>
+      {saveToast && (
+        <div
+          style={{
+            position: "fixed",
+            top: 24,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 9999,
+            background: "#111827",
+            color: "#ffffff",
+            padding: "10px 16px",
+            borderRadius: 8,
+            fontSize: 14,
+            fontWeight: 700,
+            boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
+            pointerEvents: "none",
+          }}
+        >
+          {saveToast}
+        </div>
+      )}
       <div style={card}>
         <div
           style={{
