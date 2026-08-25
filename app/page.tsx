@@ -5316,7 +5316,9 @@ export default function Home() {
                               border: "none",
                               borderRadius: 0,
                               background: "transparent",
-                              paddingBottom: waybillInfo ? 10 : 16,
+                              position: "relative",
+                              paddingTop: waybillInfo ? 8 : 16,
+                              paddingBottom: waybillInfo ? 24 : 16,
                             }}
                           >
                             <div style={ovSelect}>
@@ -5432,50 +5434,47 @@ export default function Home() {
                                 삭제
                               </button>
                             </div>
-                          </div>
 
-                          {waybillInfo ? (
-                            <div style={shipmentWaybillRow}>
-                              <div style={shipmentWaybillMessageCell}>
-                                <button
-                                  type="button"
-                                  style={shipmentWaybillMessageButton}
-                                  title={
-                                    waybillInfo.status === "확인필요" &&
-                                    waybillInfo.reasons.length > 0
-                                      ? `클릭하여 복사 · 확인: ${waybillInfo.reasons.join(
-                                          ", ",
-                                        )}`
-                                      : "클릭하여 복사"
-                                  }
-                                  onClick={() =>
-                                    void handleCopyWaybillMessage(
-                                      waybillInfo.id,
-                                      waybillInfo.message,
-                                    )
-                                  }
-                                >
-                                  {waybillInfo.message}
-                                </button>
+                            {waybillInfo ? (
+                              <div style={shipmentWaybillInlineLayer}>
+                                <div style={shipmentWaybillInlineContent}>
+                                  <button
+                                    type="button"
+                                    style={shipmentWaybillInlineCopyButton}
+                                    onClick={() =>
+                                      void handleCopyWaybillMessage(
+                                        waybillInfo.id,
+                                        waybillInfo.message,
+                                      )
+                                    }
+                                  >
+                                    {copied ? "복사됨" : "복사"}
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    style={shipmentWaybillInlineMessageButton}
+                                    title={
+                                      waybillInfo.status === "확인필요" &&
+                                      waybillInfo.reasons.length > 0
+                                        ? `클릭하여 복사 · 확인: ${waybillInfo.reasons.join(
+                                            ", ",
+                                          )}`
+                                        : "클릭하여 복사"
+                                    }
+                                    onClick={() =>
+                                      void handleCopyWaybillMessage(
+                                        waybillInfo.id,
+                                        waybillInfo.message,
+                                      )
+                                    }
+                                  >
+                                    {waybillInfo.message}
+                                  </button>
+                                </div>
                               </div>
-
-                              <button
-                                type="button"
-                                style={{
-                                  ...(copied ? smallBlueBtn : smallGrayBtn),
-                                  ...shipmentWaybillCopyButton,
-                                }}
-                                onClick={() =>
-                                  void handleCopyWaybillMessage(
-                                    waybillInfo.id,
-                                    waybillInfo.message,
-                                  )
-                                }
-                              >
-                                {copied ? "복사됨" : "복사"}
-                              </button>
-                            </div>
-                          ) : null}
+                            ) : null}
+                          </div>
                         </div>
                       );
                     })}
@@ -7729,40 +7728,59 @@ const shipmentOverviewCard: CSSProperties = {
   overflow: "hidden",
 };
 
-const shipmentWaybillRow: CSSProperties = {
+const shipmentWaybillInlineLayer: CSSProperties = {
+  position: "absolute",
+  left: 14,
+  right: 14,
+  bottom: 5,
   display: "grid",
   gridTemplateColumns:
     "52px 1.3fr 2.6fr 0.9fr 0.9fr 1fr 1.1fr 70px 70px 70px 90px 40px 88px",
   gap: 10,
   alignItems: "center",
-  padding: "0 14px 14px",
+  pointerEvents: "none",
 };
 
-const shipmentWaybillMessageCell: CSSProperties = {
-  gridColumn: "2 / 12",
+const shipmentWaybillInlineContent: CSSProperties = {
+  gridColumn: "2 / 8",
+  display: "flex",
+  alignItems: "center",
+  gap: 6,
   minWidth: 0,
+  overflow: "hidden",
+  pointerEvents: "auto",
 };
 
-const shipmentWaybillMessageButton: CSSProperties = {
-  border: "1px solid #bfdbfe",
-  background: "#eff6ff",
-  color: "#1d4ed8",
-  borderRadius: 9,
-  padding: "8px 10px",
-  width: "100%",
-  textAlign: "left",
+const shipmentWaybillInlineCopyButton: CSSProperties = {
+  flex: "0 0 auto",
+  border: "none",
+  borderRadius: 6,
+  background: "#d1d5db",
+  color: "#111827",
+  padding: "2px 6px",
+  minWidth: 40,
   cursor: "pointer",
   fontSize: 13,
   fontWeight: 700,
-  lineHeight: 1.45,
-  overflowWrap: "anywhere",
+  lineHeight: 1.2,
 };
 
-const shipmentWaybillCopyButton: CSSProperties = {
-  gridColumn: "12 / 14",
-  justifySelf: "end",
-  minWidth: 72,
-  padding: "8px 12px",
+const shipmentWaybillInlineMessageButton: CSSProperties = {
+  flex: "1 1 auto",
+  minWidth: 0,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  border: "none",
+  background: "transparent",
+  color: "#f97316",
+  padding: 0,
+  margin: 0,
+  textAlign: "left",
+  cursor: "pointer",
+  fontSize: 12,
+  fontWeight: 700,
+  lineHeight: 1.25,
 };
 
 const ovSelect: CSSProperties = {
