@@ -2270,7 +2270,7 @@ export default function Home() {
           ? (stateRow.waybill_upload_rows as WaybillUploadRow[])
           : [];
 
-        return uploads.map((upload, index) => ({
+        return [...uploads].reverse().map((upload, index) => ({
           ...upload,
           sessionDate,
           historyId: `${sessionDate}-${upload.id || index + 1}`,
