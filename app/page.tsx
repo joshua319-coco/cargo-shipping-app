@@ -22,12 +22,7 @@ type Party = {
 
 type PayType = "착불" | "선불";
 type DeliveryType = "정기" | "택배";
-type TabType =
-  | "출고등록"
-  | "출고목록"
-  | "운송장번호"
-  | "발송검증"
-  | "마스터관리";
+type TabType = "출고등록" | "출고목록" | "발송검증" | "마스터관리";
 
 type BranchPostalItem = {
   branch: string;
@@ -116,7 +111,6 @@ type WaybillUploadRow = {
 
 type DatedWaybillUploadRow = WaybillUploadRow & {
   sessionDate: string;
-  historyId: string;
 };
 
 type OrderStatusRow = {
@@ -195,6 +189,7 @@ type WaybillVerificationRow = {
   payText: string;
   fareText: string;
   waybillNo: string;
+  waybillMessage: string;
   reasons: string[];
 };
 
@@ -918,6 +913,13 @@ function buildWaybillVerificationRows(
       payText: `${shipment.pay} / ${upload.pay}`,
       fareText: `${shipmentFare.toLocaleString("ko-KR")} / ${upload.fare.toLocaleString("ko-KR")}`,
       waybillNo: upload.waybillNo,
+      waybillMessage: buildWaybillMessageText({
+        receiver: upload.receiver,
+        delivery: upload.delivery,
+        pay: upload.pay,
+        branch: upload.branch,
+        waybillNo: upload.waybillNo,
+      }),
       reasons,
     });
   });
@@ -938,6 +940,7 @@ function buildWaybillVerificationRows(
         Number(String(shipment.fare).replace(/,/g, "")) || 0
       ).toLocaleString("ko-KR"),
       waybillNo: "",
+      waybillMessage: "",
       reasons: ["발송데이터에 없음"],
     });
   });
@@ -955,6 +958,13 @@ function buildWaybillVerificationRows(
       payText: upload.pay,
       fareText: upload.fare.toLocaleString("ko-KR"),
       waybillNo: upload.waybillNo,
+      waybillMessage: buildWaybillMessageText({
+        receiver: upload.receiver,
+        delivery: upload.delivery,
+        pay: upload.pay,
+        branch: upload.branch,
+        waybillNo: upload.waybillNo,
+      }),
       reasons: ["출고목록에 없음"],
     });
   });
@@ -1749,12 +1759,15 @@ export default function Home() {
   const [tab, setTab] = useState<TabType>(() => {
     if (typeof window === "undefined") return "출고등록";
 
-    const savedTab = localStorage.getItem("cargo_active_tab") as TabType | null;
+    const savedTab = localStorage.getItem("cargo_active_tab");
+
+    if (savedTab === "운송장번호") {
+      return "출고목록";
+    }
 
     if (
       savedTab === "출고등록" ||
       savedTab === "출고목록" ||
-      savedTab === "운송장번호" ||
       savedTab === "발송검증" ||
       savedTab === "마스터관리"
     ) {
@@ -1910,20 +1923,7 @@ export default function Home() {
   const [waybillHistoryRows, setWaybillHistoryRows] = useState<
     DatedWaybillUploadRow[]
   >([]);
-  const [waybillHistoryKeyword, setWaybillHistoryKeyword] = useState("");
   const [waybillHistoryLoading, setWaybillHistoryLoading] = useState(false);
-  const [waybillDateFromDraft, setWaybillDateFromDraft] = useState(() =>
-    getTodaySeoulDateKey(),
-  );
-  const [waybillDateToDraft, setWaybillDateToDraft] = useState(() =>
-    getTodaySeoulDateKey(),
-  );
-  const [waybillDateFrom, setWaybillDateFrom] = useState(() =>
-    getTodaySeoulDateKey(),
-  );
-  const [waybillDateTo, setWaybillDateTo] = useState(() =>
-    getTodaySeoulDateKey(),
-  );
 
   const [verifyTab, setVerifyTab] = useState<VerifySubTab>("대신 발송검증");
 
@@ -2270,10 +2270,9 @@ export default function Home() {
           ? (stateRow.waybill_upload_rows as WaybillUploadRow[])
           : [];
 
-        return [...uploads].reverse().map((upload, index) => ({
+        return [...uploads].reverse().map((upload) => ({
           ...upload,
           sessionDate,
-          historyId: `${sessionDate}-${upload.id || index + 1}`,
         }));
       });
 
@@ -2647,6 +2646,7 @@ export default function Home() {
           loadShipmentsFromDb(),
           loadAllMastersFromDb(),
           loadSharedVerifyStateFromDb(),
+          loadWaybillHistoryFromDb(listDateFrom, listDateTo),
         ]);
       } finally {
         initializedDataRef.current = true;
@@ -2668,15 +2668,14 @@ export default function Home() {
       void loadAllMastersFromDb();
     }
 
-    if (tab === "출고목록" || tab === "발송검증" || tab === "운송장번호") {
+    if (tab === "출고목록" || tab === "발송검증") {
       void loadShipmentsFromDb();
     }
-  }, [tab]);
 
-  useEffect(() => {
-    if (!session || tab !== "운송장번호") return;
-    void loadWaybillHistoryFromDb(waybillDateFrom, waybillDateTo);
-  }, [tab, session?.user.id, waybillDateFrom, waybillDateTo]);
+    if (tab === "출고목록") {
+      void loadWaybillHistoryFromDb(listDateFrom, listDateTo);
+    }
+  }, [tab]);
 
   useEffect(() => {
     if (!session) return;
@@ -2750,10 +2749,10 @@ export default function Home() {
           }
 
           if (
-            tab === "운송장번호" &&
-            isDateKeyInRange(sessionDate, waybillDateFrom, waybillDateTo)
+            tab === "출고목록" &&
+            isDateKeyInRange(sessionDate, listDateFrom, listDateTo)
           ) {
-            void loadWaybillHistoryFromDb(waybillDateFrom, waybillDateTo);
+            void loadWaybillHistoryFromDb(listDateFrom, listDateTo);
           }
         },
       )
@@ -2762,7 +2761,7 @@ export default function Home() {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [session?.user.id, tab, waybillDateFrom, waybillDateTo]);
+  }, [session?.user.id, tab, listDateFrom, listDateTo]);
 
   useEffect(() => {
     if (!showAddrSearch) return;
@@ -2837,14 +2836,21 @@ export default function Home() {
       return;
     }
 
-    setListDateFrom(listDateFromDraft);
-    setListDateTo(listDateToDraft);
-    setSelectedIds([]);
+    const fromDate = listDateFromDraft;
+    const toDate = listDateToDraft;
 
-    await loadShipmentsFromDb({
-      alertOnError: true,
-      showLoading: true,
-    });
+    setListDateFrom(fromDate);
+    setListDateTo(toDate);
+    setSelectedIds([]);
+    setCopiedWaybillMessageId("");
+
+    await Promise.all([
+      loadShipmentsFromDb({
+        alertOnError: true,
+        showLoading: true,
+      }),
+      loadWaybillHistoryFromDb(fromDate, toDate),
+    ]);
   };
 
   const showTodayShipmentList = async () => {
@@ -2855,47 +2861,77 @@ export default function Home() {
     setListDateFrom(todayKey);
     setListDateTo(todayKey);
     setSelectedIds([]);
+    setCopiedWaybillMessageId("");
 
-    await loadShipmentsFromDb({
-      alertOnError: true,
-      showLoading: true,
+    await Promise.all([
+      loadShipmentsFromDb({
+        alertOnError: true,
+        showLoading: true,
+      }),
+      loadWaybillHistoryFromDb(todayKey, todayKey),
+    ]);
+  };
+
+  const shipmentWaybillInfoById = useMemo(() => {
+    const result = new Map<
+      string,
+      {
+        id: string;
+        waybillNo: string;
+        message: string;
+        status: WaybillVerificationStatus;
+        reasons: string[];
+      }
+    >();
+    const shipmentsByDate = new Map<string, SavedShipment[]>();
+    const uploadsByDate = new Map<string, WaybillUploadRow[]>();
+
+    savedShipments.forEach((shipment) => {
+      const dateKey = getSeoulDateKey(shipment.createdAt);
+      if (!isDateKeyInRange(dateKey, listDateFrom, listDateTo)) return;
+
+      const rows = shipmentsByDate.get(dateKey) ?? [];
+      rows.push(shipment);
+      shipmentsByDate.set(dateKey, rows);
     });
-  };
 
-  const handleWaybillDateSearch = () => {
-    if (!isValidDateRange(waybillDateFromDraft, waybillDateToDraft)) {
-      alert("조회 시작일은 종료일보다 늦을 수 없습니다.");
-      return;
-    }
+    waybillHistoryRows.forEach((upload) => {
+      if (!isDateKeyInRange(upload.sessionDate, listDateFrom, listDateTo)) {
+        return;
+      }
 
-    const rangeChanged =
-      waybillDateFrom !== waybillDateFromDraft ||
-      waybillDateTo !== waybillDateToDraft;
+      const rows = uploadsByDate.get(upload.sessionDate) ?? [];
+      rows.push(upload);
+      uploadsByDate.set(upload.sessionDate, rows);
+    });
 
-    setWaybillDateFrom(waybillDateFromDraft);
-    setWaybillDateTo(waybillDateToDraft);
-    setCopiedWaybillMessageId("");
+    shipmentsByDate.forEach((shipments, dateKey) => {
+      const uploads = uploadsByDate.get(dateKey) ?? [];
+      const verificationRows = buildWaybillVerificationRows(
+        shipments,
+        uploads,
+      );
 
-    if (!rangeChanged) {
-      void loadWaybillHistoryFromDb(waybillDateFromDraft, waybillDateToDraft);
-    }
-  };
+      verificationRows.forEach((row) => {
+        if (!row.shipmentId || !row.waybillNo || !row.waybillMessage) return;
 
-  const showTodayWaybillHistory = () => {
-    const todayKey = getTodaySeoulDateKey();
-    setWaybillDateFromDraft(todayKey);
-    setWaybillDateToDraft(todayKey);
-    const rangeChanged =
-      waybillDateFrom !== todayKey || waybillDateTo !== todayKey;
+        result.set(row.shipmentId, {
+          id: `shipment-waybill-${dateKey}-${row.shipmentId}-${row.waybillNo}`,
+          waybillNo: row.waybillNo,
+          message: row.waybillMessage,
+          status: row.status,
+          reasons: row.reasons,
+        });
+      });
+    });
 
-    setWaybillDateFrom(todayKey);
-    setWaybillDateTo(todayKey);
-    setCopiedWaybillMessageId("");
-
-    if (!rangeChanged) {
-      void loadWaybillHistoryFromDb(todayKey, todayKey);
-    }
-  };
+    return result;
+  }, [
+    savedShipments,
+    waybillHistoryRows,
+    listDateFrom,
+    listDateTo,
+  ]);
 
   const filteredShipments = useMemo(() => {
     return savedShipments.filter((shipment) => {
@@ -2905,12 +2941,21 @@ export default function Home() {
         shipment.receiver,
       ).toLowerCase();
 
+      const waybillInfo = shipmentWaybillInfoById.get(shipment.id);
+      const waybillSearchText = [
+        waybillInfo?.waybillNo ?? "",
+        waybillInfo?.message ?? "",
+      ]
+        .join(" ")
+        .toLowerCase();
+
       const matchesKeyword =
         !keyword ||
         displayName.includes(keyword) ||
         shipment.sender.toLowerCase().includes(keyword) ||
         shipment.receiver.toLowerCase().includes(keyword) ||
-        shipment.memo.toLowerCase().includes(keyword);
+        shipment.memo.toLowerCase().includes(keyword) ||
+        waybillSearchText.includes(keyword);
 
       const matchesPay =
         payFilter === "전체" ? true : shipment.pay === payFilter;
@@ -2950,6 +2995,7 @@ export default function Home() {
     pdaUncheckedOnly,
     listDateFrom,
     listDateTo,
+    shipmentWaybillInfoById,
   ]);
 
   const sortedShipments = useMemo(
@@ -4106,10 +4152,10 @@ export default function Home() {
 
       const todayKey = getTodaySeoulDateKey();
       if (
-        tab === "운송장번호" &&
-        isDateKeyInRange(todayKey, waybillDateFrom, waybillDateTo)
+        tab === "출고목록" &&
+        isDateKeyInRange(todayKey, listDateFrom, listDateTo)
       ) {
-        await loadWaybillHistoryFromDb(waybillDateFrom, waybillDateTo);
+        await loadWaybillHistoryFromDb(listDateFrom, listDateTo);
       }
     } catch (error) {
       console.error(error);
@@ -4307,10 +4353,10 @@ export default function Home() {
 
     const todayKey = getTodaySeoulDateKey();
     if (
-      tab === "운송장번호" &&
-      isDateKeyInRange(todayKey, waybillDateFrom, waybillDateTo)
+      tab === "출고목록" &&
+      isDateKeyInRange(todayKey, listDateFrom, listDateTo)
     ) {
-      await loadWaybillHistoryFromDb(waybillDateFrom, waybillDateTo);
+      await loadWaybillHistoryFromDb(listDateFrom, listDateTo);
     }
   };
 
@@ -4426,37 +4472,6 @@ export default function Home() {
     });
   }, [qtyVerificationRows, qtyKeyword, qtyViewFilter]);
 
-  const waybillMessageRows = useMemo(() => {
-    return waybillHistoryRows
-      .filter((row) => row.waybillNo)
-      .map((row) => ({
-        id: row.historyId,
-        sessionDate: row.sessionDate,
-        waybillNo: row.waybillNo,
-        listName: buildWaybillListName(row.sender, row.receiver),
-        message: buildWaybillMessageText({
-          receiver: row.receiver,
-          delivery: row.delivery,
-          pay: row.pay,
-          branch: row.branch,
-          waybillNo: row.waybillNo,
-        }),
-      }))
-      .filter((row) => row.message);
-  }, [waybillHistoryRows]);
-
-  const filteredWaybillMessageRows = useMemo(() => {
-    const keyword = waybillHistoryKeyword.trim().toLowerCase();
-    if (!keyword) return waybillMessageRows;
-
-    return waybillMessageRows.filter((row) => {
-      const haystack = [row.listName, row.message, row.waybillNo]
-        .join(" ")
-        .toLowerCase();
-      return haystack.includes(keyword);
-    });
-  }, [waybillMessageRows, waybillHistoryKeyword]);
-
   const handleCopyWaybillMessage = async (id: string, text: string) => {
     const copied = await copyTextSilently(text);
     if (!copied) return;
@@ -4467,8 +4482,8 @@ export default function Home() {
     }, 1200);
   };
 
-  const waybillUploadControls = (
-    <div style={verifyUploadBar}>
+  const renderWaybillUploadControls = (compact = false) => (
+    <div style={compact ? listWaybillUploadBar : verifyUploadBar}>
       <div
         style={{
           display: "flex",
@@ -4508,10 +4523,17 @@ export default function Home() {
         />
       </div>
 
-      <div style={verifyUploadFileName}>
-        {waybillUploadFileName
-          ? `업로드 파일: ${waybillUploadFileName}`
-          : "업로드 파일 없음"}
+      <div
+        style={
+          compact ? listWaybillUploadFileName : verifyUploadFileName
+        }
+        title={waybillUploadFileName || undefined}
+      >
+        {waybillHistoryLoading && compact
+          ? "운송장 정보 불러오는 중..."
+          : waybillUploadFileName
+            ? `업로드 파일: ${waybillUploadFileName}`
+            : "업로드 파일 없음"}
       </div>
     </div>
   );
@@ -4709,13 +4731,7 @@ export default function Home() {
 
         <div style={tabWrap}>
           {(
-            [
-              "출고등록",
-              "출고목록",
-              "운송장번호",
-              "발송검증",
-              "마스터관리",
-            ] as TabType[]
+            ["출고등록", "출고목록", "발송검증", "마스터관리"] as TabType[]
           ).map((item) => (
             <button
               key={item}
@@ -5034,15 +5050,17 @@ export default function Home() {
                   type="button"
                   style={smallBlueBtn}
                   onClick={() => void handleListDateSearch()}
-                  disabled={shipmentListLoading}
+                  disabled={shipmentListLoading || waybillHistoryLoading}
                 >
-                  {shipmentListLoading ? "조회중..." : "조회"}
+                  {shipmentListLoading || waybillHistoryLoading
+                    ? "조회중..."
+                    : "조회"}
                 </button>
                 <button
                   type="button"
                   style={smallGrayBtn}
                   onClick={() => void showTodayShipmentList()}
-                  disabled={shipmentListLoading}
+                  disabled={shipmentListLoading || waybillHistoryLoading}
                 >
                   오늘
                 </button>
@@ -5064,7 +5082,7 @@ export default function Home() {
                   style={filterInput}
                   value={filterKeyword}
                   onChange={(e) => setFilterKeyword(e.target.value)}
-                  placeholder="업체명, 발화주, 수화주, 메모 검색"
+                  placeholder="업체명, 발화주, 수화주, 메모, 운송장번호 검색"
                 />
               </div>
 
@@ -5135,6 +5153,8 @@ export default function Home() {
             </div>
 
             <div style={exportBar}>
+              {renderWaybillUploadControls(true)}
+
               <div style={exportRight}>
                 <span style={selectedCountText}>
                   선택 {selectedIds.length}건
@@ -5271,126 +5291,191 @@ export default function Home() {
                         shipment.checklist.pda &&
                         shipment.checklist.waybill &&
                         shipment.checklist.closedDone;
+                      const waybillInfo = shipmentWaybillInfoById.get(
+                        shipment.id,
+                      );
+                      const copied =
+                        waybillInfo &&
+                        copiedWaybillMessageId === waybillInfo.id;
+                      const hasWaybillWarning =
+                        waybillWarningShipmentIds.has(shipment.id) ||
+                        waybillInfo?.status === "확인필요";
 
                       return (
                         <div
                           key={shipment.id}
                           style={{
-                            ...overviewRow,
+                            ...shipmentOverviewCard,
                             background: isChecklistDone ? "#f3f4f6" : "#fff",
                             opacity: isChecklistDone ? 0.78 : 1,
                           }}
                         >
-                          <div style={ovSelect}>
-                            <input
-                              type="checkbox"
-                              checked={selectedIds.includes(shipment.id)}
-                              onChange={() => toggleSelectOne(shipment.id)}
-                            />
-                          </div>
-
                           <div
                             style={{
-                              ...ovDate,
-                              color: isToday ? "#2563eb" : "#6b7280",
-                              fontWeight: isToday ? "bold" : "normal",
+                              ...overviewRow,
+                              border: "none",
+                              borderRadius: 0,
+                              background: "transparent",
+                              paddingBottom: waybillInfo ? 10 : 16,
                             }}
                           >
-                            {formatDateKeyKo(
-                              getSeoulDateKey(shipment.createdAt),
-                            )}
-                          </div>
+                            <div style={ovSelect}>
+                              <input
+                                type="checkbox"
+                                checked={selectedIds.includes(shipment.id)}
+                                onChange={() => toggleSelectOne(shipment.id)}
+                              />
+                            </div>
 
-                          <div style={ovCompany}>
-                            <button
-                              type="button"
-                              style={companyLinkBtn}
-                              onClick={() => openDetail(shipment)}
+                            <div
+                              style={{
+                                ...ovDate,
+                                color: isToday ? "#2563eb" : "#6b7280",
+                                fontWeight: isToday ? "bold" : "normal",
+                              }}
                             >
-                              {displayReceiverName(
-                                shipment.sender,
-                                shipment.receiver,
+                              {formatDateKeyKo(
+                                getSeoulDateKey(shipment.createdAt),
                               )}
-                            </button>
+                            </div>
+
+                            <div style={ovCompany}>
+                              <button
+                                type="button"
+                                style={companyLinkBtn}
+                                onClick={() => openDetail(shipment)}
+                              >
+                                {displayReceiverName(
+                                  shipment.sender,
+                                  shipment.receiver,
+                                )}
+                              </button>
+                            </div>
+
+                            <div style={ovPay}>{shipment.pay}</div>
+                            <div style={ovDelivery}>
+                              {displayDelivery(shipment.delivery)}
+                            </div>
+                            <div style={ovQty}>
+                              {ceilQuantityDisplay(shipment.qty, shipment.pack)}
+                            </div>
+                            <div style={ovFare}>{formatFare(shipment.fare)}</div>
+
+                            <div style={{ ...ovCheck, ...checkStartBorder }}>
+                              <button
+                                type="button"
+                                style={rowActionBtn}
+                                onClick={() =>
+                                  void handleChecklistRowToggle(shipment.id)
+                                }
+                              >
+                                전체
+                              </button>
+                            </div>
+
+                            <div style={ovCheck}>
+                              <input
+                                type="checkbox"
+                                style={checkboxStyle}
+                                checked={shipment.checklist.pda}
+                                onChange={() =>
+                                  void handleChecklistToggle(
+                                    shipment.id,
+                                    "pda",
+                                  )
+                                }
+                              />
+                            </div>
+
+                            <div style={ovCheck}>
+                              <input
+                                type="checkbox"
+                                style={checkboxStyle}
+                                checked={shipment.checklist.waybill}
+                                onChange={() =>
+                                  void handleChecklistToggle(
+                                    shipment.id,
+                                    "waybill",
+                                  )
+                                }
+                              />
+                            </div>
+
+                            <div style={ovCheck}>
+                              <input
+                                type="checkbox"
+                                style={checkboxStyle}
+                                checked={shipment.checklist.closedDone}
+                                onChange={() =>
+                                  void handleChecklistToggle(
+                                    shipment.id,
+                                    "closedDone",
+                                  )
+                                }
+                              />
+                            </div>
+
+                            <div style={ovCheck}>
+                              {hasWaybillWarning ? (
+                                <span style={warningMark}>!</span>
+                              ) : (
+                                <span style={{ color: "transparent" }}>!</span>
+                              )}
+                            </div>
+
+                            <div style={ovDelete}>
+                              <button
+                                type="button"
+                                style={deleteBtn}
+                                onClick={() => handleDelete(shipment.id)}
+                              >
+                                삭제
+                              </button>
+                            </div>
                           </div>
 
-                          <div style={ovPay}>{shipment.pay}</div>
-                          <div style={ovDelivery}>
-                            {displayDelivery(shipment.delivery)}
-                          </div>
-                          <div style={ovQty}>
-                            {ceilQuantityDisplay(shipment.qty, shipment.pack)}
-                          </div>
-                          <div style={ovFare}>{formatFare(shipment.fare)}</div>
+                          {waybillInfo ? (
+                            <div style={shipmentWaybillRow}>
+                              <div style={shipmentWaybillMessageCell}>
+                                <button
+                                  type="button"
+                                  style={shipmentWaybillMessageButton}
+                                  title={
+                                    waybillInfo.status === "확인필요" &&
+                                    waybillInfo.reasons.length > 0
+                                      ? `클릭하여 복사 · 확인: ${waybillInfo.reasons.join(
+                                          ", ",
+                                        )}`
+                                      : "클릭하여 복사"
+                                  }
+                                  onClick={() =>
+                                    void handleCopyWaybillMessage(
+                                      waybillInfo.id,
+                                      waybillInfo.message,
+                                    )
+                                  }
+                                >
+                                  {waybillInfo.message}
+                                </button>
+                              </div>
 
-                          <div style={{ ...ovCheck, ...checkStartBorder }}>
-                            <button
-                              type="button"
-                              style={rowActionBtn}
-                              onClick={() =>
-                                void handleChecklistRowToggle(shipment.id)
-                              }
-                            >
-                              전체
-                            </button>
-                          </div>
-
-                          <div style={ovCheck}>
-                            <input
-                              type="checkbox"
-                              style={checkboxStyle}
-                              checked={shipment.checklist.pda}
-                              onChange={() =>
-                                void handleChecklistToggle(shipment.id, "pda")
-                              }
-                            />
-                          </div>
-
-                          <div style={ovCheck}>
-                            <input
-                              type="checkbox"
-                              style={checkboxStyle}
-                              checked={shipment.checklist.waybill}
-                              onChange={() =>
-                                void handleChecklistToggle(
-                                  shipment.id,
-                                  "waybill",
-                                )
-                              }
-                            />
-                          </div>
-
-                          <div style={ovCheck}>
-                            <input
-                              type="checkbox"
-                              style={checkboxStyle}
-                              checked={shipment.checklist.closedDone}
-                              onChange={() =>
-                                void handleChecklistToggle(
-                                  shipment.id,
-                                  "closedDone",
-                                )
-                              }
-                            />
-                          </div>
-
-                          <div style={ovCheck}>
-                            {waybillWarningShipmentIds.has(shipment.id) ? (
-                              <span style={warningMark}>!</span>
-                            ) : (
-                              <span style={{ color: "transparent" }}>!</span>
-                            )}
-                          </div>
-
-                          <div style={ovDelete}>
-                            <button
-                              type="button"
-                              style={deleteBtn}
-                              onClick={() => handleDelete(shipment.id)}
-                            >
-                              삭제
-                            </button>
-                          </div>
+                              <button
+                                type="button"
+                                style={{
+                                  ...(copied ? smallBlueBtn : smallGrayBtn),
+                                  ...shipmentWaybillCopyButton,
+                                }}
+                                onClick={() =>
+                                  void handleCopyWaybillMessage(
+                                    waybillInfo.id,
+                                    waybillInfo.message,
+                                  )
+                                }
+                              >
+                                {copied ? "복사됨" : "복사"}
+                              </button>
+                            </div>
+                          ) : null}
                         </div>
                       );
                     })}
@@ -5440,7 +5525,7 @@ export default function Home() {
                   [일자별조회] → [목록전체선택] → [엑셀저장]
                 </div>
 
-                {waybillUploadControls}
+                {renderWaybillUploadControls()}
 
                 <div style={verifySummaryGrid}>
                   <div style={verifySummaryItem}>
@@ -5886,147 +5971,6 @@ export default function Home() {
                   </table>
                 </div>
               </>
-            )}
-          </div>
-        )}
-
-        {tab === "운송장번호" && (
-          <div style={{ marginTop: 8 }}>
-            <h2 style={listTitle}>운송장번호</h2>
-
-            <div style={verifyInfoText}>
-              대신택배 발송데이터를 업로드하여 생성된 운송장번호 / 안내문구를
-              확인하세요.
-            </div>
-
-            {waybillUploadControls}
-
-            <div
-              style={{
-                marginBottom: "10px",
-                fontWeight: "bold",
-                color: "#555",
-              }}
-            >
-              📅 조회기간: {formatDateRangeKo(waybillDateFrom, waybillDateTo)}
-            </div>
-
-            <div style={dateRangeBar}>
-              <div style={dateRangeControls}>
-                <div style={dateField}>
-                  <div style={filterLabel}>시작일</div>
-                  <input
-                    type="date"
-                    style={dateInput}
-                    value={waybillDateFromDraft}
-                    onChange={(e) => setWaybillDateFromDraft(e.target.value)}
-                  />
-                </div>
-
-                <div style={dateRangeSeparator}>~</div>
-
-                <div style={dateField}>
-                  <div style={filterLabel}>종료일</div>
-                  <input
-                    type="date"
-                    style={dateInput}
-                    value={waybillDateToDraft}
-                    onChange={(e) => setWaybillDateToDraft(e.target.value)}
-                  />
-                </div>
-
-                <button
-                  type="button"
-                  style={smallBlueBtn}
-                  onClick={handleWaybillDateSearch}
-                >
-                  조회
-                </button>
-                <button
-                  type="button"
-                  style={smallGrayBtn}
-                  onClick={showTodayWaybillHistory}
-                >
-                  오늘
-                </button>
-              </div>
-            </div>
-
-            <div style={verifyFilterBar}>
-              <div style={{ ...filterFieldWide, minWidth: 300 }}>
-                <div style={filterLabel}>업체명 검색</div>
-                <input
-                  style={filterInput}
-                  value={waybillHistoryKeyword}
-                  onChange={(e) => setWaybillHistoryKeyword(e.target.value)}
-                  placeholder="발화주-수화주 또는 수화주명 검색"
-                />
-              </div>
-            </div>
-
-            {waybillHistoryLoading ? (
-              <div style={emptyText}>
-                운송장번호 이력을 조회하는 중입니다...
-              </div>
-            ) : waybillMessageRows.length === 0 ? (
-              <div style={emptyText}>
-                선택한 기간에 저장된 운송장번호가 없습니다.
-              </div>
-            ) : filteredWaybillMessageRows.length === 0 ? (
-              <div style={emptyText}>
-                검색한 업체명에 맞는 운송장번호가 없습니다.
-              </div>
-            ) : (
-              <div style={verifyTableWrap}>
-                <table style={verifyTable}>
-                  <thead>
-                    <tr>
-                      <th style={verifyHeaderCell}>발송일</th>
-                      <th style={verifyHeaderCell}>목록</th>
-                      <th style={verifyHeaderCell}>운송장번호 안내문구</th>
-                      <th style={verifyHeaderCell}>복사</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredWaybillMessageRows.map((row) => (
-                      <tr key={row.id}>
-                        <td style={verifyCell}>
-                          {formatDateKeyKo(row.sessionDate)}
-                        </td>
-                        <td style={verifyCell}>{row.listName}</td>
-                        <td style={verifyCell}>
-                          <button
-                            type="button"
-                            style={messageCellButton}
-                            onClick={() =>
-                              void handleCopyWaybillMessage(row.id, row.message)
-                            }
-                          >
-                            {row.message}
-                          </button>
-                        </td>
-                        <td style={verifyCell}>
-                          <button
-                            type="button"
-                            style={
-                              copiedWaybillMessageId === row.id
-                                ? smallBlueBtn
-                                : smallGrayBtn
-                            }
-                            onClick={() =>
-                              void handleCopyWaybillMessage(row.id, row.message)
-                            }
-                          >
-                            {copiedWaybillMessageId === row.id
-                              ? "복사됨"
-                              : "복사"}
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
             )}
           </div>
         )}
@@ -7181,6 +7125,24 @@ const verifyUploadFileName: CSSProperties = {
   fontWeight: 700,
 };
 
+const listWaybillUploadBar: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 10,
+  flexWrap: "wrap",
+  flex: "1 1 560px",
+  minWidth: 0,
+};
+
+const listWaybillUploadFileName: CSSProperties = {
+  ...verifyUploadFileName,
+  flex: "1 1 220px",
+  minWidth: 0,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+};
+
 const verifyInfoText: CSSProperties = {
   marginBottom: 12,
   color: "#475569",
@@ -7267,18 +7229,6 @@ const verifyBadge: CSSProperties = {
   fontWeight: 800,
 };
 
-const messageCellButton: CSSProperties = {
-  border: "none",
-  background: "transparent",
-  padding: 0,
-  margin: 0,
-  color: "#111827",
-  textAlign: "left",
-  cursor: "pointer",
-  width: "100%",
-  fontSize: 14,
-  lineHeight: 1.5,
-};
 const authShell: CSSProperties = {
   minHeight: "100vh",
   display: "flex",
@@ -7673,9 +7623,10 @@ const resetFilterBtn: CSSProperties = {
 
 const exportBar: CSSProperties = {
   display: "flex",
-  justifyContent: "flex-end",
+  justifyContent: "space-between",
   alignItems: "center",
   gap: 16,
+  flexWrap: "wrap",
   marginBottom: 12,
 };
 
@@ -7770,6 +7721,48 @@ const overviewHeaderRow: CSSProperties = {
   background: "#f3f4f6",
   fontWeight: 800,
   minHeight: 52,
+};
+
+const shipmentOverviewCard: CSSProperties = {
+  border: "1px solid #e5e7eb",
+  borderRadius: 12,
+  overflow: "hidden",
+};
+
+const shipmentWaybillRow: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns:
+    "52px 1.3fr 2.6fr 0.9fr 0.9fr 1fr 1.1fr 70px 70px 70px 90px 40px 88px",
+  gap: 10,
+  alignItems: "center",
+  padding: "0 14px 14px",
+};
+
+const shipmentWaybillMessageCell: CSSProperties = {
+  gridColumn: "2 / 12",
+  minWidth: 0,
+};
+
+const shipmentWaybillMessageButton: CSSProperties = {
+  border: "1px solid #bfdbfe",
+  background: "#eff6ff",
+  color: "#1d4ed8",
+  borderRadius: 9,
+  padding: "8px 10px",
+  width: "100%",
+  textAlign: "left",
+  cursor: "pointer",
+  fontSize: 13,
+  fontWeight: 700,
+  lineHeight: 1.45,
+  overflowWrap: "anywhere",
+};
+
+const shipmentWaybillCopyButton: CSSProperties = {
+  gridColumn: "12 / 14",
+  justifySelf: "end",
+  minWidth: 72,
+  padding: "8px 12px",
 };
 
 const ovSelect: CSSProperties = {
