@@ -7730,8 +7730,8 @@ const shipmentOverviewCard: CSSProperties = {
 
 const shipmentWaybillInlineLayer: CSSProperties = {
   position: "absolute",
-  left: 14,
-  right: 14,
+  left: 320,
+  right: 1,
   bottom: 5,
   display: "grid",
   gridTemplateColumns:
@@ -7742,12 +7742,12 @@ const shipmentWaybillInlineLayer: CSSProperties = {
 };
 
 const shipmentWaybillInlineContent: CSSProperties = {
-  gridColumn: "2 / 8",
+  gridColumn: "2 / 13",
   display: "flex",
   alignItems: "center",
   gap: 6,
   minWidth: 0,
-  overflow: "hidden",
+  overflow: "visible",
   pointerEvents: "auto",
 };
 
@@ -7760,7 +7760,7 @@ const shipmentWaybillInlineCopyButton: CSSProperties = {
   padding: "2px 6px",
   minWidth: 40,
   cursor: "pointer",
-  fontSize: 13,
+  fontSize: 12,
   fontWeight: 700,
   lineHeight: 1.2,
 };
@@ -7773,7 +7773,7 @@ const shipmentWaybillInlineMessageButton: CSSProperties = {
   whiteSpace: "nowrap",
   border: "none",
   background: "transparent",
-  color: "#f97316",
+  color: "#0F766E",
   padding: 0,
   margin: 0,
   textAlign: "left",
