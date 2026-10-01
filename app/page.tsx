@@ -9,6 +9,9 @@ import type {
 } from "react";
 import { supabase } from "@/lib/supabase";
 import type { Session } from "@supabase/supabase-js";
+import { CARRIERS, normalizeCarrier, isLogenQuantity, logenFare, exportCarrier, sameCarrierText, sameCarrierPhone } from "@/lib/carriers";
+import type { Carrier, CarrierFilter } from "@/lib/carriers";
+import { parseLogenPasteRows } from "@/lib/logen-paste";
 
 type Party = {
   name: string;
@@ -39,6 +42,7 @@ type Checklist = {
 
 type SavedShipment = {
   id: string;
+  carrier: Carrier;
   receiver: string;
   receiverPhone: string;
   address: string;
@@ -61,6 +65,7 @@ type SavedShipment = {
 type ShipmentDraft = Omit<SavedShipment, "id" | "createdAt">;
 
 type ShipmentDbPayload = {
+  carrier: Carrier;
   receiver: string;
   receiver_phone: string;
   address: string;
@@ -96,6 +101,10 @@ type SupabaseErrorLike = {
 
 type WaybillUploadRow = {
   id: string;
+  carrier?: Carrier;
+  senderPhone?: string;
+  memo?: string;
+  rawPay?: string;
   sender: string;
   receiver: string;
   receiverPhone: string;
@@ -180,6 +189,7 @@ type WaybillVerificationStatus =
 
 type WaybillVerificationRow = {
   id: string;
+  carrier: Carrier;
   status: WaybillVerificationStatus;
   shipmentId?: string;
   shipmentListName: string;
@@ -193,13 +203,15 @@ type WaybillVerificationRow = {
   reasons: string[];
 };
 
-type VerifySubTab = "대신 발송검증" | "일치 검증" | "출고수량 검증";
+type VerifySubTab = "발송검증" | "일치 검증" | "출고수량 검증";
 type AuthMode = "login" | "forgot" | "reset";
 
 type SharedVerifyStateRow = {
   session_date: string;
   waybill_upload_rows: WaybillUploadRow[];
   waybill_upload_file_name: string;
+  logen_upload_rows: WaybillUploadRow[];
+  logen_paste_text: string;
   order_status_rows: OrderStatusRow[];
   sales_status_rows: SalesStatusRow[];
   pda_rows: PdaRow[];
@@ -376,6 +388,7 @@ function normalizeShipment(raw: unknown): SavedShipment {
 
   return {
     id: asString(row.id) || String(Date.now()),
+    carrier: normalizeCarrier(row.carrier),
     receiver: asString(row.receiver),
     receiverPhone: asString(row.receiverPhone ?? row.receiver_phone),
     address: asString(row.address),
@@ -456,6 +469,10 @@ function normalizeSharedVerifyState(
       ? (row.waybill_upload_rows as WaybillUploadRow[])
       : [],
     waybill_upload_file_name: asString(row.waybill_upload_file_name),
+    logen_upload_rows: Array.isArray(row.logen_upload_rows)
+      ? (row.logen_upload_rows as WaybillUploadRow[]).map((item) => ({ ...item, carrier: "로젠" }))
+      : [],
+    logen_paste_text: typeof row.logen_paste_text === "string" ? row.logen_paste_text : "",
     order_status_rows: Array.isArray(row.order_status_rows)
       ? (row.order_status_rows as OrderStatusRow[])
       : [],
@@ -625,10 +642,11 @@ function normalizeWaybillDelivery(value: string): DeliveryType {
 
 function normalizeWaybillPay(value: string): PayType {
   const text = asString(value).replace(/\s/g, "");
-  return text === "현불" || text === "선불" ? "선불" : "착불";
+  return text === "현불" || text === "선불" || text === "신용" ? "선불" : "착불";
 }
 
 function buildWaybillMessageText(params: {
+  carrier?: Carrier;
   receiver: string;
   delivery: DeliveryType;
   pay: PayType;
@@ -641,23 +659,25 @@ function buildWaybillMessageText(params: {
 
   const payText = params.pay === "선불" ? "선불 " : "";
 
-  if (params.delivery === "정기") {
+  if (normalizeCarrier(params.carrier) === "대신" && params.delivery === "정기") {
     return `[${receiverName}]님 대신화물 ${payText}${asString(params.branch)} 운송장번호 - ${waybillNo}`
       .replace(/\s+/g, " ")
       .trim();
   }
 
-  return `[${receiverName}]님 대신택배 ${payText}운송장번호 - ${waybillNo}`
+  return `[${receiverName}]님 ${normalizeCarrier(params.carrier)}택배 ${payText}운송장번호 - ${waybillNo}`
     .replace(/\s+/g, " ")
     .trim();
 }
 
 function parseWaybillUploadRows(
   rows: Record<string, unknown>[],
+  carrier: Carrier = "대신",
 ): WaybillUploadRow[] {
   return rows
     .map((row, index) => {
       const sender = getRowValue(row, [
+        "송하인명", "송하인이름", "송하인", "발화주",
         "발화주명",
         "발송인명",
         "보내는분",
@@ -665,6 +685,7 @@ function parseWaybillUploadRows(
         "발송업체명",
       ]);
       const receiver = getRowValue(row, [
+        "수하인", "수하인이름", "수화주",
         "수화주명",
         "받는분",
         "수취인명",
@@ -672,6 +693,7 @@ function parseWaybillUploadRows(
       ]);
       const receiverPhone = normalizeDigits(
         getRowValue(row, [
+          "수하인전화번호", "수하인전화", "수하인연락처", "수하인휴대폰",
           "수화주전화",
           "수화주전화1",
           "수화주전화번호",
@@ -679,19 +701,20 @@ function parseWaybillUploadRows(
           "받는분전화번호",
         ]),
       );
-      const address = getRowValue(row, ["수화주주소", "주소", "받는분주소"]);
+      const address = getRowValue(row, ["수하인주소", "수화주주소", "주소", "받는분주소"]);
       const qty = parseNumberValue(
         getRowValue(row, ["수량", "박스수량", "건수"]),
       );
       const fare = parseNumberValue(
-        getRowValue(row, ["총운임", "운임", "총배송비"]),
+        getRowValue(row, ["택배운임", "총운임", "운임", "총배송비"]),
       );
-      const delivery = normalizeWaybillDelivery(
+      const delivery = carrier === "로젠" ? "택배" : normalizeWaybillDelivery(
         getRowValue(row, ["운송상품", "운송상품명", "운송방법"]),
       );
-      const pay = normalizeWaybillPay(
-        getRowValue(row, ["지불방법", "운임구분"]),
-      );
+      const rawPay = getRowValue(row, ["지불방법", "운임구분"]);
+      const pay = normalizeWaybillPay(rawPay);
+      const senderPhone = getRowValue(row, ["송하인전화번호", "송하인전화", "송하인연락처", "발화주전화번호", "발화주전화", "보내는분전화번호"]);
+      const memo = getRowValue(row, ["배송메세지", "베송메세지", "배송메시지", "배송메세지내용", "특기사항"]);
       const branch = getRowValue(row, [
         "도착지",
         "도착영업소",
@@ -709,7 +732,11 @@ function parseWaybillUploadRows(
       );
 
       return {
-        id: `upload-${index + 1}`,
+        id: `${carrier}-upload-${index + 1}`,
+        carrier,
+        senderPhone,
+        memo,
+        rawPay,
         sender,
         receiver,
         receiverPhone,
@@ -736,8 +763,13 @@ function parseWaybillUploadRows(
 }
 
 function scoreWaybillPair(shipment: SavedShipment, upload: WaybillUploadRow) {
-  const shipmentQty = normalizeQtyForCompare(shipment.qty);
-  const uploadQty = normalizeQtyForCompare(upload.qty);
+  if (normalizeCarrier(shipment.carrier) !== normalizeCarrier(upload.carrier)) return -Infinity;
+  if (normalizeCarrier(shipment.carrier) === "로젠" &&
+      !valuesClose(shipment.receiver, upload.receiver) &&
+      !(shipment.receiverPhone && upload.receiverPhone && sameCarrierPhone(shipment.receiverPhone, upload.receiverPhone)) &&
+      !(shipment.address && upload.address && addressesClose(shipment.address, upload.address))) return -Infinity;
+  const shipmentQty = (normalizeCarrier(shipment.carrier) === "로젠" ? Number(shipment.qty) : normalizeQtyForCompare(shipment.qty));
+  const uploadQty = (normalizeCarrier(upload.carrier) === "로젠" ? upload.qty : normalizeQtyForCompare(upload.qty));
   const shipmentFare = Number(String(shipment.fare).replace(/,/g, "")) || 0;
   const shipmentPhone = normalizeDigits(shipment.receiverPhone);
   const shipmentListName = displayReceiverName(
@@ -776,7 +808,9 @@ function scoreWaybillPair(shipment: SavedShipment, upload: WaybillUploadRow) {
   if (
     shipmentPhone &&
     upload.receiverPhone &&
-    shipmentPhone === upload.receiverPhone
+    (normalizeCarrier(shipment.carrier) === "로젠"
+      ? sameCarrierPhone(shipmentPhone, upload.receiverPhone)
+      : shipmentPhone === upload.receiverPhone)
   )
     score += 4;
 
@@ -798,7 +832,28 @@ function scoreWaybillPair(shipment: SavedShipment, upload: WaybillUploadRow) {
     score += 4;
   }
 
+  if (normalizeCarrier(shipment.carrier) === "로젠") {
+    // 같은 수하인에게 여러 건을 보낼 때 전화번호와 메시지까지 활용한다.
+    if (sameCarrierPhone(shipment.senderPhone, upload.senderPhone ?? "")) score += 4;
+    if (sameCarrierText(shipment.memo, upload.memo ?? "")) score += 4;
+    if (sameCarrierText(shipment.receiver, upload.receiver)) score += 2;
+    if (sameCarrierText(shipment.sender, upload.sender)) score += 2;
+  }
   return score;
+}
+
+function logenMismatchReasons(shipment: SavedShipment, upload: WaybillUploadRow) {
+  const reasons: string[] = [];
+  if (!shipment.receiver || !upload.receiver || !sameCarrierText(shipment.receiver, upload.receiver)) reasons.push("수하인 이름 확인");
+  if (!shipment.address || !upload.address || !sameCarrierText(shipment.address, upload.address)) reasons.push("주소 확인");
+  if (!shipment.receiverPhone || !upload.receiverPhone || !sameCarrierPhone(shipment.receiverPhone, upload.receiverPhone)) reasons.push("수하인 전화번호 확인");
+  if (!shipment.sender || !upload.sender || !sameCarrierText(shipment.sender, upload.sender)) reasons.push("송하인 이름 확인");
+  if (!shipment.senderPhone || !upload.senderPhone || !sameCarrierPhone(shipment.senderPhone, upload.senderPhone)) reasons.push("송하인 전화번호 확인");
+  if (!isLogenQuantity(upload.qty) || Number(shipment.qty) !== upload.qty) reasons.push("박스수량 확인");
+  if (Number(shipment.fare.replace(/,/g, "")) !== upload.fare) reasons.push("택배운임 확인");
+  if (!["신용", "선불", "현불", "착불"].includes(asString(upload.rawPay).replace(/\s/g, "")) || shipment.pay !== upload.pay) reasons.push("운임구분 확인");
+  if (!sameCarrierText(shipment.memo, upload.memo ?? "")) reasons.push("배송메세지 확인");
+  return reasons;
 }
 
 function buildWaybillVerificationRows(
@@ -849,53 +904,58 @@ function buildWaybillVerificationRows(
 
   matchedPairs.forEach(({ shipment, upload }, index) => {
     const reasons: string[] = [];
-    const shipmentQty = normalizeQtyForCompare(shipment.qty);
-    const uploadQty = normalizeQtyForCompare(upload.qty);
+    const shipmentQty = (normalizeCarrier(shipment.carrier) === "로젠" ? Number(shipment.qty) : normalizeQtyForCompare(shipment.qty));
+    const uploadQty = (normalizeCarrier(upload.carrier) === "로젠" ? upload.qty : normalizeQtyForCompare(upload.qty));
     const shipmentFare = Number(String(shipment.fare).replace(/,/g, "")) || 0;
 
-    if (!valuesClose(shipment.receiver, upload.receiver)) {
-      reasons.push("수화주명 확인");
-    }
+    if (normalizeCarrier(shipment.carrier) === "로젠") {
+      reasons.push(...logenMismatchReasons(shipment, upload));
+    } else {
+      if (!valuesClose(shipment.receiver, upload.receiver)) {
+        reasons.push("수화주명 확인");
+      }
 
-    if (
-      shipment.sender !== "상화시스템" &&
-      !valuesClose(shipment.sender, simplifyWaybillSenderName(upload.sender))
-    ) {
-      reasons.push("발화주명 확인");
-    }
+      if (
+        shipment.sender !== "상화시스템" &&
+        !valuesClose(shipment.sender, simplifyWaybillSenderName(upload.sender))
+      ) {
+        reasons.push("발화주명 확인");
+      }
 
-    if (shipmentQty !== uploadQty) {
-      reasons.push("수량 확인");
-    }
+      if (shipmentQty !== uploadQty) {
+        reasons.push("수량 확인");
+      }
 
-    if (shipment.delivery !== upload.delivery) {
-      reasons.push("운송상품 확인");
-    }
+      if (shipment.delivery !== upload.delivery) {
+        reasons.push("운송상품 확인");
+      }
 
-    if (shipment.pay !== upload.pay) {
-      reasons.push("지불방법 확인");
-    }
+      if (shipment.pay !== upload.pay) {
+        reasons.push("지불방법 확인");
+      }
 
-    if (shipmentFare !== upload.fare) {
-      reasons.push("총운임 확인");
-    }
+      if (shipmentFare !== upload.fare) {
+        reasons.push("총운임 확인");
+      }
 
-    if (
-      shipment.delivery === "정기" &&
-      shipment.branch &&
-      upload.branch &&
-      !valuesClose(shipment.branch, upload.branch)
-    ) {
-      reasons.push("도착영업소 확인");
-    }
+      if (
+        shipment.delivery === "정기" &&
+        shipment.branch &&
+        upload.branch &&
+        !valuesClose(shipment.branch, upload.branch)
+      ) {
+        reasons.push("도착영업소 확인");
+      }
 
-    if (
-      shipment.delivery === "택배" &&
-      shipment.address &&
-      upload.address &&
-      !addressesClose(shipment.address, upload.address)
-    ) {
-      reasons.push("주소 확인");
+      if (
+        shipment.delivery === "택배" &&
+        shipment.address &&
+        upload.address &&
+        !addressesClose(shipment.address, upload.address)
+      ) {
+        reasons.push("주소 확인");
+      }
+
     }
 
     if (!upload.waybillNo) {
@@ -904,6 +964,7 @@ function buildWaybillVerificationRows(
 
     rows.push({
       id: `matched-${index + 1}-${shipment.id}-${upload.id}`,
+      carrier: normalizeCarrier(shipment.carrier),
       shipmentId: shipment.id,
       status: reasons.length === 0 ? "일치" : "확인필요",
       shipmentListName: displayReceiverName(shipment.sender, shipment.receiver),
@@ -914,6 +975,7 @@ function buildWaybillVerificationRows(
       fareText: `${shipmentFare.toLocaleString("ko-KR")} / ${upload.fare.toLocaleString("ko-KR")}`,
       waybillNo: upload.waybillNo,
       waybillMessage: buildWaybillMessageText({
+        carrier: normalizeCarrier(upload.carrier),
         receiver: upload.receiver,
         delivery: upload.delivery,
         pay: upload.pay,
@@ -929,11 +991,12 @@ function buildWaybillVerificationRows(
 
     rows.push({
       id: `shipment-only-${shipment.id}`,
+      carrier: normalizeCarrier(shipment.carrier),
       shipmentId: shipment.id,
       status: "출고목록만",
       shipmentListName: displayReceiverName(shipment.sender, shipment.receiver),
       uploadListName: "",
-      qtyText: String(normalizeQtyForCompare(shipment.qty)),
+      qtyText: String((normalizeCarrier(shipment.carrier) === "로젠" ? Number(shipment.qty) : normalizeQtyForCompare(shipment.qty))),
       deliveryText: displayDelivery(shipment.delivery),
       payText: shipment.pay,
       fareText: (
@@ -950,15 +1013,17 @@ function buildWaybillVerificationRows(
 
     rows.push({
       id: `upload-only-${upload.id}`,
+      carrier: normalizeCarrier(upload.carrier),
       status: "발송데이터만",
       shipmentListName: "",
       uploadListName: buildWaybillListName(upload.sender, upload.receiver),
-      qtyText: String(normalizeQtyForCompare(upload.qty)),
+      qtyText: String((normalizeCarrier(upload.carrier) === "로젠" ? upload.qty : normalizeQtyForCompare(upload.qty))),
       deliveryText: displayDelivery(upload.delivery),
       payText: upload.pay,
       fareText: upload.fare.toLocaleString("ko-KR"),
       waybillNo: upload.waybillNo,
       waybillMessage: buildWaybillMessageText({
+        carrier: normalizeCarrier(upload.carrier),
         receiver: upload.receiver,
         delivery: upload.delivery,
         pay: upload.pay,
@@ -1369,12 +1434,14 @@ function isJejuDestination(params: {
 }
 
 function suggestFareByQty(params: {
+  carrier?: Carrier;
   qty: string;
   delivery: DeliveryType;
   pack: string;
   address?: string;
   branch?: string;
 }) {
+  if (normalizeCarrier(params.carrier) === "로젠") return logenFare(params.qty, params.address);
   const n = Number(params.qty);
   if (!n) return "";
 
@@ -1420,8 +1487,8 @@ function suggestFareByQty(params: {
   return String(finalFare);
 }
 
-function mapPayForTemplate(pay: PayType) {
-  return pay === "선불" ? "현불" : "착불";
+function mapPayForTemplate(pay: PayType, carrier: Carrier = "대신") {
+  return pay === "선불" ? (carrier === "로젠" ? "신용" : "현불") : "착불";
 }
 
 function parseAliases(text: string) {
@@ -1447,7 +1514,11 @@ function buildShipmentNote(receiverNote: string, senderNote: string) {
 }
 
 function toShipmentDbPayload(shipment: ShipmentDraft): ShipmentDbPayload {
+  if (shipment.carrier === "로젠" && !isLogenQuantity(shipment.qty)) {
+    throw new Error("로젠 수량은 1 이상의 정수로 입력해 주세요.");
+  }
   return {
+    carrier: normalizeCarrier(shipment.carrier),
     receiver: shipment.receiver,
     receiver_phone: shipment.receiverPhone,
     address: shipment.address,
@@ -1458,9 +1529,11 @@ function toShipmentDbPayload(shipment: ShipmentDraft): ShipmentDbPayload {
     item: shipment.item,
     pack: shipment.pack,
     pay: shipment.pay,
-    delivery: shipment.delivery,
+    delivery: shipment.carrier === "로젠" ? "택배" : shipment.delivery,
     qty: Number(shipment.qty),
-    fare: Number(String(shipment.fare).replace(/,/g, "")),
+    fare: shipment.carrier === "로젠"
+      ? Number(logenFare(shipment.qty, shipment.address))
+      : Number(String(shipment.fare).replace(/,/g, "")),
     memo: shipment.memo,
     note: shipment.note,
     pda: shipment.checklist.pda,
@@ -1726,7 +1799,7 @@ function toTemplateRow(
     수량: qty,
     품명: shipment.item || "부품",
     포장: shipment.pack || "박스",
-    운임구분: mapPayForTemplate(shipment.pay),
+    운임구분: mapPayForTemplate(shipment.pay, shipment.carrier),
     운송상품: shipment.delivery,
     우편번호: safePostal || "",
     도착영업소: shipment.delivery === "정기" ? shipment.branch || "" : "",
@@ -1798,6 +1871,7 @@ export default function Home() {
   const senderUploadRef = useRef<HTMLInputElement | null>(null);
   const branchUploadRef = useRef<HTMLInputElement | null>(null);
   const waybillUploadRef = useRef<HTMLInputElement | null>(null);
+  const logenPasteDirtyRef = useRef(false);
   const receiverPhoneInputRef = useRef<HTMLInputElement | null>(null);
   const senderPhoneInputRef = useRef<HTMLInputElement | null>(null);
   const addrSearchInputRef = useRef<HTMLInputElement | null>(null);
@@ -1820,6 +1894,9 @@ export default function Home() {
   const [item, setItem] = useState("부품");
   const [pack, setPack] = useState("박스");
   const [pay, setPay] = useState<PayType>("착불");
+  const [carrier, setCarrier] = useState<Carrier>("대신");
+  const [carrierFilter, setCarrierFilter] = useState<CarrierFilter>("전체");
+  const [verificationCarrier, setVerificationCarrier] = useState<CarrierFilter>("전체");
   const [delivery, setDelivery] = useState<DeliveryType>("정기");
   const [qty, setQty] = useState("1");
   const [fare, setFare] = useState("5500");
@@ -1917,6 +1994,12 @@ export default function Home() {
   const [waybillUploadRows, setWaybillUploadRows] = useState<
     WaybillUploadRow[]
   >([]);
+  const [logenUploadRows, setLogenUploadRows] = useState<WaybillUploadRow[]>([]);
+  const [logenPasteText, setLogenPasteText] = useState("");
+  const [showLogenPaste, setShowLogenPaste] = useState(false);
+  const [logenPasteError, setLogenPasteError] = useState("");
+  const [uploadBusy, setUploadBusy] = useState(false);
+  const allWaybillUploadRows = useMemo(() => [...waybillUploadRows, ...logenUploadRows], [waybillUploadRows, logenUploadRows]);
   const [verificationKeyword, setVerificationKeyword] = useState("");
   const [verificationMismatchOnly, setVerificationMismatchOnly] =
     useState(false);
@@ -1926,7 +2009,7 @@ export default function Home() {
   >([]);
   const [waybillHistoryLoading, setWaybillHistoryLoading] = useState(false);
 
-  const [verifyTab, setVerifyTab] = useState<VerifySubTab>("대신 발송검증");
+  const [verifyTab, setVerifyTab] = useState<VerifySubTab>("발송검증");
 
   const [orderStatusRows, setOrderStatusRows] = useState<OrderStatusRow[]>([]);
   const [salesStatusRows, setSalesStatusRows] = useState<SalesStatusRow[]>([]);
@@ -2084,6 +2167,8 @@ export default function Home() {
     session_date: sessionDate,
     waybill_upload_rows: [],
     waybill_upload_file_name: "",
+    logen_upload_rows: [],
+    logen_paste_text: "",
     order_status_rows: [],
     sales_status_rows: [],
     pda_rows: [],
@@ -2101,6 +2186,8 @@ export default function Home() {
       Array.isArray(row.waybill_upload_rows) ? row.waybill_upload_rows : [],
     );
     setWaybillUploadFileName(row.waybill_upload_file_name || "");
+    setLogenUploadRows((row.logen_upload_rows || []).map((item) => ({ ...item, carrier: "로젠" })));
+    if (!logenPasteDirtyRef.current) setLogenPasteText(row.logen_paste_text || "");
 
     setOrderStatusRows(
       Array.isArray(row.order_status_rows) ? row.order_status_rows : [],
@@ -2203,12 +2290,14 @@ export default function Home() {
   const saveSharedVerifyStateToDb = async (
     patch: Partial<SharedVerifyStateRow> = {},
   ) => {
+    let saved = true;
     const queuedWrite = sharedVerifyWriteQueueRef.current
       .catch(() => undefined)
       .then(async () => {
         try {
           await performSharedVerifyPatch(patch);
         } catch (error) {
+          saved = false;
           console.error("공유 검증데이터 저장 실패", error);
           alert("검증데이터 저장 실패: " + getErrorMessage(error));
         }
@@ -2216,6 +2305,7 @@ export default function Home() {
 
     sharedVerifyWriteQueueRef.current = queuedWrite;
     await queuedWrite;
+    return saved;
   };
 
   const scheduleSharedVerifyTextSave = (
@@ -2257,7 +2347,7 @@ export default function Home() {
     try {
       const { data, error } = await supabase
         .from(SHARED_VERIFY_STATE_TABLE)
-        .select("session_date, waybill_upload_rows")
+        .select("session_date, waybill_upload_rows, logen_upload_rows")
         .gte("session_date", fromDate)
         .lte("session_date", toDate)
         .order("session_date", { ascending: false });
@@ -2271,7 +2361,9 @@ export default function Home() {
           ? (stateRow.waybill_upload_rows as WaybillUploadRow[])
           : [];
 
-        return [...uploads].reverse().map((upload) => ({
+        const logenUploads: WaybillUploadRow[] = Array.isArray(stateRow?.logen_upload_rows)
+          ? stateRow.logen_upload_rows.map((item: WaybillUploadRow) => ({ ...item, carrier: "로젠" })) : [];
+        return [...uploads, ...logenUploads].reverse().map((upload) => ({
           ...upload,
           sessionDate,
         }));
@@ -2977,6 +3069,7 @@ export default function Home() {
       );
 
       return (
+        (carrierFilter === "전체" || shipment.carrier === carrierFilter) &&
         matchesDate &&
         matchesKeyword &&
         matchesPay &&
@@ -2997,6 +3090,7 @@ export default function Home() {
     listDateFrom,
     listDateTo,
     shipmentWaybillInfoById,
+    carrierFilter,
   ]);
 
   const sortedShipments = useMemo(
@@ -3068,6 +3162,7 @@ export default function Home() {
     setReceiverFocused(false);
     setFare(
       suggestFareByQty({
+        carrier,
         qty,
         delivery,
         pack,
@@ -3102,10 +3197,29 @@ export default function Home() {
     if (senderMatches.length > 0) applySender(senderMatches[0]);
   };
 
+  const handleCarrierChange = (next: Carrier) => {
+    if (next === carrier) return;
+    const nextDelivery: DeliveryType = next === "로젠" ? "택배" : "정기";
+    const nextQty = next === "로젠" && !isLogenQuantity(qty) ? String(Math.max(1, Math.ceil(Number(qty) || 1))) : qty;
+    setCarrier(next);
+    setDelivery(nextDelivery);
+    setQty(nextQty);
+    setPostalCode(resolvePostalCodeValue({ delivery: nextDelivery, receiver, branch, currentPostalCode: "" }));
+    setFare(suggestFareByQty({ carrier: next, qty: nextQty, delivery: nextDelivery, pack, address, branch }));
+  };
+
+  const handleCarrierFilterChange = (next: CarrierFilter) => {
+    setCarrierFilter(next);
+    setSelectedIds([]);
+    setDeliveryFilter("전체");
+  };
+
   const handleQty = (v: string) => {
+    if (carrier === "로젠" && v !== "" && !/^\d+$/.test(v)) return;
     setQty(v);
     setFare(
       suggestFareByQty({
+        carrier,
         qty: v,
         delivery,
         pack,
@@ -3222,6 +3336,7 @@ export default function Home() {
     setItem("부품");
     setPack("박스");
     setPay("착불");
+    setCarrier("대신");
     setDelivery("정기");
     setQty("1");
     setFare("5500");
@@ -3241,10 +3356,11 @@ export default function Home() {
       if (!receiver.trim()) return alert("수화주명을 입력해 주세요.");
       if (!sender.trim()) return alert("발화주명을 입력해 주세요.");
       if (!qty.trim()) return alert("수량을 입력해 주세요.");
+      if (carrier === "로젠" && !isLogenQuantity(qty)) return alert("로젠 수량은 1 이상의 정수로 입력해 주세요.");
       if (!fare.trim()) return alert("운임을 입력해 주세요.");
       if (delivery === "택배" && address.trim().length > 50) {
         return alert(
-          "주소는 50자 이하로 입력해 주세요. 대신택배 업로드 주소칸이 50자를 넘으면 터집니다. 아주 예민한 친구예요.",
+          "주소는 엑셀 업로드 양식에 맞게 50자 이하로 입력해 주세요.",
         );
       }
 
@@ -3292,6 +3408,7 @@ export default function Home() {
       }
 
       const draft: ShipmentDraft = {
+        carrier,
         receiver,
         receiverPhone,
         address,
@@ -3512,6 +3629,17 @@ export default function Home() {
     });
   };
 
+  const handleEditCarrierChange = (next: Carrier) => {
+    if (!editForm || next === editForm.carrier) return;
+    const nextDelivery: DeliveryType = next === "로젠" ? "택배" : "정기";
+    const nextQty = next === "로젠" && !isLogenQuantity(editForm.qty) ? String(Math.max(1, Math.ceil(Number(editForm.qty) || 1))) : editForm.qty;
+    const nextForm = { ...editForm, carrier: next, delivery: nextDelivery, qty: nextQty };
+    setEditForm({ ...nextForm,
+      postalCode: resolvePostalCodeValue({ delivery: nextDelivery, receiver: nextForm.receiver, branch: nextForm.branch, currentPostalCode: "" }),
+      fare: suggestFareByQty(nextForm),
+    });
+  };
+
   const handleSaveDetail = async () => {
     if (!editForm || detailSaveLockRef.current) return;
 
@@ -3522,6 +3650,7 @@ export default function Home() {
       if (!editForm.receiver.trim()) return alert("수화주명을 입력해 주세요.");
       if (!editForm.sender.trim()) return alert("발화주명을 입력해 주세요.");
       if (!editForm.qty.trim()) return alert("수량을 입력해 주세요.");
+      if (editForm.carrier === "로젠" && !isLogenQuantity(editForm.qty)) return alert("로젠 수량은 1 이상의 정수로 입력해 주세요.");
       if (!editForm.fare.trim()) return alert("운임을 입력해 주세요.");
       if (editForm.delivery === "택배" && editForm.address.trim().length > 50) {
         return alert("주소는 50자 이하로 입력해 주세요.");
@@ -3557,6 +3686,8 @@ export default function Home() {
   };
 
   const resetFilters = () => {
+    setCarrierFilter("전체");
+    setSelectedIds([]);
     setFilterKeyword("");
     setPayFilter("전체");
     setDeliveryFilter("전체");
@@ -3624,6 +3755,8 @@ export default function Home() {
 
   const exportRows = async (rows: SavedShipment[], fileLabel: string) => {
     if (rows.length === 0) return alert("내려받을 출고건이 없습니다.");
+    const selectedCarrier = exportCarrier(carrierFilter, rows);
+    if (!selectedCarrier) return alert("대신 또는 로젠을 선택한 뒤 해당 운송사만 다운로드해 주세요.");
 
     const exportOrderRows = [...rows].reverse();
 
@@ -3672,7 +3805,7 @@ export default function Home() {
 
       XLSX.writeFile(
         workbook,
-        `대신택배_일괄업로드_${fileLabel}_${stamp}.xlsx`,
+        `${selectedCarrier}택배_일괄업로드_${fileLabel}_${stamp}.xlsx`,
       );
 
       await updateChecklistColumns(
@@ -4129,42 +4262,37 @@ export default function Home() {
   };
 
   const handleWaybillUpload = async (file: File) => {
+    if (uploadBusy) return;
+    setUploadBusy(true);
     try {
       const XLSX = await import("xlsx");
       const buffer = await file.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: "array" });
       const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(firstSheet, {
-        defval: "",
-      }) as Record<string, unknown>[];
-      const parsedRows = parseWaybillUploadRows(rows);
+      if (!firstSheet) throw new Error("엑셀 시트를 찾을 수 없습니다.");
+      const rawRows = XLSX.utils.sheet_to_json<unknown[]>(firstSheet, { header: 1, defval: "", blankrows: true });
+      const receiverHeaders = ["수하인", "수하인명", "수하인이름", "수화주", "수화주명", "받는분", "수취인명"];
+      const headerIndex = rawRows.findIndex((row) => row.some((cell) => receiverHeaders.includes(normalizeHeaderKey(cell))));
+      if (headerIndex < 0) throw new Error("수하인/수화주명 열을 찾을 수 없습니다. 발송데이터 양식을 확인해 주세요.");
+      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet, { range: headerIndex, defval: "", raw: false });
+      const parsedRows = parseWaybillUploadRows(rows, "대신");
+      if (parsedRows.length === 0) throw new Error("읽을 수 있는 발송데이터가 없습니다.");
 
-      if (parsedRows.length === 0) {
-        alert("읽을 수 있는 대신 발송데이터가 없습니다.");
-        return;
-      }
-
+      if (!await saveSharedVerifyStateToDb({ waybill_upload_rows: parsedRows, waybill_upload_file_name: file.name })) return;
       setWaybillUploadRows(parsedRows);
       setWaybillUploadFileName(file.name);
       setVerificationKeyword("");
       setVerificationMismatchOnly(false);
       setCopiedWaybillMessageId("");
-
-      await saveSharedVerifyStateToDb({
-        waybill_upload_rows: parsedRows,
-        waybill_upload_file_name: file.name,
-      });
-
       const todayKey = getTodaySeoulDateKey();
-      if (
-        tab === "출고목록" &&
-        isDateKeyInRange(todayKey, listDateFrom, listDateTo)
-      ) {
+      if (tab === "출고목록" && isDateKeyInRange(todayKey, listDateFrom, listDateTo)) {
         await loadWaybillHistoryFromDb(listDateFrom, listDateTo);
       }
     } catch (error) {
       console.error(error);
-      alert("대신 발송데이터 업로드 중 오류가 발생했습니다.");
+      alert("대신 발송데이터 업로드 실패: " + getErrorMessage(error));
+    } finally {
+      setUploadBusy(false);
     }
   };
 
@@ -4344,24 +4472,54 @@ export default function Home() {
     });
   };
 
-  const resetWaybillUpload = async () => {
-    setWaybillUploadRows([]);
-    setWaybillUploadFileName("");
-    setVerificationKeyword("");
-    setVerificationMismatchOnly(false);
-    setCopiedWaybillMessageId("");
+  const handleLogenPasteApply = async () => {
+    if (uploadBusy) return;
+    setUploadBusy(true);
+    setLogenPasteError("");
+    try {
+      const parsedRows = parseLogenPasteRows(logenPasteText);
+      if (parsedRows.length === 0) throw new Error("로젠 발송데이터를 먼저 붙여넣어 주세요.");
+      if (!await saveSharedVerifyStateToDb({ logen_upload_rows: parsedRows, logen_paste_text: logenPasteText })) return;
+      logenPasteDirtyRef.current = false;
+      setLogenUploadRows(parsedRows);
+      setVerificationKeyword("");
+      setVerificationMismatchOnly(false);
+      setCopiedWaybillMessageId("");
+      const todayKey = getTodaySeoulDateKey();
+      if (tab === "출고목록" && isDateKeyInRange(todayKey, listDateFrom, listDateTo)) {
+        await loadWaybillHistoryFromDb(listDateFrom, listDateTo);
+      }
+    } catch (error) {
+      setLogenPasteError(getErrorMessage(error));
+    } finally {
+      setUploadBusy(false);
+    }
+  };
 
-    await saveSharedVerifyStateToDb({
-      waybill_upload_rows: [],
-      waybill_upload_file_name: "",
-    });
-
-    const todayKey = getTodaySeoulDateKey();
-    if (
-      tab === "출고목록" &&
-      isDateKeyInRange(todayKey, listDateFrom, listDateTo)
-    ) {
-      await loadWaybillHistoryFromDb(listDateFrom, listDateTo);
+  const resetWaybillUpload = async (uploadCarrier: Carrier) => {
+    if (uploadBusy) return;
+    setUploadBusy(true);
+    try {
+      const patch: Partial<SharedVerifyStateRow> = uploadCarrier === "로젠"
+        ? { logen_upload_rows: [], logen_paste_text: "" }
+        : { waybill_upload_rows: [], waybill_upload_file_name: "" };
+      if (!await saveSharedVerifyStateToDb(patch)) return;
+      if (uploadCarrier === "로젠") {
+        logenPasteDirtyRef.current = false;
+        setLogenUploadRows([]);
+        setLogenPasteText("");
+        setLogenPasteError("");
+      } else {
+        setWaybillUploadRows([]);
+        setWaybillUploadFileName("");
+      }
+      setCopiedWaybillMessageId("");
+      const todayKey = getTodaySeoulDateKey();
+      if (tab === "출고목록" && isDateKeyInRange(todayKey, listDateFrom, listDateTo)) {
+        await loadWaybillHistoryFromDb(listDateFrom, listDateTo);
+      }
+    } finally {
+      setUploadBusy(false);
     }
   };
 
@@ -4373,8 +4531,8 @@ export default function Home() {
   }, [savedShipments]);
 
   const waybillVerificationRows = useMemo(
-    () => buildWaybillVerificationRows(todayShipments, waybillUploadRows),
-    [todayShipments, waybillUploadRows],
+    () => buildWaybillVerificationRows(todayShipments, allWaybillUploadRows),
+    [todayShipments, allWaybillUploadRows],
   );
 
   const filteredWaybillVerificationRows = useMemo(() => {
@@ -4397,14 +4555,14 @@ export default function Home() {
         .join(" ")
         .toLowerCase();
 
-      return matchesMismatch && (!keyword || haystack.includes(keyword));
+      return (verificationCarrier === "전체" || row.carrier === verificationCarrier) && matchesMismatch && (!keyword || haystack.includes(keyword));
     });
-  }, [waybillVerificationRows, verificationKeyword, verificationMismatchOnly]);
+  }, [waybillVerificationRows, verificationKeyword, verificationMismatchOnly, verificationCarrier]);
 
   const waybillVerificationSummary = useMemo(() => {
     return {
       shipmentCount: todayShipments.length,
-      uploadCount: waybillUploadRows.length,
+      uploadCount: allWaybillUploadRows.length,
       matchedCount: waybillVerificationRows.filter(
         (row) => row.status === "일치",
       ).length,
@@ -4418,7 +4576,7 @@ export default function Home() {
         (row) => row.status === "발송데이터만",
       ).length,
     };
-  }, [todayShipments, waybillUploadRows, waybillVerificationRows]);
+  }, [todayShipments, allWaybillUploadRows, waybillVerificationRows]);
 
   const waybillWarningShipmentIds = useMemo(() => {
     return new Set(
@@ -4488,57 +4646,52 @@ export default function Home() {
   };
 
   const renderWaybillUploadControls = (compact = false) => (
-    <div style={compact ? listWaybillUploadBar : verifyUploadBar}>
-      <div
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          gap: 8,
-          alignItems: "center",
-        }}
-      >
-        <button
-          type="button"
-          style={smallBlueBtn}
-          onClick={() => waybillUploadRef.current?.click()}
-        >
-          대신 발송데이터 업로드
-        </button>
-
-        <button
-          type="button"
-          style={smallGrayBtn}
-          onClick={resetWaybillUpload}
-          disabled={waybillUploadRows.length === 0}
-        >
-          업로드 초기화
-        </button>
-
-        <input
-          ref={waybillUploadRef}
-          type="file"
-          accept=".xls,.xlsx"
-          style={{ display: "none" }}
-          onChange={async (e) => {
-            const input = e.target as HTMLInputElement;
-            const file = input.files?.[0];
-            if (file) await handleWaybillUpload(file);
-            input.value = "";
-          }}
-        />
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1, minWidth: 0 }}>
+      <div style={compact ? listWaybillUploadBar : verifyUploadBar}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+          <button type="button" style={smallBlueBtn} disabled={uploadBusy} onClick={() => waybillUploadRef.current?.click()}>
+            대신 발송데이터 업로드
+          </button>
+          <button type="button" style={smallGrayBtn} disabled={uploadBusy || waybillUploadRows.length === 0} onClick={() => void resetWaybillUpload("대신")}>
+            대신 업로드 초기화
+          </button>
+          <input ref={waybillUploadRef} type="file" aria-label="대신 발송데이터 파일" accept=".xls,.xlsx" style={{ display: "none" }}
+            onChange={async (e) => {
+              const input = e.target;
+              const file = input.files?.[0];
+              if (file) await handleWaybillUpload(file);
+              input.value = "";
+            }} />
+        </div>
+        <div style={compact ? listWaybillUploadFileName : verifyUploadFileName} title={waybillUploadFileName || undefined}>
+          {waybillHistoryLoading && compact ? "운송장 정보 불러오는 중..." : waybillUploadFileName ? "업로드 파일: " + waybillUploadFileName : "업로드 파일 없음"}
+        </div>
       </div>
 
-      <div
-        style={
-          compact ? listWaybillUploadFileName : verifyUploadFileName
-        }
-        title={waybillUploadFileName || undefined}
-      >
-        {waybillHistoryLoading && compact
-          ? "운송장 정보 불러오는 중..."
-          : waybillUploadFileName
-            ? `업로드 파일: ${waybillUploadFileName}`
-            : "업로드 파일 없음"}
+      <div style={{ ...(compact ? listWaybillUploadBar : verifyUploadBar), display: "block" }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+          {compact ? <button type="button" style={smallBlueBtn} onClick={() => setShowLogenPaste((value) => !value)} aria-expanded={showLogenPaste}>
+            로젠 발송데이터 붙여넣기
+          </button> : <strong>로젠 발송데이터 붙여넣기</strong>}
+          <span style={verifyUploadFileName}>{logenUploadRows.length > 0 ? logenUploadRows.length + "건 적용됨" : "적용된 데이터 없음"}</span>
+          <button type="button" style={smallGrayBtn} disabled={uploadBusy || (!logenUploadRows.length && !logenPasteText)} onClick={() => void resetWaybillUpload("로젠")}>
+            로젠 데이터 초기화
+          </button>
+        </div>
+        {(!compact || showLogenPaste) && <div style={{ marginTop: 12 }}>
+          <div style={{ ...verifyInfoText, marginBottom: 8 }}>로젠 주문등록 화면에서 전체 행을 복사한 뒤 아래에 붙여넣어 주세요. 여러 건을 한 번에 적용할 수 있습니다.</div>
+          <textarea aria-label="로젠 발송데이터 붙여넣기" value={logenPasteText} disabled={uploadBusy}
+            style={{ ...input, width: "100%", minHeight: compact ? 100 : 140, resize: "vertical", fontSize: 13 }}
+            placeholder="여기에 로젠 발송데이터를 붙여넣으세요 (Ctrl+V)"
+            onChange={(e) => { logenPasteDirtyRef.current = true; setLogenPasteText(e.target.value); setLogenPasteError(""); }} />
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 8 }}>
+            <button type="button" style={smallBlueBtn} disabled={uploadBusy || !logenPasteText.trim()} onClick={() => void handleLogenPasteApply()}>
+              {uploadBusy ? "처리 중..." : "로젠 데이터 적용·검증"}
+            </button>
+            {logenPasteDirtyRef.current && <span style={{ color: "#92400e", fontSize: 13 }}>적용 버튼을 눌러 변경한 데이터를 검증해 주세요.</span>}
+          </div>
+          {logenPasteError && <div role="alert" style={{ color: "#dc2626", marginTop: 8 }}>{logenPasteError}</div>}
+        </div>}
       </div>
     </div>
   );
@@ -4822,7 +4975,7 @@ export default function Home() {
                   </div>
                 </Section>
 
-                <Section title="운송정보">
+                <Section title="운송정보" action={<CarrierButtons label="등록 운송사" value={carrier} onChange={handleCarrierChange} />}>
                   <div style={row2}>
                     <Toggle<PayType>
                       label="지불방법"
@@ -4845,6 +4998,7 @@ export default function Home() {
                         );
                         setFare(
                           suggestFareByQty({
+                            carrier,
                             qty,
                             delivery: v,
                             pack,
@@ -4853,13 +5007,13 @@ export default function Home() {
                           }),
                         );
                       }}
-                      options={["정기", "택배"]}
+                      options={carrier === "로젠" ? ["택배"] : ["정기", "택배"]}
                     />
                   </div>
 
                   <div style={{ ...row2, marginTop: 16 }}>
-                    <Input label="수량" value={qty} set={handleQty} />
-                    <Input label="운임" value={fare} set={setFare} />
+                    <Input label="수량" value={qty} set={handleQty} integer={carrier === "로젠"} />
+                    <Input label="운임" value={fare} set={setFare} readOnly={carrier === "로젠"} />
                   </div>
                 </Section>
 
@@ -4919,6 +5073,7 @@ export default function Home() {
                         setPack(v);
                         setFare(
                           suggestFareByQty({
+                            carrier,
                             qty,
                             delivery,
                             pack: v,
@@ -4944,6 +5099,7 @@ export default function Home() {
                             setAddress(v);
                             setFare(
                               suggestFareByQty({
+                                carrier,
                                 qty,
                                 delivery,
                                 pack,
@@ -4998,6 +5154,7 @@ export default function Home() {
                         );
                         setFare(
                           suggestFareByQty({
+                            carrier,
                             qty,
                             delivery,
                             pack,
@@ -5036,7 +5193,10 @@ export default function Home() {
 
         {tab === "출고목록" && (
           <div style={{ marginTop: 8 }}>
-            <h2 style={listTitle}>출고목록</h2>
+            <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 16, marginBottom: 16 }}>
+              <h2 style={{ ...listTitle, margin: 0 }}>출고목록</h2>
+              <CarrierButtons label="목록 운송사" value={carrierFilter} onChange={handleCarrierFilterChange} includeAll />
+            </div>
 
             <div
               style={{
@@ -5137,7 +5297,7 @@ export default function Home() {
                   }
                 >
                   <option value="전체">전체</option>
-                  <option value="정기">화물</option>
+                  {carrierFilter !== "로젠" && <option value="정기">화물</option>}
                   <option value="택배">택배</option>
                 </select>
               </div>
@@ -5181,9 +5341,9 @@ export default function Home() {
             <div style={exportBar}>
               {renderWaybillUploadControls(true)}
 
-              <div style={exportRight}>
+              {carrierFilter !== "전체" && <div style={exportRight}>
                 <span style={selectedCountText}>
-                  선택 {selectedIds.length}건
+                  선택 {filteredShipments.filter((shipment) => selectedIds.includes(shipment.id)).length}건
                 </span>
                 <button
                   type="button"
@@ -5199,7 +5359,7 @@ export default function Home() {
                 >
                   현재목록 전체 엑셀 다운로드
                 </button>
-              </div>
+              </div>}
             </div>
 
             {shipmentListLoading ? (
@@ -5382,6 +5542,7 @@ export default function Home() {
 
                             <div style={ovPay}>{shipment.pay}</div>
                             <div style={ovDelivery}>
+                              <div style={{ fontSize: 12, fontWeight: 700, color: shipment.carrier === "로젠" ? "#7c3aed" : "#2563eb" }}>{shipment.carrier}</div>
                               {displayDelivery(shipment.delivery)}
                             </div>
                             <div style={ovQty}>
@@ -5523,7 +5684,7 @@ export default function Home() {
             <div style={tabWrap}>
               {(
                 [
-                  "대신 발송검증",
+                  "발송검증",
                   "일치 검증",
                   "출고수량 검증",
                 ] as VerifySubTab[]
@@ -5543,7 +5704,7 @@ export default function Home() {
               ))}
             </div>
 
-            {verifyTab === "대신 발송검증" && (
+            {verifyTab === "발송검증" && (
               <>
                 <div style={verifyInfoText}>
                   대신 발송데이터 내려받는 법: [대신택배물류시스템 접속] →
@@ -5591,6 +5752,8 @@ export default function Home() {
                   </div>
                 </div>
 
+                <CarrierButtons label="검증 운송사" value={verificationCarrier} onChange={setVerificationCarrier} includeAll />
+
                 <div style={verifyFilterBar}>
                   <div style={{ ...filterFieldWide, minWidth: 260 }}>
                     <div style={filterLabel}>검색</div>
@@ -5614,9 +5777,9 @@ export default function Home() {
                   </label>
                 </div>
 
-                {waybillUploadRows.length === 0 ? (
+                {allWaybillUploadRows.length === 0 ? (
                   <div style={emptyText}>
-                    대신택배 발송데이터 엑셀파일 업로드 시, 검증 결과 확인 가능.
+                    대신 엑셀을 업로드하거나 로젠 데이터를 붙여넣어 적용하면 운송사별 검증 결과를 함께 확인할 수 있습니다.
                   </div>
                 ) : filteredWaybillVerificationRows.length === 0 ? (
                   <div style={emptyText}>조건에 맞는 검증 결과가 없습니다.</div>
@@ -5626,6 +5789,7 @@ export default function Home() {
                       <thead>
                         <tr>
                           <th style={verifyHeaderCell}>상태</th>
+                          <th style={verifyHeaderCell}>운송사</th>
                           <th style={verifyHeaderCell}>출고목록</th>
                           <th style={verifyHeaderCell}>발송데이터</th>
                           <th style={verifyHeaderCell}>수량</th>
@@ -5663,6 +5827,7 @@ export default function Home() {
                                 {row.status}
                               </span>
                             </td>
+                            <td style={verifyCell}>{row.carrier}</td>
                             <td style={verifyCell}>
                               {row.shipmentListName || "-"}
                             </td>
@@ -6527,8 +6692,9 @@ export default function Home() {
                 />
               </div>
 
-              <div style={{ ...modalSectionTitle, marginTop: 40 }}>
+              <div style={{ ...modalSectionTitle, marginTop: 40, display: "flex", alignItems: "center", gap: 16 }}>
                 운송정보
+                <CarrierButtons label="상세 운송사" value={editForm.carrier} onChange={handleEditCarrierChange} />
               </div>
 
               <div style={{ ...detailEditGrid, marginTop: 10 }}>
@@ -6555,6 +6721,7 @@ export default function Home() {
                     updateEditField(
                       "fare",
                       suggestFareByQty({
+                        carrier: editForm.carrier,
                         qty: editForm.qty,
                         delivery: v,
                         pack: editForm.pack,
@@ -6563,7 +6730,7 @@ export default function Home() {
                       }),
                     );
                   }}
-                  options={["정기", "택배"]}
+                  options={editForm.carrier === "로젠" ? ["택배"] : ["정기", "택배"]}
                 />
               </div>
 
@@ -6571,11 +6738,14 @@ export default function Home() {
                 <Input
                   label="수량"
                   value={editForm.qty}
+                  integer={editForm.carrier === "로젠"}
                   set={(v) => {
+                    if (editForm.carrier === "로젠" && v !== "" && !/^\d+$/.test(v)) return;
                     updateEditField("qty", v);
                     updateEditField(
                       "fare",
                       suggestFareByQty({
+                        carrier: editForm.carrier,
                         qty: v,
                         delivery: editForm.delivery,
                         pack: editForm.pack,
@@ -6591,6 +6761,7 @@ export default function Home() {
                     <input
                       style={input}
                       value={editForm.fare}
+                      readOnly={editForm.carrier === "로젠"}
                       onChange={(e) => updateEditField("fare", e.target.value)}
                     />
                     <button
@@ -6600,6 +6771,7 @@ export default function Home() {
                         updateEditField(
                           "fare",
                           suggestFareByQty({
+                            carrier: editForm.carrier,
                             qty: editForm.qty,
                             delivery: editForm.delivery,
                             pack: editForm.pack,
@@ -6628,6 +6800,7 @@ export default function Home() {
                       updateEditField(
                         "fare",
                         suggestFareByQty({
+                          carrier: editForm.carrier,
                           qty: editForm.qty,
                           delivery: editForm.delivery,
                           pack: editForm.pack,
@@ -6655,6 +6828,7 @@ export default function Home() {
                       updateEditField(
                         "fare",
                         suggestFareByQty({
+                          carrier: editForm.carrier,
                           qty: editForm.qty,
                           delivery: editForm.delivery,
                           pack: editForm.pack,
@@ -6733,6 +6907,7 @@ export default function Home() {
                     updateEditField(
                       "fare",
                       suggestFareByQty({
+                        carrier: editForm.carrier,
                         qty: editForm.qty,
                         delivery: editForm.delivery,
                         pack: v,
@@ -6852,6 +7027,7 @@ export default function Home() {
                       // 운임도 자동 반영
                       setFare(
                         suggestFareByQty({
+                          carrier,
                           qty,
                           delivery,
                           pack,
@@ -6898,17 +7074,26 @@ function Input({
   value,
   set,
   inputRef,
+  readOnly = false,
+  integer = false,
 }: {
   label: string;
   value: string;
   set: (v: string) => void;
   inputRef?: RefObject<HTMLInputElement | null>;
+  readOnly?: boolean;
+  integer?: boolean;
 }) {
   return (
     <div>
       <div style={labelStyle}>{label}</div>
       <input
         ref={inputRef}
+        aria-label={label}
+        readOnly={readOnly}
+        type={integer ? "number" : "text"}
+        min={integer ? 1 : undefined}
+        step={integer ? 1 : undefined}
         style={input}
         value={value}
         onChange={(e) => set(e.target.value)}
@@ -7055,6 +7240,7 @@ function Toggle<T extends string>({
             key={o}
             type="button"
             onClick={() => set(o)}
+            aria-pressed={value === o}
             style={{
               ...toggleBtn,
               background: value === o ? "#2563eb" : "#e5e7eb",
@@ -7069,10 +7255,26 @@ function Toggle<T extends string>({
   );
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+function CarrierButtons<T extends CarrierFilter>({ label, value, onChange, includeAll = false }: {
+  label: string; value: T; onChange: (value: T) => void; includeAll?: boolean;
+}) {
+  const options: CarrierFilter[] = includeAll ? ["전체", ...CARRIERS] : CARRIERS;
+  return <div role="group" aria-label={label} style={{ display: "flex", gap: 8 }}>
+    {options.map((option) => <button key={option} type="button" aria-pressed={value === option}
+      onClick={() => onChange(option as T)}
+      style={{ ...toggleBtn, padding: "8px 16px", background: value === option ? "#2563eb" : "#e5e7eb", color: value === option ? "#fff" : "#111827" }}>
+      {option}
+    </button>)}
+  </div>;
+}
+
+function Section({ title, children, action }: { title: string; children: ReactNode; action?: ReactNode }) {
   return (
     <div style={{ marginBottom: 32 }}>
-      <h2 style={section}>{title}</h2>
+      <div style={{ ...section, display: "flex", alignItems: "center", flexWrap: "wrap", gap: 16 }}>
+        <h2 style={{ fontSize: "inherit", fontWeight: "inherit", margin: 0 }}>{title}</h2>
+        {action}
+      </div>
       {children}
     </div>
   );
