@@ -203,7 +203,7 @@ type WaybillVerificationRow = {
   reasons: string[];
 };
 
-type VerifySubTab = "발송검증" | "일치 검증" | "출고수량 검증";
+type VerifySubTab = "송장검증" | "일치 검증" | "출고수량 검증";
 type AuthMode = "login" | "forgot" | "reset";
 
 type SharedVerifyStateRow = {
@@ -2029,7 +2029,7 @@ export default function Home() {
   >([]);
   const [waybillHistoryLoading, setWaybillHistoryLoading] = useState(false);
 
-  const [verifyTab, setVerifyTab] = useState<VerifySubTab>("발송검증");
+  const [verifyTab, setVerifyTab] = useState<VerifySubTab>("송장검증");
 
   const [orderStatusRows, setOrderStatusRows] = useState<OrderStatusRow[]>([]);
   const [salesStatusRows, setSalesStatusRows] = useState<SalesStatusRow[]>([]);
@@ -4681,12 +4681,7 @@ export default function Home() {
         style={{ ...input, width: "100%", minHeight: compact ? 100 : 140, resize: "vertical", fontSize: 13 }}
         placeholder="여기에 로젠 발송데이터를 붙여넣으세요 (Ctrl+V)"
         onChange={(e) => { logenPasteDirtyRef.current = true; setLogenPasteText(e.target.value); setLogenPasteError(""); }} />
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 8 }}>
-        <button type="button" style={{ ...smallBlueBtn, background: CARRIER_ACCENTS.로젠 }} disabled={uploadBusy || !logenPasteText.trim()} onClick={() => void handleLogenPasteApply()}>
-          {uploadBusy ? "처리 중..." : "로젠 데이터 적용·검증"}
-        </button>
-        {logenPasteDirtyRef.current && <span style={{ color: "#92400e", fontSize: 13 }}>적용 버튼을 눌러 변경한 데이터를 검증해 주세요.</span>}
-      </div>
+      {logenPasteDirtyRef.current && <div style={{ color: "#92400e", fontSize: 13, marginTop: 8 }}>적용하기 버튼을 눌러 변경한 데이터를 검증해 주세요.</div>}
       {logenPasteError && <div role="alert" style={{ color: "#dc2626", marginTop: 8 }}>{logenPasteError}</div>}
     </div>
   );
@@ -4729,6 +4724,9 @@ export default function Home() {
                 input.value = "";
               }} />
           </div>
+          {!compact && <div style={{ ...verifyInfoText, marginTop: 10, marginBottom: 0 }}>
+            대신 발송데이터 내려받는 법: [대신택배물류시스템 접속] → [일자별조회] → [목록전체선택] → [엑셀저장]
+          </div>}
         </div>}
 
         {(!compact || carrierFilter !== "대신") && <div style={groupStyle} role="group" aria-label="로젠 발송데이터 도구">
@@ -4736,6 +4734,9 @@ export default function Home() {
             <button type="button" style={{ ...uploadButtonStyle, background: CARRIER_ACCENTS.로젠 }} onClick={() => setShowLogenPaste((value) => !value)} aria-expanded={showLogenPaste} aria-controls="logen-paste-editor">
               로젠 발송데이터 붙여넣기
             </button>
+            {showLogenPaste && <button type="button" style={{ ...uploadButtonStyle, background: smallGrayBtn.background, color: smallGrayBtn.color, fontWeight: 700 }} disabled={uploadBusy || !logenPasteText.trim()} onClick={() => void handleLogenPasteApply()}>
+              {uploadBusy ? "처리 중..." : "적용하기"}
+            </button>}
             <button type="button" style={resetButtonStyle} aria-label="로젠 데이터 초기화" disabled={uploadBusy || (!logenUploadRows.length && !logenPasteText)} onClick={() => void resetWaybillUpload("로젠")}>
               초기화
             </button>
@@ -5742,7 +5743,7 @@ export default function Home() {
             <div style={tabWrap}>
               {(
                 [
-                  "발송검증",
+                  "송장검증",
                   "일치 검증",
                   "출고수량 검증",
                 ] as VerifySubTab[]
@@ -5762,12 +5763,9 @@ export default function Home() {
               ))}
             </div>
 
-            {verifyTab === "발송검증" && (
+            {verifyTab === "송장검증" && (
               <>
                 <div style={verifyInfoText}>
-                  대신 발송데이터 내려받는 법: [대신택배물류시스템 접속] →
-                  [일자별조회] → [목록전체선택] → [엑셀저장]
-                <br />
                   택배 주소는 시·도 약칭을 통일해 첫 괄호 앞까지만 비교합니다. 괄호 뒤 상세주소는 비교하지 않습니다.
                 </div>
 
