@@ -21,7 +21,7 @@ function loadTs(file, extra = '') {
   return compiledModule.exports;
 }
 const carrier = loadTs('lib/carriers.ts');
-const { __test: helpers } = loadTs('app/page.tsx', '\nexports.__test = { normalizeShipment, suggestFareByQty, toTemplateRow, toShipmentDbPayload, parseWaybillUploadRows, buildWaybillVerificationRows, normalizeSharedVerifyState, buildWaybillMessageText, TEMPLATE_HEADERS };');
+const { __test: helpers } = loadTs('app/page.tsx', '\nexports.__test = { normalizeShipment, suggestFareByQty, toTemplateRow, toShipmentDbPayload, parseWaybillUploadRows, buildWaybillVerificationRows, normalizeSharedVerifyState, buildWaybillMessageText, TEMPLATE_HEADERS, toLogenTemplateRow, LOGEN_TEMPLATE_HEADERS };');
 const shipment = (patch = {}) => helpers.normalizeShipment({
   id: '1', carrier: '로젠', receiver: '테스트수하인', receiver_phone: '01012345678',
   address: '경기도 수원시 테스트로 10 101호', postal_code: '12345', sender: '상화시스템',
@@ -74,16 +74,33 @@ test('combined/all exports and wrong-carrier selections are rejected', () => {
   assert.equal(carrier.exportCarrier('로젠',[shipment()]),'로젠');
   assert.equal(carrier.exportCarrier('대신',[{carrier:undefined}]),'대신');
 });
-test('Excel schema is unchanged; prepaid labels are carrier-specific', () => {
-  const logen=helpers.toTemplateRow(shipment(),()=> '12345');
-  const daesin=helpers.toTemplateRow(shipment({carrier:'대신'}),()=> '12345');
-  assert.deepEqual(Object.keys(logen),helpers.TEMPLATE_HEADERS);
-  assert.equal(logen.운임구분,'신용'); assert.equal(daesin.운임구분,'현불');
-  assert.equal(helpers.toTemplateRow(shipment({pay:'착불'}),()=> '12345').운임구분,'착불');
+test('Daesin Excel schema, item and prepaid label remain unchanged', () => {
+  const daesin=helpers.toTemplateRow(shipment({carrier:'대신',item:'부품'}),()=> '12345');
+  assert.deepEqual(Object.keys(daesin),helpers.TEMPLATE_HEADERS);
+  assert.equal(daesin.운임구분,'현불');
+  assert.equal(daesin.품명,'부품');
+  assert.equal(daesin.우편번호,'12345');
+  assert.equal(daesin.수화주전화1,'01012345678');
+});
+test('Logen Excel matches the ten-column template and preserves phone numbers', () => {
+  const expectedHeaders=['수화주전화','수화주명','주소','수량','품명','운임구분','발화주명','발화주전화번호','총운임','특기사항'];
+  assert.deepEqual(helpers.LOGEN_TEMPLATE_HEADERS,expectedHeaders);
+  const input=shipment({item:'부품',postal_code:''});
+  const logen=helpers.toLogenTemplateRow(input);
+  assert.deepEqual(Object.keys(logen),expectedHeaders);
+  assert.equal(logen.품명,'자동차부품');
+  assert.equal(input.item,'부품');
+  assert.equal(logen.운임구분,'신용');
+  assert.equal(helpers.toLogenTemplateRow(shipment({pay:'착불',item:'다른 품목'})).운임구분,'착불');
+  assert.equal(helpers.toLogenTemplateRow(shipment({item:'다른 품목'})).품명,'자동차부품');
   const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet([logen]),'일괄업로드');
   const read=XLSX.read(XLSX.write(wb,{type:'buffer',bookType:'xlsx'}),{type:'buffer'});
-  const row=XLSX.utils.sheet_to_json(read.Sheets[read.SheetNames[0]])[0];
-  assert.equal(row.운임구분,'신용'); assert.equal(row.수량,2); assert.equal(row.총운임,6600);
+  const sheet=read.Sheets[read.SheetNames[0]];
+  const rows=XLSX.utils.sheet_to_json(sheet,{header:1});
+  assert.deepEqual(rows[0],expectedHeaders);
+  assert.deepEqual(rows[1],['01012345678','테스트수하인','경기도 수원시 테스트로 10 101호',2,'자동차부품','신용','상화시스템','03180595618',6600,'문 앞에 놓아주세요']);
+  assert.equal(sheet.A2.t,'s'); assert.equal(sheet.H2.t,'s');
+  assert.equal(sheet.D2.t,'n'); assert.equal(sheet.I2.t,'n');
 });
 test('Logen pasted columns match requested fields and phone formatting', () => {
   const rows=helpers.buildWaybillVerificationRows([shipment()],[parse()]);

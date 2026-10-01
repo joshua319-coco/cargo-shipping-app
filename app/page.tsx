@@ -234,6 +234,18 @@ const SHIPMENT_REQUEST_ID_COLUMN = "client_request_id";
 const SHARED_VERIFY_TEXT_SAVE_DELAY_MS = 700;
 
 const TEMPLATE_SHEET_NAME = "업로드_양식 값붙여넣기(우클릭+V)";
+const LOGEN_TEMPLATE_HEADERS = [
+  "수화주전화",
+  "수화주명",
+  "주소",
+  "수량",
+  "품명",
+  "운임구분",
+  "발화주명",
+  "발화주전화번호",
+  "총운임",
+  "특기사항",
+] as const;
 const TEMPLATE_HEADERS = [
   "수화주전화1",
   "수화주전화2",
@@ -1771,6 +1783,23 @@ function buildBranchTemplateRows(): Array<Record<string, string>> {
       postalCode: "28116",
     },
   ];
+}
+
+function toLogenTemplateRow(
+  shipment: SavedShipment,
+): Record<(typeof LOGEN_TEMPLATE_HEADERS)[number], string | number> {
+  return {
+    수화주전화: shipment.receiverPhone || "",
+    수화주명: shipment.receiver || "",
+    주소: shipment.address?.trim() || "",
+    수량: Number(shipment.qty) || 0,
+    품명: "자동차부품",
+    운임구분: mapPayForTemplate(shipment.pay, "로젠"),
+    발화주명: shipment.sender || "",
+    발화주전화번호: shipment.senderPhone || "",
+    총운임: Number(String(shipment.fare).replace(/,/g, "")) || "",
+    특기사항: shipment.memo || "",
+  };
 }
 
 function toTemplateRow(
@@ -3760,7 +3789,7 @@ export default function Home() {
 
     const exportOrderRows = [...rows].reverse();
 
-    const unresolved = exportOrderRows.filter((row) => {
+    const unresolved = selectedCarrier === "대신" ? exportOrderRows.filter((row) => {
       const code = resolvePostalCodeValue({
         delivery: row.delivery,
         receiver: row.receiver,
@@ -3768,7 +3797,7 @@ export default function Home() {
         currentPostalCode: row.postalCode,
       });
       return !code;
-    });
+    }) : [];
 
     if (unresolved.length > 0) {
       return alert(
@@ -3784,15 +3813,21 @@ export default function Home() {
     try {
       const XLSX = await import("xlsx");
 
+      const headers = selectedCarrier === "로젠" ? LOGEN_TEMPLATE_HEADERS : TEMPLATE_HEADERS;
       const data = [
-        [...TEMPLATE_HEADERS],
+        [...headers],
         ...exportOrderRows.map((shipment) => {
-          const mapped = toTemplateRow(shipment, resolvePostalCodeValue);
-          return TEMPLATE_HEADERS.map((header) => mapped[header]);
+          const mapped: Record<string, string | number> = selectedCarrier === "로젠"
+            ? toLogenTemplateRow(shipment)
+            : toTemplateRow(shipment, resolvePostalCodeValue);
+          return headers.map((header) => mapped[header]);
         }),
       ];
 
       const worksheet = XLSX.utils.aoa_to_sheet(data);
+      if (selectedCarrier === "로젠") {
+        worksheet["!cols"] = [13, 18, 62, 6, 14, 10, 22, 18, 10, 24].map((wch) => ({ wch }));
+      }
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, TEMPLATE_SHEET_NAME);
 
