@@ -3200,7 +3200,7 @@ export default function Home() {
   const handleCarrierChange = (next: Carrier) => {
     if (next === carrier) return;
     const nextDelivery: DeliveryType = next === "로젠" ? "택배" : "정기";
-    const nextQty = next === "로젠" && !isLogenQuantity(qty) ? String(Math.max(1, Math.ceil(Number(qty) || 1))) : qty;
+    const nextQty = next === "로젠" ? "1" : qty;
     setCarrier(next);
     setDelivery(nextDelivery);
     setQty(nextQty);
@@ -4645,9 +4645,26 @@ export default function Home() {
     }, 1200);
   };
 
+  const renderLogenPasteEditor = (compact = false) => (
+    <div style={{ marginTop: 12 }}>
+      <div style={{ ...verifyInfoText, marginBottom: 8 }}>로젠 주문등록 화면에서 전체 행을 복사한 뒤 아래에 붙여넣어 주세요. 여러 건을 한 번에 적용할 수 있습니다.</div>
+      <textarea aria-label="로젠 발송데이터 붙여넣기" value={logenPasteText} disabled={uploadBusy}
+        style={{ ...input, width: "100%", minHeight: compact ? 100 : 140, resize: "vertical", fontSize: 13 }}
+        placeholder="여기에 로젠 발송데이터를 붙여넣으세요 (Ctrl+V)"
+        onChange={(e) => { logenPasteDirtyRef.current = true; setLogenPasteText(e.target.value); setLogenPasteError(""); }} />
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 8 }}>
+        <button type="button" style={smallBlueBtn} disabled={uploadBusy || !logenPasteText.trim()} onClick={() => void handleLogenPasteApply()}>
+          {uploadBusy ? "처리 중..." : "로젠 데이터 적용·검증"}
+        </button>
+        {logenPasteDirtyRef.current && <span style={{ color: "#92400e", fontSize: 13 }}>적용 버튼을 눌러 변경한 데이터를 검증해 주세요.</span>}
+      </div>
+      {logenPasteError && <div role="alert" style={{ color: "#dc2626", marginTop: 8 }}>{logenPasteError}</div>}
+    </div>
+  );
+
   const renderWaybillUploadControls = (compact = false) => (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1, minWidth: 0 }}>
-      <div style={compact ? listWaybillUploadBar : verifyUploadBar}>
+    <div style={compact ? { display: "contents" } : { display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
+      {(!compact || carrierFilter !== "로젠") && <div style={compact ? listWaybillUploadBar : verifyUploadBar} role="group" aria-label="대신 발송데이터 도구">
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
           <button type="button" style={smallBlueBtn} disabled={uploadBusy} onClick={() => waybillUploadRef.current?.click()}>
             대신 발송데이터 업로드
@@ -4666,33 +4683,21 @@ export default function Home() {
         <div style={compact ? listWaybillUploadFileName : verifyUploadFileName} title={waybillUploadFileName || undefined}>
           {waybillHistoryLoading && compact ? "운송장 정보 불러오는 중..." : waybillUploadFileName ? "업로드 파일: " + waybillUploadFileName : "업로드 파일 없음"}
         </div>
-      </div>
+      </div>}
 
-      <div style={{ ...(compact ? listWaybillUploadBar : verifyUploadBar), display: "block" }}>
+      {(!compact || carrierFilter !== "대신") && <div style={compact ? listWaybillUploadBar : { ...verifyUploadBar, display: "block" }} role="group" aria-label="로젠 발송데이터 도구">
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
           {compact ? <button type="button" style={smallBlueBtn} onClick={() => setShowLogenPaste((value) => !value)} aria-expanded={showLogenPaste}>
             로젠 발송데이터 붙여넣기
           </button> : <strong>로젠 발송데이터 붙여넣기</strong>}
-          <span style={verifyUploadFileName}>{logenUploadRows.length > 0 ? logenUploadRows.length + "건 적용됨" : "적용된 데이터 없음"}</span>
           <button type="button" style={smallGrayBtn} disabled={uploadBusy || (!logenUploadRows.length && !logenPasteText)} onClick={() => void resetWaybillUpload("로젠")}>
             로젠 데이터 초기화
           </button>
+          {!compact && <span style={verifyUploadFileName}>{logenUploadRows.length > 0 ? logenUploadRows.length + "건 적용됨" : "적용된 데이터 없음"}</span>}
         </div>
-        {(!compact || showLogenPaste) && <div style={{ marginTop: 12 }}>
-          <div style={{ ...verifyInfoText, marginBottom: 8 }}>로젠 주문등록 화면에서 전체 행을 복사한 뒤 아래에 붙여넣어 주세요. 여러 건을 한 번에 적용할 수 있습니다.</div>
-          <textarea aria-label="로젠 발송데이터 붙여넣기" value={logenPasteText} disabled={uploadBusy}
-            style={{ ...input, width: "100%", minHeight: compact ? 100 : 140, resize: "vertical", fontSize: 13 }}
-            placeholder="여기에 로젠 발송데이터를 붙여넣으세요 (Ctrl+V)"
-            onChange={(e) => { logenPasteDirtyRef.current = true; setLogenPasteText(e.target.value); setLogenPasteError(""); }} />
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 8 }}>
-            <button type="button" style={smallBlueBtn} disabled={uploadBusy || !logenPasteText.trim()} onClick={() => void handleLogenPasteApply()}>
-              {uploadBusy ? "처리 중..." : "로젠 데이터 적용·검증"}
-            </button>
-            {logenPasteDirtyRef.current && <span style={{ color: "#92400e", fontSize: 13 }}>적용 버튼을 눌러 변경한 데이터를 검증해 주세요.</span>}
-          </div>
-          {logenPasteError && <div role="alert" style={{ color: "#dc2626", marginTop: 8 }}>{logenPasteError}</div>}
-        </div>}
-      </div>
+        {compact && <div style={listWaybillUploadFileName}>{logenUploadRows.length > 0 ? logenUploadRows.length + "건 적용됨" : "적용된 데이터 없음"}</div>}
+        {!compact && renderLogenPasteEditor()}
+      </div>}
     </div>
   );
 
@@ -5338,7 +5343,7 @@ export default function Home() {
               </button>
             </div>
 
-            <div style={exportBar}>
+            <div style={exportBar} role="group" aria-label="출고목록 도구">
               {renderWaybillUploadControls(true)}
 
               {carrierFilter !== "전체" && <div style={exportRight}>
@@ -5361,6 +5366,10 @@ export default function Home() {
                 </button>
               </div>}
             </div>
+
+            {carrierFilter !== "대신" && showLogenPaste && (
+              <div style={{ marginBottom: 12 }}>{renderLogenPasteEditor(true)}</div>
+            )}
 
             {shipmentListLoading ? (
               <div style={emptyText}>출고목록을 새로 조회하는 중입니다...</div>
@@ -7354,16 +7363,17 @@ const verifyUploadFileName: CSSProperties = {
 
 const listWaybillUploadBar: CSSProperties = {
   display: "flex",
-  alignItems: "center",
-  gap: 10,
-  flexWrap: "wrap",
-  flex: "1 1 560px",
+  flexDirection: "column",
+  alignItems: "flex-start",
+  gap: 4,
   minWidth: 0,
+  maxWidth: "100%",
 };
 
 const listWaybillUploadFileName: CSSProperties = {
   ...verifyUploadFileName,
-  flex: "1 1 220px",
+  maxWidth: 420,
+  width: "100%",
   minWidth: 0,
   overflow: "hidden",
   textOverflow: "ellipsis",
@@ -7850,8 +7860,7 @@ const resetFilterBtn: CSSProperties = {
 
 const exportBar: CSSProperties = {
   display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
+  alignItems: "flex-start",
   gap: 16,
   flexWrap: "wrap",
   marginBottom: 12,
@@ -7859,6 +7868,7 @@ const exportBar: CSSProperties = {
 
 const exportRight: CSSProperties = {
   display: "flex",
+  marginLeft: "auto",
   alignItems: "center",
   gap: 10,
   flexWrap: "wrap",
