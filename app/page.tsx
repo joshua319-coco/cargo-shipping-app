@@ -4691,44 +4691,49 @@ export default function Home() {
     </div>
   );
 
-  const renderWaybillUploadControls = (compact = false) => (
-    <div style={compact ? { display: "contents" } : { display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
-      {(!compact || carrierFilter !== "로젠") && <div style={compact ? listWaybillUploadBar : verifyUploadBar} role="group" aria-label="대신 발송데이터 도구">
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-          <button type="button" style={smallBlueBtn} disabled={uploadBusy} onClick={() => waybillUploadRef.current?.click()}>
-            대신 발송데이터 업로드
-          </button>
-          <button type="button" style={smallGrayBtn} disabled={uploadBusy || waybillUploadRows.length === 0} onClick={() => void resetWaybillUpload("대신")}>
-            대신 업로드 초기화
-          </button>
-          <input ref={waybillUploadRef} type="file" aria-label="대신 발송데이터 파일" accept=".xls,.xlsx" style={{ display: "none" }}
-            onChange={async (e) => {
-              const input = e.target;
-              const file = input.files?.[0];
-              if (file) await handleWaybillUpload(file);
-              input.value = "";
-            }} />
-        </div>
-        <div style={compact ? listWaybillUploadFileName : verifyUploadFileName} title={waybillUploadFileName || undefined}>
-          {waybillHistoryLoading && compact ? "운송장 정보 불러오는 중..." : waybillUploadFileName ? "업로드 파일: " + waybillUploadFileName : "업로드 파일 없음"}
-        </div>
-      </div>}
+  const renderWaybillUploadControls = (compact = false) => {
+    const groupStyle: CSSProperties = compact
+      ? { ...listWaybillUploadBar, ...(carrierFilter === "전체" ? { width: "100%" } : { flex: "1 1 300px" }) }
+      : { ...verifyUploadBar, display: "block" };
 
-      {(!compact || carrierFilter !== "대신") && <div style={compact ? listWaybillUploadBar : { ...verifyUploadBar, display: "block" }} role="group" aria-label="로젠 발송데이터 도구">
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-          <button type="button" style={{ ...smallBlueBtn, background: CARRIER_ACCENTS.로젠 }} onClick={() => setShowLogenPaste((value) => !value)} aria-expanded={showLogenPaste} aria-controls="logen-paste-editor">
-            로젠 발송데이터 붙여넣기
-          </button>
-          <button type="button" style={smallGrayBtn} disabled={uploadBusy || (!logenUploadRows.length && !logenPasteText)} onClick={() => void resetWaybillUpload("로젠")}>
-            로젠 데이터 초기화
-          </button>
-          {!compact && <span style={verifyUploadFileName}>{logenUploadRows.length > 0 ? logenUploadRows.length + "건 적용됨" : "적용된 데이터 없음"}</span>}
-        </div>
-        {compact && <div style={listWaybillUploadFileName}>{logenUploadRows.length > 0 ? logenUploadRows.length + "건 적용됨" : "적용된 데이터 없음"}</div>}
-        {!compact && showLogenPaste && renderLogenPasteEditor()}
-      </div>}
-    </div>
-  );
+    return (
+      <div style={compact ? { display: "contents" } : { display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
+        {(!compact || carrierFilter !== "로젠") && <div style={groupStyle} role="group" aria-label="대신 발송데이터 도구">
+          <div style={waybillUploadRow}>
+            <button type="button" style={{ ...smallBlueBtn, flexShrink: 0 }} disabled={uploadBusy} onClick={() => waybillUploadRef.current?.click()}>
+              대신 발송데이터 업로드
+            </button>
+            <button type="button" style={uploadResetBtn} aria-label="대신 업로드 초기화" disabled={uploadBusy || waybillUploadRows.length === 0} onClick={() => void resetWaybillUpload("대신")}>
+              초기화
+            </button>
+            <span style={uploadFileNameText} title={waybillUploadFileName || undefined}>
+              {waybillHistoryLoading && compact ? "운송장 정보 불러오는 중..." : waybillUploadFileName ? "업로드 파일: " + waybillUploadFileName : "업로드 파일 없음"}
+            </span>
+            <input ref={waybillUploadRef} type="file" aria-label="대신 발송데이터 파일" accept=".xls,.xlsx" style={{ display: "none" }}
+              onChange={async (e) => {
+                const input = e.target;
+                const file = input.files?.[0];
+                if (file) await handleWaybillUpload(file);
+                input.value = "";
+              }} />
+          </div>
+        </div>}
+
+        {(!compact || carrierFilter !== "대신") && <div style={groupStyle} role="group" aria-label="로젠 발송데이터 도구">
+          <div style={waybillUploadRow}>
+            <button type="button" style={{ ...smallBlueBtn, background: CARRIER_ACCENTS.로젠, flexShrink: 0 }} onClick={() => setShowLogenPaste((value) => !value)} aria-expanded={showLogenPaste} aria-controls="logen-paste-editor">
+              로젠 발송데이터 붙여넣기
+            </button>
+            <button type="button" style={uploadResetBtn} aria-label="로젠 데이터 초기화" disabled={uploadBusy || (!logenUploadRows.length && !logenPasteText)} onClick={() => void resetWaybillUpload("로젠")}>
+              초기화
+            </button>
+            <span style={uploadFileNameText}>{logenUploadRows.length > 0 ? logenUploadRows.length + "건 적용됨" : "적용된 데이터 없음"}</span>
+          </div>
+          {!compact && showLogenPaste && renderLogenPasteEditor()}
+        </div>}
+      </div>
+    );
+  };
 
   if (authLoading) {
     return (
@@ -5375,7 +5380,7 @@ export default function Home() {
               </button>
             </div>
 
-            <div style={carrierFilter === "전체" ? { ...exportBar, justifyContent: "space-between", columnGap: 64 } : exportBar} role="group" aria-label="출고목록 도구">
+            <div style={carrierFilter === "전체" ? { ...exportBar, flexDirection: "column", alignItems: "stretch", gap: 8 } : exportBar} role="group" aria-label="출고목록 도구">
               {renderWaybillUploadControls(true)}
 
               {carrierFilter !== "전체" && <div style={exportRight}>
@@ -7401,22 +7406,36 @@ const verifyUploadFileName: CSSProperties = {
 };
 
 const listWaybillUploadBar: CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  alignItems: "flex-start",
-  gap: 4,
   minWidth: 0,
   maxWidth: "100%",
 };
 
-const listWaybillUploadFileName: CSSProperties = {
+const waybillUploadRow: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  minWidth: 0,
+};
+
+const uploadFileNameText: CSSProperties = {
   ...verifyUploadFileName,
   maxWidth: 420,
-  width: "100%",
   minWidth: 0,
   overflow: "hidden",
   textOverflow: "ellipsis",
   whiteSpace: "nowrap",
+};
+
+const uploadResetBtn: CSSProperties = {
+  border: "none",
+  background: "#ef4444",
+  color: "#fff",
+  borderRadius: 6,
+  padding: "6px 10px",
+  fontSize: 12,
+  fontWeight: 700,
+  cursor: "pointer",
+  flexShrink: 0,
 };
 
 const verifyInfoText: CSSProperties = {
