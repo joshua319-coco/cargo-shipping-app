@@ -1898,7 +1898,7 @@ export default function Home() {
   const [carrierFilter, setCarrierFilter] = useState<CarrierFilter>("전체");
   const [verificationCarrier, setVerificationCarrier] = useState<CarrierFilter>("전체");
   const [delivery, setDelivery] = useState<DeliveryType>("정기");
-  const [qty, setQty] = useState("1");
+  const [qty, setQty] = useState("");
   const [fare, setFare] = useState("5500");
   const [memo, setMemo] = useState("");
 
@@ -3200,7 +3200,7 @@ export default function Home() {
   const handleCarrierChange = (next: Carrier) => {
     if (next === carrier) return;
     const nextDelivery: DeliveryType = next === "로젠" ? "택배" : "정기";
-    const nextQty = next === "로젠" ? "1" : qty;
+    const nextQty = next === "로젠" ? "1" : "";
     setCarrier(next);
     setDelivery(nextDelivery);
     setQty(nextQty);
@@ -3338,7 +3338,7 @@ export default function Home() {
     setPay("착불");
     setCarrier("대신");
     setDelivery("정기");
-    setQty("1");
+    setQty("");
     setFare("5500");
     setMemo("");
     setReceiverFocused(false);
@@ -5343,7 +5343,7 @@ export default function Home() {
               </button>
             </div>
 
-            <div style={exportBar} role="group" aria-label="출고목록 도구">
+            <div style={carrierFilter === "전체" ? { ...exportBar, justifyContent: "space-between", columnGap: 64 } : exportBar} role="group" aria-label="출고목록 도구">
               {renderWaybillUploadControls(true)}
 
               {carrierFilter !== "전체" && <div style={exportRight}>
