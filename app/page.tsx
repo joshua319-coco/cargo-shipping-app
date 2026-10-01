@@ -235,7 +235,7 @@ const SHARED_VERIFY_TEXT_SAVE_DELAY_MS = 700;
 
 const CARRIER_ACCENTS: Record<Carrier, string> = {
   대신: "#2563eb",
-  로젠: "#fb9206",
+  로젠: "#e88a20",
 };
 
 function carrierAccent(value: CarrierFilter) {
