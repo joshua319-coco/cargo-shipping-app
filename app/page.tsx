@@ -5066,8 +5066,8 @@ export default function Home() {
                   </div>
 
                   <div style={{ ...row2, marginTop: 16 }}>
-                    <Input label="수량" value={qty} set={handleQty} integer={carrier === "로젠"} />
-                    <Input label="운임" value={fare} set={setFare} />
+                    <Input label="수량" value={qty} set={handleQty} integer={carrier === "로젠"} style={carrier === "로젠" ? { background: "#f3f4f6" } : undefined} />
+                    <Input label="운임" value={fare} set={setFare} style={carrier === "로젠" ? { background: "#f3f4f6" } : undefined} />
                   </div>
                 </Section>
 
@@ -7133,6 +7133,7 @@ function Input({
   inputRef,
   readOnly = false,
   integer = false,
+  style,
 }: {
   label: string;
   value: string;
@@ -7140,6 +7141,7 @@ function Input({
   inputRef?: RefObject<HTMLInputElement | null>;
   readOnly?: boolean;
   integer?: boolean;
+  style?: CSSProperties;
 }) {
   return (
     <div>
@@ -7151,7 +7153,7 @@ function Input({
         type={integer ? "number" : "text"}
         min={integer ? 1 : undefined}
         step={integer ? 1 : undefined}
-        style={input}
+        style={{ ...input, ...style }}
         value={value}
         onChange={(e) => set(e.target.value)}
         onKeyDown={handleEnterMoveNext}
