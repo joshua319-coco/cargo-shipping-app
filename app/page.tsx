@@ -4692,6 +4692,18 @@ export default function Home() {
   );
 
   const renderWaybillUploadControls = (compact = false) => {
+    const isAllList = compact && carrierFilter === "전체";
+    const uploadButtonStyle: CSSProperties = {
+      ...smallBlueBtn,
+      flexShrink: 0,
+      ...(isAllList ? { fontSize: 13, lineHeight: "20px", padding: "6px 10px", borderRadius: 8 } : {}),
+    };
+    const resetButtonStyle: CSSProperties = isAllList
+      ? { ...uploadResetBtn, padding: "4px 8px", lineHeight: "18px" }
+      : uploadResetBtn;
+    const fileNameStyle: CSSProperties = isAllList
+      ? { ...uploadFileNameText, fontSize: 12 }
+      : uploadFileNameText;
     const groupStyle: CSSProperties = compact
       ? { ...listWaybillUploadBar, ...(carrierFilter === "전체" ? { width: "100%" } : { flex: "1 1 300px" }) }
       : { ...verifyUploadBar, display: "block" };
@@ -4699,14 +4711,14 @@ export default function Home() {
     return (
       <div style={compact ? { display: "contents" } : { display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
         {(!compact || carrierFilter !== "로젠") && <div style={groupStyle} role="group" aria-label="대신 발송데이터 도구">
-          <div style={waybillUploadRow}>
-            <button type="button" style={{ ...smallBlueBtn, flexShrink: 0 }} disabled={uploadBusy} onClick={() => waybillUploadRef.current?.click()}>
+          <div style={isAllList ? { ...waybillUploadRow, gap: 6 } : waybillUploadRow}>
+            <button type="button" style={uploadButtonStyle} disabled={uploadBusy} onClick={() => waybillUploadRef.current?.click()}>
               대신 발송데이터 업로드
             </button>
-            <button type="button" style={uploadResetBtn} aria-label="대신 업로드 초기화" disabled={uploadBusy || waybillUploadRows.length === 0} onClick={() => void resetWaybillUpload("대신")}>
+            <button type="button" style={resetButtonStyle} aria-label="대신 업로드 초기화" disabled={uploadBusy || waybillUploadRows.length === 0} onClick={() => void resetWaybillUpload("대신")}>
               초기화
             </button>
-            <span style={uploadFileNameText} title={waybillUploadFileName || undefined}>
+            <span style={fileNameStyle} title={waybillUploadFileName || undefined}>
               {waybillHistoryLoading && compact ? "운송장 정보 불러오는 중..." : waybillUploadFileName ? "업로드 파일: " + waybillUploadFileName : "업로드 파일 없음"}
             </span>
             <input ref={waybillUploadRef} type="file" aria-label="대신 발송데이터 파일" accept=".xls,.xlsx" style={{ display: "none" }}
@@ -4720,14 +4732,14 @@ export default function Home() {
         </div>}
 
         {(!compact || carrierFilter !== "대신") && <div style={groupStyle} role="group" aria-label="로젠 발송데이터 도구">
-          <div style={waybillUploadRow}>
-            <button type="button" style={{ ...smallBlueBtn, background: CARRIER_ACCENTS.로젠, flexShrink: 0 }} onClick={() => setShowLogenPaste((value) => !value)} aria-expanded={showLogenPaste} aria-controls="logen-paste-editor">
+          <div style={isAllList ? { ...waybillUploadRow, gap: 6 } : waybillUploadRow}>
+            <button type="button" style={{ ...uploadButtonStyle, background: CARRIER_ACCENTS.로젠 }} onClick={() => setShowLogenPaste((value) => !value)} aria-expanded={showLogenPaste} aria-controls="logen-paste-editor">
               로젠 발송데이터 붙여넣기
             </button>
-            <button type="button" style={uploadResetBtn} aria-label="로젠 데이터 초기화" disabled={uploadBusy || (!logenUploadRows.length && !logenPasteText)} onClick={() => void resetWaybillUpload("로젠")}>
+            <button type="button" style={resetButtonStyle} aria-label="로젠 데이터 초기화" disabled={uploadBusy || (!logenUploadRows.length && !logenPasteText)} onClick={() => void resetWaybillUpload("로젠")}>
               초기화
             </button>
-            <span style={uploadFileNameText}>{logenUploadRows.length > 0 ? logenUploadRows.length + "건 적용됨" : "적용된 데이터 없음"}</span>
+            <span style={fileNameStyle}>{logenUploadRows.length > 0 ? logenUploadRows.length + "건 적용됨" : "적용된 데이터 없음"}</span>
           </div>
           {!compact && showLogenPaste && renderLogenPasteEditor()}
         </div>}
@@ -5380,7 +5392,7 @@ export default function Home() {
               </button>
             </div>
 
-            <div style={carrierFilter === "전체" ? { ...exportBar, flexDirection: "column", alignItems: "stretch", gap: 8 } : exportBar} role="group" aria-label="출고목록 도구">
+            <div style={carrierFilter === "전체" ? { ...exportBar, flexDirection: "column", alignItems: "stretch", gap: 6, marginBottom: 8 } : exportBar} role="group" aria-label="출고목록 도구">
               {renderWaybillUploadControls(true)}
 
               {carrierFilter !== "전체" && <div style={exportRight}>
