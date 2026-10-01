@@ -4671,8 +4671,11 @@ export default function Home() {
     }, 1200);
   };
 
+  const navigationCarrier = tab === "출고목록" ? carrierFilter
+    : tab === "발송검증" ? verificationCarrier : carrier;
+
   const renderLogenPasteEditor = (compact = false) => (
-    <div style={{ marginTop: 12 }}>
+    <div id="logen-paste-editor" style={{ marginTop: 12 }}>
       <div style={{ ...verifyInfoText, marginBottom: 8 }}>로젠 주문등록 화면에서 전체 행을 복사한 뒤 아래에 붙여넣어 주세요. 여러 건을 한 번에 적용할 수 있습니다.</div>
       <textarea aria-label="로젠 발송데이터 붙여넣기" value={logenPasteText} disabled={uploadBusy}
         style={{ ...input, width: "100%", minHeight: compact ? 100 : 140, resize: "vertical", fontSize: 13 }}
@@ -4713,16 +4716,16 @@ export default function Home() {
 
       {(!compact || carrierFilter !== "대신") && <div style={compact ? listWaybillUploadBar : { ...verifyUploadBar, display: "block" }} role="group" aria-label="로젠 발송데이터 도구">
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-          {compact ? <button type="button" style={{ ...smallBlueBtn, background: CARRIER_ACCENTS.로젠 }} onClick={() => setShowLogenPaste((value) => !value)} aria-expanded={showLogenPaste}>
+          <button type="button" style={{ ...smallBlueBtn, background: CARRIER_ACCENTS.로젠 }} onClick={() => setShowLogenPaste((value) => !value)} aria-expanded={showLogenPaste} aria-controls="logen-paste-editor">
             로젠 발송데이터 붙여넣기
-          </button> : <strong>로젠 발송데이터 붙여넣기</strong>}
+          </button>
           <button type="button" style={smallGrayBtn} disabled={uploadBusy || (!logenUploadRows.length && !logenPasteText)} onClick={() => void resetWaybillUpload("로젠")}>
             로젠 데이터 초기화
           </button>
           {!compact && <span style={verifyUploadFileName}>{logenUploadRows.length > 0 ? logenUploadRows.length + "건 적용됨" : "적용된 데이터 없음"}</span>}
         </div>
         {compact && <div style={listWaybillUploadFileName}>{logenUploadRows.length > 0 ? logenUploadRows.length + "건 적용됨" : "적용된 데이터 없음"}</div>}
-        {!compact && renderLogenPasteEditor()}
+        {!compact && showLogenPaste && renderLogenPasteEditor()}
       </div>}
     </div>
   );
@@ -4949,7 +4952,7 @@ export default function Home() {
               onClick={() => setTab(item)}
               style={{
                 ...tabButton,
-                background: tab === item ? "#2563eb" : "#e5e7eb",
+                background: tab === item ? carrierAccent(navigationCarrier) : "#e5e7eb",
                 color: tab === item ? "#fff" : "#111827",
               }}
             >
