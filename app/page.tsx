@@ -2961,7 +2961,7 @@ export default function Home() {
     ]);
   };
 
-  const showTodayShipmentList = async () => {
+  const resetListDateToToday = () => {
     const todayKey = getTodaySeoulDateKey();
 
     setListDateFromDraft(todayKey);
@@ -2970,7 +2970,11 @@ export default function Home() {
     setListDateTo(todayKey);
     setSelectedIds([]);
     setCopiedWaybillMessageId("");
+    return todayKey;
+  };
 
+  const showTodayShipmentList = async () => {
+    const todayKey = resetListDateToToday();
     await Promise.all([
       loadShipmentsFromDb({
         alertOnError: true,
@@ -2978,6 +2982,17 @@ export default function Home() {
       }),
       loadWaybillHistoryFromDb(todayKey, todayKey),
     ]);
+  };
+
+  const handleTabChange = (nextTab: TabType) => {
+    if (nextTab === "출고목록") {
+      if (tab === nextTab) {
+        void showTodayShipmentList();
+        return;
+      }
+      resetListDateToToday();
+    }
+    setTab(nextTab);
   };
 
   const shipmentWaybillInfoById = useMemo(() => {
@@ -3467,10 +3482,6 @@ export default function Home() {
 
       pendingShipmentRequestRef.current = null;
       await loadShipmentsFromDb();
-      setListDateFromDraft(targetShipmentDate);
-      setListDateToDraft(targetShipmentDate);
-      setListDateFrom(targetShipmentDate);
-      setListDateTo(targetShipmentDate);
       resetForm();
 
       setSaveToast(
@@ -4966,7 +4977,7 @@ export default function Home() {
             <button
               key={item}
               type="button"
-              onClick={() => setTab(item)}
+              onClick={() => handleTabChange(item)}
               style={{
                 ...tabButton,
                 background: tab === item ? carrierAccent(navigationCarrier) : "#e5e7eb",
