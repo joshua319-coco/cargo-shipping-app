@@ -233,6 +233,15 @@ const SHARED_VERIFY_STATE_TABLE = "shared_verify_state";
 const SHIPMENT_REQUEST_ID_COLUMN = "client_request_id";
 const SHARED_VERIFY_TEXT_SAVE_DELAY_MS = 700;
 
+const CARRIER_ACCENTS: Record<Carrier, string> = {
+  대신: "#2563eb",
+  로젠: "#9a6700",
+};
+
+function carrierAccent(value: CarrierFilter) {
+  return CARRIER_ACCENTS[normalizeCarrier(value)];
+}
+
 const TEMPLATE_SHEET_NAME = "업로드_양식 값붙여넣기(우클릭+V)";
 const LOGEN_TEMPLATE_HEADERS = [
   "수화주전화",
@@ -4670,7 +4679,7 @@ export default function Home() {
         placeholder="여기에 로젠 발송데이터를 붙여넣으세요 (Ctrl+V)"
         onChange={(e) => { logenPasteDirtyRef.current = true; setLogenPasteText(e.target.value); setLogenPasteError(""); }} />
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 8 }}>
-        <button type="button" style={smallBlueBtn} disabled={uploadBusy || !logenPasteText.trim()} onClick={() => void handleLogenPasteApply()}>
+        <button type="button" style={{ ...smallBlueBtn, background: CARRIER_ACCENTS.로젠 }} disabled={uploadBusy || !logenPasteText.trim()} onClick={() => void handleLogenPasteApply()}>
           {uploadBusy ? "처리 중..." : "로젠 데이터 적용·검증"}
         </button>
         {logenPasteDirtyRef.current && <span style={{ color: "#92400e", fontSize: 13 }}>적용 버튼을 눌러 변경한 데이터를 검증해 주세요.</span>}
@@ -4704,7 +4713,7 @@ export default function Home() {
 
       {(!compact || carrierFilter !== "대신") && <div style={compact ? listWaybillUploadBar : { ...verifyUploadBar, display: "block" }} role="group" aria-label="로젠 발송데이터 도구">
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-          {compact ? <button type="button" style={smallBlueBtn} onClick={() => setShowLogenPaste((value) => !value)} aria-expanded={showLogenPaste}>
+          {compact ? <button type="button" style={{ ...smallBlueBtn, background: CARRIER_ACCENTS.로젠 }} onClick={() => setShowLogenPaste((value) => !value)} aria-expanded={showLogenPaste}>
             로젠 발송데이터 붙여넣기
           </button> : <strong>로젠 발송데이터 붙여넣기</strong>}
           <button type="button" style={smallGrayBtn} disabled={uploadBusy || (!logenUploadRows.length && !logenPasteText)} onClick={() => void resetWaybillUpload("로젠")}>
@@ -5002,12 +5011,14 @@ export default function Home() {
                     <Toggle<PayType>
                       label="지불방법"
                       value={pay}
+                      activeColor={carrierAccent(carrier)}
                       set={setPay}
                       options={["착불", "선불"]}
                     />
                     <Toggle<DeliveryType>
                       label="운송형태"
                       value={delivery}
+                      activeColor={carrierAccent(carrier)}
                       set={(v) => {
                         setDelivery(v);
                         setPostalCode(
@@ -5149,7 +5160,7 @@ export default function Home() {
                             padding: "0 14px",
                             borderRadius: 10,
                             border: "none",
-                            background: "#2563eb",
+                            background: carrierAccent(carrier),
                             color: "#fff",
                             fontWeight: 700,
                             cursor: "pointer",
@@ -5201,6 +5212,7 @@ export default function Home() {
               type="button"
               style={{
                 ...saveBtn,
+                background: carrierAccent(carrier),
                 opacity: isSavingShipment ? 0.65 : 1,
                 cursor: isSavingShipment ? "not-allowed" : "pointer",
               }}
@@ -5256,7 +5268,7 @@ export default function Home() {
 
                 <button
                   type="button"
-                  style={smallBlueBtn}
+                  style={{ ...smallBlueBtn, background: carrierAccent(carrierFilter) }}
                   onClick={() => void handleListDateSearch()}
                   disabled={shipmentListLoading || waybillHistoryLoading}
                 >
@@ -5376,7 +5388,7 @@ export default function Home() {
                 </button>
                 <button
                   type="button"
-                  style={exportBtnPrimary}
+                  style={{ ...exportBtnPrimary, background: carrierAccent(carrierFilter) }}
                   onClick={exportFilteredAll}
                 >
                   현재목록 전체 엑셀 다운로드
@@ -5568,7 +5580,7 @@ export default function Home() {
 
                             <div style={ovPay}>{shipment.pay}</div>
                             <div style={ovDelivery}>
-                              <div style={{ fontSize: 12, fontWeight: 700, color: shipment.carrier === "로젠" ? "#7c3aed" : "#2563eb" }}>{shipment.carrier}</div>
+                              <div style={{ fontSize: 12, fontWeight: 700, color: carrierAccent(shipment.carrier) }}>{shipment.carrier}</div>
                               {displayDelivery(shipment.delivery)}
                             </div>
                             <div style={ovQty}>
@@ -6729,12 +6741,14 @@ export default function Home() {
                 <Toggle<PayType>
                   label="지불방법"
                   value={editForm.pay}
+                  activeColor={carrierAccent(editForm.carrier)}
                   set={(v) => updateEditField("pay", v)}
                   options={["착불", "선불"]}
                 />
                 <Toggle<DeliveryType>
                   label="운송형태"
                   value={editForm.delivery}
+                  activeColor={carrierAccent(editForm.carrier)}
                   set={(v) => {
                     updateEditField("delivery", v);
                     updateEditField(
@@ -6987,6 +7001,7 @@ export default function Home() {
                   type="button"
                   style={{
                     ...modalSaveBtn,
+                    background: carrierAccent(editForm.carrier),
                     opacity: isSavingDetail ? 0.65 : 1,
                     cursor: isSavingDetail ? "not-allowed" : "pointer",
                   }}
@@ -7024,7 +7039,7 @@ export default function Home() {
               />
 
               <button
-                style={modalSaveBtn}
+                style={{ ...modalSaveBtn, background: carrierAccent(carrier) }}
                 onClick={() => void handleAddressSearch()}
               >
                 검색
@@ -7253,11 +7268,13 @@ function Toggle<T extends string>({
   value,
   set,
   options,
+  activeColor = CARRIER_ACCENTS.대신,
 }: {
   label: string;
   value: T;
   set: (v: T) => void;
   options: T[];
+  activeColor?: string;
 }) {
   return (
     <div>
@@ -7271,7 +7288,7 @@ function Toggle<T extends string>({
             aria-pressed={value === o}
             style={{
               ...toggleBtn,
-              background: value === o ? "#2563eb" : "#e5e7eb",
+              background: value === o ? activeColor : "#e5e7eb",
               color: value === o ? "#fff" : "#111827",
             }}
           >
@@ -7290,7 +7307,7 @@ function CarrierButtons<T extends CarrierFilter>({ label, value, onChange, inclu
   return <div role="group" aria-label={label} style={{ display: "flex", gap: 8 }}>
     {options.map((option) => <button key={option} type="button" aria-pressed={value === option}
       onClick={() => onChange(option as T)}
-      style={{ ...toggleBtn, padding: "8px 16px", background: value === option ? "#2563eb" : "#e5e7eb", color: value === option ? "#fff" : "#111827" }}>
+      style={{ ...toggleBtn, padding: "8px 16px", background: value === option ? carrierAccent(option) : "#e5e7eb", color: value === option ? "#fff" : "#111827" }}>
       {option}
     </button>)}
   </div>;
