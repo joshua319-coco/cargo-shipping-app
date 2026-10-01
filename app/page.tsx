@@ -59,12 +59,14 @@ type SavedShipment = {
   memo: string;
   note: string;
   createdAt: string;
+  shipmentDate: string;
   checklist: Checklist;
 };
 
 type ShipmentDraft = Omit<SavedShipment, "id" | "createdAt">;
 
 type ShipmentDbPayload = {
+  shipment_date: string;
   carrier: Carrier;
   receiver: string;
   receiver_phone: string;
@@ -406,6 +408,7 @@ function normalizeChecklist(raw: unknown): Checklist {
 
 function normalizeShipment(raw: unknown): SavedShipment {
   const row = asRecord(raw);
+  const createdAt = asString(row.createdAt ?? row.created_at) || new Date().toISOString();
 
   return {
     id: asString(row.id) || String(Date.now()),
@@ -426,8 +429,8 @@ function normalizeShipment(raw: unknown): SavedShipment {
     fare: asString(row.fare) || "5500",
     memo: asString(row.memo),
     note: asString(row.note),
-    createdAt:
-      asString(row.createdAt ?? row.created_at) || new Date().toISOString(),
+    createdAt,
+    shipmentDate: asString(row.shipmentDate ?? row.shipment_date) || getSeoulDateKey(createdAt),
     checklist: normalizeChecklist(
       row.checklist ?? {
         pda: row.pda,
@@ -1382,24 +1385,10 @@ function getTodaySeoulDateKey() {
   return getSeoulDateKey(new Date());
 }
 
-function addDaysToDateKey(dateKey: string, days: number) {
-  const [year, month, day] = dateKey.split("-").map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day + days));
-
-  return [
-    date.getUTCFullYear(),
-    String(date.getUTCMonth() + 1).padStart(2, "0"),
-    String(date.getUTCDate()).padStart(2, "0"),
-  ].join("-");
-}
-
-function getSeoulDayUtcRange(dateKey: string) {
-  const nextDateKey = addDaysToDateKey(dateKey, 1);
-
-  return {
-    startUtc: new Date(`${dateKey}T00:00:00+09:00`).toISOString(),
-    endUtc: new Date(`${nextDateKey}T00:00:00+09:00`).toISOString(),
-  };
+function isValidShipmentDate(dateKey: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey) || Number(dateKey.slice(0, 4)) < 1) return false;
+  const date = new Date(dateKey + "T00:00:00Z");
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === dateKey;
 }
 
 function isValidDateRange(fromDate: string, toDate: string) {
@@ -1519,10 +1508,14 @@ function buildShipmentNote(receiverNote: string, senderNote: string) {
 }
 
 function toShipmentDbPayload(shipment: ShipmentDraft): ShipmentDbPayload {
+  if (!isValidShipmentDate(shipment.shipmentDate)) {
+    throw new Error("출고일자를 올바르게 입력해 주세요.");
+  }
   if (shipment.carrier === "로젠" && !isLogenQuantity(shipment.qty)) {
     throw new Error("로젠 수량은 1 이상의 정수로 입력해 주세요.");
   }
   return {
+    shipment_date: shipment.shipmentDate,
     carrier: normalizeCarrier(shipment.carrier),
     receiver: shipment.receiver,
     receiver_phone: shipment.receiverPhone,
@@ -1921,6 +1914,8 @@ export default function Home() {
   const [qty, setQty] = useState("");
   const [fare, setFare] = useState("5500");
   const [memo, setMemo] = useState("");
+  const [shipmentDate, setShipmentDate] = useState<string | null>(null);
+  const [showShipmentDate, setShowShipmentDate] = useState(false);
 
   const [addrResults, setAddrResults] = useState<AddressSearchResult[]>([]);
   const [addrKeyword, setAddrKeyword] = useState("");
@@ -3000,7 +2995,7 @@ export default function Home() {
     const uploadsByDate = new Map<string, WaybillUploadRow[]>();
 
     savedShipments.forEach((shipment) => {
-      const dateKey = getSeoulDateKey(shipment.createdAt);
+      const dateKey = shipment.shipmentDate;
       if (!isDateKeyInRange(dateKey, listDateFrom, listDateTo)) return;
 
       const rows = shipmentsByDate.get(dateKey) ?? [];
@@ -3081,7 +3076,7 @@ export default function Home() {
         ? !shipment.checklist.waybill
         : true;
       const matchesPda = pdaUncheckedOnly ? !shipment.checklist.pda : true;
-      const shipmentDateKey = getSeoulDateKey(shipment.createdAt);
+      const shipmentDateKey = shipment.shipmentDate;
       const matchesDate = isDateKeyInRange(
         shipmentDateKey,
         listDateFrom,
@@ -3344,6 +3339,8 @@ export default function Home() {
   };
 
   const resetForm = () => {
+    setShipmentDate(null);
+    setShowShipmentDate(false);
     setReceiver("");
     setReceiverPhone("");
     setAddress("");
@@ -3384,13 +3381,12 @@ export default function Home() {
         );
       }
 
-      const todayKey = getTodaySeoulDateKey();
-      const { startUtc, endUtc } = getSeoulDayUtcRange(todayKey);
-      const { data: todayRows, error: duplicateCheckError } = await supabase
+      const targetShipmentDate = shipmentDate ?? getTodaySeoulDateKey();
+      if (!isValidShipmentDate(targetShipmentDate)) return alert("출고일자를 올바르게 입력해 주세요.");
+      const { data: dateRows, error: duplicateCheckError } = await supabase
         .from("shipments")
-        .select("id, receiver, sender, created_at")
-        .gte("created_at", startUtc)
-        .lt("created_at", endUtc);
+        .select("id, receiver, sender, shipment_date")
+        .eq("shipment_date", targetShipmentDate);
 
       if (duplicateCheckError) {
         console.error("중복 출고 확인 실패", duplicateCheckError);
@@ -3405,7 +3401,7 @@ export default function Home() {
         receiver.trim(),
       );
       const targetDuplicateKey = buildShipmentDuplicateKey(sender, receiver);
-      const duplicateRows = (todayRows ?? []).filter((row) => {
+      const duplicateRows = (dateRows ?? []).filter((row) => {
         return (
           buildShipmentDuplicateKey(
             asString(row?.sender),
@@ -3417,7 +3413,7 @@ export default function Home() {
       if (duplicateRows.length > 0) {
         const confirmed = window.confirm(
           `⚠ 중복 출고 확인\n\n` +
-            `오늘 출고목록에 이미 [${targetDisplayName}] 발송정보가 ${duplicateRows.length}건 저장되어 있습니다.\n\n` +
+            `${formatDateKeyKo(targetShipmentDate)} 출고목록에 이미 [${targetDisplayName}] 발송정보가 ${duplicateRows.length}건 저장되어 있습니다.\n\n` +
             `그래도 새 출고건으로 저장할까요?`,
         );
 
@@ -3428,6 +3424,7 @@ export default function Home() {
       }
 
       const draft: ShipmentDraft = {
+        shipmentDate: targetShipmentDate,
         carrier,
         receiver,
         receiverPhone,
@@ -3470,6 +3467,10 @@ export default function Home() {
 
       pendingShipmentRequestRef.current = null;
       await loadShipmentsFromDb();
+      setListDateFromDraft(targetShipmentDate);
+      setListDateToDraft(targetShipmentDate);
+      setListDateFrom(targetShipmentDate);
+      setListDateTo(targetShipmentDate);
       resetForm();
 
       setSaveToast(
@@ -3720,7 +3721,7 @@ export default function Home() {
     await runLockedMutation("clear-today-shipments", async () => {
       const todayKey = getTodaySeoulDateKey();
       const todayCount = savedShipments.filter(
-        (item) => getSeoulDateKey(item.createdAt) === todayKey,
+        (item) => item.shipmentDate === todayKey,
       ).length;
 
       if (todayCount === 0) {
@@ -3728,12 +3729,10 @@ export default function Home() {
         return;
       }
 
-      const { startUtc, endUtc } = getSeoulDayUtcRange(todayKey);
       const { data: deletedRows, error } = await supabase
         .from("shipments")
         .delete()
-        .gte("created_at", startUtc)
-        .lt("created_at", endUtc)
+        .eq("shipment_date", todayKey)
         .select("id");
 
       if (error) {
@@ -4552,7 +4551,7 @@ export default function Home() {
   const todayShipments = useMemo(() => {
     const todayKey = getTodaySeoulDateKey();
     return savedShipments.filter(
-      (shipment) => getSeoulDateKey(shipment.createdAt) === todayKey,
+      (shipment) => shipment.shipmentDate === todayKey,
     );
   }, [savedShipments]);
 
@@ -4960,7 +4959,7 @@ export default function Home() {
           </div>
         </div>
 
-        <div style={tabWrap}>
+        <div style={{ ...tabWrap, flexWrap: "wrap", alignItems: "center" }}>
           {(
             ["출고등록", "출고목록", "발송검증", "마스터관리"] as TabType[]
           ).map((item) => (
@@ -4977,6 +4976,21 @@ export default function Home() {
               {item}
             </button>
           ))}
+          {tab === "출고등록" && <div role="group" aria-label="출고일자 설정" style={{ marginLeft: "auto", position: "relative", display: "flex", gap: 10, alignItems: "center" }}>
+            {shipmentDate && shipmentDate !== getTodaySeoulDateKey() && <span style={{ fontSize: 13, fontWeight: 700, color: carrierAccent(carrier) }}>
+              출고일: {formatDateKeyKo(shipmentDate)}
+            </span>}
+            <button type="button" style={smallGrayBtn} disabled={isSavingShipment} aria-expanded={showShipmentDate} aria-controls="shipment-date-panel" onClick={() => setShowShipmentDate((value) => !value)}>
+              출고일자 변경하기
+            </button>
+            {showShipmentDate && <div id="shipment-date-panel" style={shipmentDatePanel} onKeyDown={(e) => { if (e.key === "Escape") setShowShipmentDate(false); }}>
+              <label htmlFor="shipment-date-input" style={{ ...labelStyle, display: "block" }}>출고일자</label>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input id="shipment-date-input" type="date" style={{ ...dateInput, flex: 1, minWidth: 0 }} min="0001-01-01" max="9999-12-31" value={shipmentDate ?? getTodaySeoulDateKey()} disabled={isSavingShipment} onChange={(e) => setShipmentDate(e.target.value)} />
+                <button type="button" style={smallGrayBtn} disabled={isSavingShipment} onClick={() => setShipmentDate(null)}>오늘</button>
+              </div>
+            </div>}
+          </div>}
         </div>
 
         {tab === "출고등록" && (
@@ -5529,7 +5543,7 @@ export default function Home() {
 
                     {sortedShipments.map((shipment) => {
                       const isToday =
-                        getSeoulDateKey(shipment.createdAt) ===
+                        shipment.shipmentDate ===
                         getTodaySeoulDateKey();
 
                       const isChecklistDone =
@@ -5582,7 +5596,7 @@ export default function Home() {
                               }}
                             >
                               {formatDateKeyKo(
-                                getSeoulDateKey(shipment.createdAt),
+                                shipment.shipmentDate,
                               )}
                             </div>
 
@@ -7808,6 +7822,20 @@ const listTitle: CSSProperties = {
 const emptyText: CSSProperties = {
   color: "#6b7280",
   fontSize: 14,
+};
+
+const shipmentDatePanel: CSSProperties = {
+  position: "absolute",
+  top: "calc(100% + 8px)",
+  right: 0,
+  zIndex: 30,
+  width: 280,
+  maxWidth: "calc(100vw - 64px)",
+  padding: 14,
+  background: "#f8fafc",
+  border: "1px solid #e5e7eb",
+  borderRadius: 12,
+  boxShadow: "0 8px 24px rgba(15, 23, 42, 0.12)",
 };
 
 const dateRangeBar: CSSProperties = {

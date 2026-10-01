@@ -21,7 +21,7 @@ function loadTs(file, extra = '') {
   return compiledModule.exports;
 }
 const carrier = loadTs('lib/carriers.ts');
-const { __test: helpers } = loadTs('app/page.tsx', '\nexports.__test = { normalizeShipment, suggestFareByQty, toTemplateRow, toShipmentDbPayload, parseWaybillUploadRows, buildWaybillVerificationRows, normalizeSharedVerifyState, buildWaybillMessageText, TEMPLATE_HEADERS, toLogenTemplateRow, LOGEN_TEMPLATE_HEADERS };');
+const { __test: helpers } = loadTs('app/page.tsx', '\nexports.__test = { normalizeShipment, suggestFareByQty, toTemplateRow, toShipmentDbPayload, parseWaybillUploadRows, buildWaybillVerificationRows, normalizeSharedVerifyState, buildWaybillMessageText, TEMPLATE_HEADERS, toLogenTemplateRow, LOGEN_TEMPLATE_HEADERS, isValidShipmentDate };');
 const shipment = (patch = {}) => helpers.normalizeShipment({
   id: '1', carrier: '로젠', receiver: '테스트수하인', receiver_phone: '01012345678',
   address: '경기도 수원시 테스트로 10 101호', postal_code: '12345', sender: '상화시스템',
@@ -203,5 +203,28 @@ test('both carriers use normalized parcel addresses in dispatch verification', (
       const mismatch=helpers.buildWaybillVerificationRows([s],[{...u,address}])[0];
       assert.equal(mismatch.status,'확인필요');assert.ok(mismatch.reasons.includes('주소 확인'));
     }
+  }
+});
+
+test('shipment dates preserve legacy Korean dates and actual creation timestamps', () => {
+  const midnight = shipment({ created_at: '2026-09-30T15:00:00.000Z' });
+  assert.equal(midnight.shipmentDate, '2026-10-01');
+  assert.equal(shipment({ created_at: '2026-09-30T14:59:59.000Z' }).shipmentDate, '2026-09-30');
+  const planned = shipment({ shipment_date: '2026-10-05' });
+  assert.equal(planned.shipmentDate, '2026-10-05');
+  assert.equal(planned.createdAt, '2026-10-01T00:00:00.000Z');
+  const payload = helpers.toShipmentDbPayload(planned);
+  assert.equal(payload.shipment_date, '2026-10-05');
+  assert.equal(Object.hasOwn(payload, 'created_at'), false);
+  assert.notEqual(JSON.stringify(payload), JSON.stringify(helpers.toShipmentDbPayload(shipment())));
+});
+
+test('shipment dates reject empty and invalid dates while allowing leap dates', () => {
+  for (const date of ['', '2026-02-29', '2026-04-31', '2026-13-01', '0000-01-01', '2026-1-2']) {
+    assert.equal(helpers.isValidShipmentDate(date), false, date);
+    assert.throws(() => helpers.toShipmentDbPayload({ ...shipment(), shipmentDate: date }), /출고일자/);
+  }
+  for (const date of ['2028-02-29', '2026-10-05', '2027-01-01']) {
+    assert.equal(helpers.isValidShipmentDate(date), true, date);
   }
 });
