@@ -4706,6 +4706,9 @@ export default function Home() {
     return (
       <div style={compact ? { display: "contents" } : { display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
         {(!compact || carrierFilter !== "로젠") && <div style={groupStyle} role="group" aria-label="대신 발송데이터 도구">
+          {!compact && <div style={{ ...verifyInfoText, fontSize: "10pt", marginBottom: 8 }}>
+            대신 발송데이터 내려받는 법: [대신택배물류시스템 접속] → [일자별조회] → [목록전체선택] → [엑셀저장]
+          </div>}
           <div style={isAllList ? { ...waybillUploadRow, gap: 6 } : waybillUploadRow}>
             <button type="button" style={uploadButtonStyle} disabled={uploadBusy} onClick={() => waybillUploadRef.current?.click()}>
               대신 발송데이터 업로드
@@ -4724,9 +4727,6 @@ export default function Home() {
                 input.value = "";
               }} />
           </div>
-          {!compact && <div style={{ ...verifyInfoText, marginTop: 10, marginBottom: 0 }}>
-            대신 발송데이터 내려받는 법: [대신택배물류시스템 접속] → [일자별조회] → [목록전체선택] → [엑셀저장]
-          </div>}
         </div>}
 
         {(!compact || carrierFilter !== "대신") && <div style={groupStyle} role="group" aria-label="로젠 발송데이터 도구">
@@ -5765,10 +5765,6 @@ export default function Home() {
 
             {verifyTab === "송장검증" && (
               <>
-                <div style={verifyInfoText}>
-                  택배 주소는 시·도 약칭을 통일해 첫 괄호 앞까지만 비교합니다. 괄호 뒤 상세주소는 비교하지 않습니다.
-                </div>
-
                 {renderWaybillUploadControls()}
 
                 <div style={verifySummaryGrid}>
