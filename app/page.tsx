@@ -9,7 +9,7 @@ import type {
 } from "react";
 import { supabase } from "@/lib/supabase";
 import type { Session } from "@supabase/supabase-js";
-import { CARRIERS, normalizeCarrier, isLogenQuantity, logenFare, exportCarrier, sameCarrierText, sameCarrierPhone } from "@/lib/carriers";
+import { CARRIERS, normalizeCarrier, isLogenQuantity, logenFare, exportCarrier, sameCarrierText, sameCarrierPhone, sameParcelAddress } from "@/lib/carriers";
 import type { Carrier, CarrierFilter } from "@/lib/carriers";
 import { parseLogenPasteRows } from "@/lib/logen-paste";
 
@@ -602,23 +602,9 @@ function normalizeLooseText(value: string) {
     .replace(/님/g, "");
 }
 
-function normalizeAddressText(value: string) {
-  return asString(value)
-    .toLowerCase()
-    .replace(/\s+/g, "")
-    .replace(/[\[\]\(\){}.,\-_/]/g, "");
-}
-
 function valuesClose(a: string, b: string) {
   const na = normalizeLooseText(a);
   const nb = normalizeLooseText(b);
-  if (!na || !nb) return false;
-  return na === nb || na.includes(nb) || nb.includes(na);
-}
-
-function addressesClose(a: string, b: string) {
-  const na = normalizeAddressText(a);
-  const nb = normalizeAddressText(b);
   if (!na || !nb) return false;
   return na === nb || na.includes(nb) || nb.includes(na);
 }
@@ -779,7 +765,7 @@ function scoreWaybillPair(shipment: SavedShipment, upload: WaybillUploadRow) {
   if (normalizeCarrier(shipment.carrier) === "로젠" &&
       !valuesClose(shipment.receiver, upload.receiver) &&
       !(shipment.receiverPhone && upload.receiverPhone && sameCarrierPhone(shipment.receiverPhone, upload.receiverPhone)) &&
-      !(shipment.address && upload.address && addressesClose(shipment.address, upload.address))) return -Infinity;
+      !(shipment.address && upload.address && sameParcelAddress(shipment.address, upload.address))) return -Infinity;
   const shipmentQty = (normalizeCarrier(shipment.carrier) === "로젠" ? Number(shipment.qty) : normalizeQtyForCompare(shipment.qty));
   const uploadQty = (normalizeCarrier(upload.carrier) === "로젠" ? upload.qty : normalizeQtyForCompare(upload.qty));
   const shipmentFare = Number(String(shipment.fare).replace(/,/g, "")) || 0;
@@ -839,7 +825,7 @@ function scoreWaybillPair(shipment: SavedShipment, upload: WaybillUploadRow) {
     shipment.delivery === "택배" &&
     shipment.address &&
     upload.address &&
-    addressesClose(shipment.address, upload.address)
+    sameParcelAddress(shipment.address, upload.address)
   ) {
     score += 4;
   }
@@ -857,7 +843,7 @@ function scoreWaybillPair(shipment: SavedShipment, upload: WaybillUploadRow) {
 function logenMismatchReasons(shipment: SavedShipment, upload: WaybillUploadRow) {
   const reasons: string[] = [];
   if (!shipment.receiver || !upload.receiver || !sameCarrierText(shipment.receiver, upload.receiver)) reasons.push("수하인 이름 확인");
-  if (!shipment.address || !upload.address || !sameCarrierText(shipment.address, upload.address)) reasons.push("주소 확인");
+  if (!shipment.address || !upload.address || !sameParcelAddress(shipment.address, upload.address)) reasons.push("주소 확인");
   if (!shipment.receiverPhone || !upload.receiverPhone || !sameCarrierPhone(shipment.receiverPhone, upload.receiverPhone)) reasons.push("수하인 전화번호 확인");
   if (!shipment.sender || !upload.sender || !sameCarrierText(shipment.sender, upload.sender)) reasons.push("송하인 이름 확인");
   if (!shipment.senderPhone || !upload.senderPhone || !sameCarrierPhone(shipment.senderPhone, upload.senderPhone)) reasons.push("송하인 전화번호 확인");
@@ -961,9 +947,7 @@ function buildWaybillVerificationRows(
 
       if (
         shipment.delivery === "택배" &&
-        shipment.address &&
-        upload.address &&
-        !addressesClose(shipment.address, upload.address)
+        !sameParcelAddress(shipment.address, upload.address)
       ) {
         reasons.push("주소 확인");
       }
@@ -1543,9 +1527,7 @@ function toShipmentDbPayload(shipment: ShipmentDraft): ShipmentDbPayload {
     pay: shipment.pay,
     delivery: shipment.carrier === "로젠" ? "택배" : shipment.delivery,
     qty: Number(shipment.qty),
-    fare: shipment.carrier === "로젠"
-      ? Number(logenFare(shipment.qty, shipment.address))
-      : Number(String(shipment.fare).replace(/,/g, "")),
+    fare: Number(String(shipment.fare).replace(/,/g, "")),
     memo: shipment.memo,
     note: shipment.note,
     pda: shipment.checklist.pda,
@@ -5053,7 +5035,7 @@ export default function Home() {
 
                   <div style={{ ...row2, marginTop: 16 }}>
                     <Input label="수량" value={qty} set={handleQty} integer={carrier === "로젠"} />
-                    <Input label="운임" value={fare} set={setFare} readOnly={carrier === "로젠"} />
+                    <Input label="운임" value={fare} set={setFare} />
                   </div>
                 </Section>
 
@@ -5753,6 +5735,8 @@ export default function Home() {
                 <div style={verifyInfoText}>
                   대신 발송데이터 내려받는 법: [대신택배물류시스템 접속] →
                   [일자별조회] → [목록전체선택] → [엑셀저장]
+                <br />
+                  택배 주소는 시·도 약칭을 통일해 첫 괄호 앞까지만 비교합니다. 괄호 뒤 상세주소는 비교하지 않습니다.
                 </div>
 
                 {renderWaybillUploadControls()}
@@ -6805,7 +6789,7 @@ export default function Home() {
                     <input
                       style={input}
                       value={editForm.fare}
-                      readOnly={editForm.carrier === "로젠"}
+                      aria-label="운임"
                       onChange={(e) => updateEditField("fare", e.target.value)}
                     />
                     <button

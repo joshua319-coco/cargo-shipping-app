@@ -62,9 +62,10 @@ test('Daesin half-box and double Jeju rates are preserved', () => {
   assert.equal(helpers.suggestFareByQty({qty:'1',delivery:'택배',pack:'박스',address:'제주시'}), '14300');
   assert.equal(helpers.suggestFareByQty({carrier:'로젠',qty:'2',delivery:'택배',pack:'박스',address:'제주시'}), '9600');
 });
-test('DB payload forces Logen parcel and calculated fare, rejects fractional boxes', () => {
-  const payload=helpers.toShipmentDbPayload(shipment({delivery:'정기',fare:1,address:'제주시'}));
-  assert.equal(payload.carrier,'로젠'); assert.equal(payload.delivery,'택배'); assert.equal(payload.fare,9600);
+test('DB payload keeps manually entered Logen fare and still enforces integer parcel boxes', () => {
+  const payload=helpers.toShipmentDbPayload(shipment({delivery:'정기',fare:'7,200',address:'제주시'}));
+  assert.equal(payload.carrier,'로젠'); assert.equal(payload.delivery,'택배'); assert.equal(payload.fare,7200);
+  assert.equal(helpers.toLogenTemplateRow(shipment({fare:payload.fare})).총운임,7200);
   assert.throws(()=>helpers.toShipmentDbPayload(shipment({qty:0.5})), /정수/);
 });
 test('combined/all exports and wrong-carrier selections are rejected', () => {
@@ -169,4 +170,38 @@ test('clipboard fare mismatches remain visible instead of being overwritten', ()
   const row=helpers.buildWaybillVerificationRows([shipment({qty:1,fare:3300})],[parse({박스수량:1,택배운임:3500})])[0];
   assert.equal(row.status,'확인필요');assert.ok(row.reasons.includes('택배운임 확인'));
   assert.equal(row.fareText,'3,300 / 3,500');
+});
+
+test('parcel addresses retain regions, normalize province aliases and ignore parenthesized details', () => {
+  const aliases=[['서울특별시','서울'],['부산광역시','부산'],['대구광역시','대구'],['인천광역시','인천'],['광주광역시','광주'],['대전광역시','대전'],['울산광역시','울산'],['세종특별자치시','세종'],['경기도','경기'],['강원특별자치도','강원'],['강원도','강원'],['충청북도','충북'],['충청남도','충남'],['전북특별자치도','전북'],['전라북도','전북'],['전라남도','전남'],['경상북도','경북'],['경상남도','경남'],['제주특별자치도','제주'],['제주도','제주']];
+  for(const [full,short] of aliases) assert.equal(carrier.sameParcelAddress(full+' 테스트로 125 (테스트동 148) 101호',short+' 테스트로 125'),true,full);
+  assert.equal(carrier.sameParcelAddress('충청북도 청주시 청원구 오창읍 테스트로 12번길 1-5 (테스트리 149-42, 아파트)','충북  청주시 청원구 오창읍 테스트로12번길 1-5（다른 상세주소）'),true);
+  assert.equal(carrier.sameParcelAddress('경기도 광주시 테스트로 1','경기 광주시 테스트로 1'),true);
+});
+test('parcel address comparison rejects other regions, partial addresses and different building numbers', () => {
+  const pairs=[
+    ['경상북도 포항시 남구 시청로 18','전북특별자치도 군산시 시청로 18'],
+    ['경상북도 포항시 남구 시청로 18','경북 포항시 북구 시청로 18'],
+    ['경상북도 포항시 남구 시청로 18','시청로 18'],
+    ['충청북도 청주시 청원구 시청로 18','충남 청주시 청원구 시청로 18'],
+    ['서울특별시 중구 테스트로 18','서울 중구 테스트로 180'],
+    ['서울특별시 중구 테스트로 1-5','서울 중구 테스트로 15'],
+    ['서울특별시 중구 테스트로 10번길 1','서울 중구 테스트로 10번길 2'],
+    ['경기도 광주시 테스트로 1','광주광역시 테스트로 1'],
+    ['광주시 테스트로 1','광주광역시 테스트로 1'],
+    ['',''],['(테스트동)','(테스트동)'],
+  ];
+  for(const [a,b] of pairs) assert.equal(carrier.sameParcelAddress(a,b),false,a+' / '+b);
+});
+test('both carriers use normalized parcel addresses in dispatch verification', () => {
+  for(const name of ['대신','로젠']) {
+    const s=shipment({carrier:name,address:'충청북도 청주시 청원구 테스트로 125 (테스트동 148) 101호',fare:7200});
+    const u={...parse({수하인주소:'충북 청주시 청원구 테스트로 125',상세주소:'(테스트동) 202호',택배운임:7200}),carrier:name};
+    const matched=helpers.buildWaybillVerificationRows([s],[u])[0];
+    assert.equal(matched.status,'일치',name);assert.equal(matched.fareText,'7,200 / 7,200');
+    for(const address of ['충북 청주시 청원구 테스트로 1250','전북 청주시 청원구 테스트로 125','']) {
+      const mismatch=helpers.buildWaybillVerificationRows([s],[{...u,address}])[0];
+      assert.equal(mismatch.status,'확인필요');assert.ok(mismatch.reasons.includes('주소 확인'));
+    }
+  }
 });
