@@ -10,9 +10,22 @@ function installCarrierRelay(jobId, nonce) {
     chrome.runtime.sendMessage({ type: 'carrier-event', jobId, nonce, detail }).catch(() => {});
   });
 }
-function stageCarrierWorkbook(job) {
+async function stageCarrierWorkbook(job) {
   const url = new URL(location.href);
   if (url.origin !== 'https://partner.ds3211.co.kr' || url.pathname !== '/issueSvl' || url.searchParams.get('svcSid') !== 'excelIssuWay' || url.searchParams.get('svcGid') !== 'customer.issue') throw new Error('대신 엑셀일괄발행에 로그인한 상태로 다시 시도해 주세요.');
+  // savedInformation() asynchronously selects this account's saved Excel format.
+  // Wait for it; never guess or overwrite the carrier's format/route codes.
+  const deadline = Date.now() + 15000;
+  let lastSignature = '', stableSince = 0, ready = false;
+  while (Date.now() < deadline) {
+    const format = document.querySelector('#waybillFrm #excelFormClass');
+    const signature = JSON.stringify([format?.value, [...document.querySelectorAll('#waybillFrm input[name=procCheck]')].map(el => [el.id, el.checked])]);
+    const idle = document.readyState === 'complete' && format?.value?.trim() && (!window.jQuery || window.jQuery.active === 0);
+    if (!idle || signature !== lastSignature) { stableSince = Date.now(); lastSignature = signature; }
+    if (idle && Date.now() - stableSince >= 600) { ready = true; break; }
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  if (!ready) throw new Error('대신의 우편번호·엑셀 양식 설정 로딩을 확인하지 못해 파일을 전송하지 않았습니다. 대신 화면 설정을 확인해 주세요.');
   const input = document.querySelector('form#waybillFrm input#input-file[type=file]');
   if (!input || input.name !== 'inputRealFile') throw new Error('확인했던 대신 파일 입력란을 찾지 못했습니다. 전송하지 않았습니다.');
   if (input.files?.length) throw new Error('이미 파일이 있는 등록 화면에는 덮어쓰지 않습니다.');
@@ -41,7 +54,12 @@ function stageCarrierWorkbook(job) {
             const raw = JSON.stringify(data.resultBillNos ?? '');
             const numbers = [...new Set(raw.match(/(?<!\d)\d{12}(?!\d)/g) || [])];
             emit('registration-response', { numbers, result: typeof data.result === 'string' || typeof data.result === 'number' ? data.result : null, message: typeof data.message === 'string' ? data.message.slice(0, 500) : '', responseReceived: true });
-          } else emit('upload-response', { rowCount: Array.isArray(data.insert) ? data.insert.length : null });
+          } else {
+            const destinationFields = ['arrival_agencycode', 'unregistered_post', 'unregistered_post_state', 'transit_mode'];
+            const destinations = Array.isArray(data.insert) ? data.insert.slice(0, 3).map(row => Object.fromEntries(destinationFields.filter(key => row && Object.hasOwn(row, key)).map(key => [key, String(row[key] ?? '').slice(0, 160)]))) : [];
+            // Give the carrier's own rendering callback time to update its destination counter.
+            setTimeout(() => emit('upload-response', { rowCount: Array.isArray(data.insert) ? data.insert.length : null, destinations }), 100);
+          }
         } catch { emit('unknown', { phase: registration ? 'registration' : 'upload' }); }
       }, { once: true });
     }
@@ -54,6 +72,19 @@ function stageCarrierWorkbook(job) {
   input.dispatchEvent(new Event('change', { bubbles: true }));
   // The final register/print action is deliberately left to the carrier's native reviewed UI.
   return { staged: true, bytes: bytes.length };
+}
+function inspectCarrierDestination() {
+  const url = new URL(location.href);
+  if (url.origin !== 'https://partner.ds3211.co.kr' || url.pathname !== '/issueSvl' || url.searchParams.get('svcSid') !== 'excelIssuWay') throw new Error('대신 엑셀일괄발행 화면을 열어 주세요.');
+  const counter = document.querySelector('#span_not-selectedAgency');
+  const text = counter?.textContent?.trim() || '';
+  const digits = text.match(/\d+/);
+  return {
+    checkedAt: new Date().toISOString(), missingDestinationCount: digits ? Number(digits[0]) : null,
+    destinationCounter: text.slice(0, 120),
+    format: document.querySelector('#waybillFrm #excelFormClass')?.value || '',
+    postalOptions: [...document.querySelectorAll('#waybillFrm input[name=procCheck]')].map(el => ({ id: el.id, checked: el.checked })),
+  };
 }
 function findCarrierWaybill(number, receiver) {
   const url = new URL(location.href);
