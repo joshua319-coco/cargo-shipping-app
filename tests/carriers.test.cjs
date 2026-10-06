@@ -264,3 +264,32 @@ test('Logen verification accepts the observed Gwangju aliases without suppressin
     assert.equal(mismatch.status,'확인필요');assert.ok(mismatch.reasons.includes(reason));
   }
 });
+
+test('Daesin combined transport/payment fields retain full verification data', () => {
+  for (const [label, delivery, pay] of [
+    ['택배(착불)', '택배', '착불'], ['택배(현불)', '택배', '선불'],
+    ['정기(착불)', '정기', '착불'], ['정기(현불)', '정기', '선불'],
+    ['화물(선불)', '정기', '선불'], [' 정기 （ 현불 ） ', '정기', '선불'],
+  ]) {
+    const raw = {수화주명:'테스트수하인',수화주전화:'010-1234-5678',발화주명:'별도발화주',발화주전화:'031-000-0000',
+      주소:'경기도 수원시 테스트로 10 101호',도착영업소:'테스트영업소',운송장번호:'214064900999',
+      수량:1,총운임:5500,운송구분:label};
+    const [parsed] = helpers.parseWaybillUploadRows([raw], '대신');
+    assert.equal(parsed.delivery, delivery, label); assert.equal(parsed.pay, pay, label);
+    assert.equal(parsed.sender, '별도발화주'); assert.equal(parsed.address, raw.주소);
+    assert.equal(parsed.senderPhone, raw.발화주전화); assert.equal(parsed.waybillNo, raw.운송장번호);
+    assert.equal(parsed.raw.운송구분, label);
+    const s=shipment({carrier:'대신',qty:1,fare:5500,delivery,pay,sender:'별도발화주',branch:'테스트영업소'});
+    const [matched]=helpers.buildWaybillVerificationRows([s],[parsed]);
+    assert.equal(matched.status,'일치',label);
+    const [mismatch]=helpers.buildWaybillVerificationRows([s],[{...parsed,sender:'다른발화주',address:'경기도 수원시 테스트로 11',branch:'다른영업소',fare:6600}]);
+    assert(mismatch.reasons.includes('발화주명 확인'));
+    assert(mismatch.reasons.includes(delivery==='택배'?'주소 확인':'도착영업소 확인'));
+    assert(mismatch.reasons.includes('총운임 확인'));
+  }
+});
+
+test('Daesin separate columns take precedence over combined display labels', () => {
+  const [parsed]=helpers.parseWaybillUploadRows([{수화주명:'테스트',운송상품:'화물',지불방법:'현불',운송구분:'택배(착불)'}],'대신');
+  assert.equal(parsed.delivery,'정기'); assert.equal(parsed.pay,'선불');
+});

@@ -651,8 +651,9 @@ function normalizeWaybillDelivery(value: string): DeliveryType {
 }
 
 function normalizeWaybillPay(value: string): PayType {
-  const text = asString(value).replace(/\s/g, "");
-  return text === "현불" || text === "선불" || text === "신용" ? "선불" : "착불";
+  const text = asString(value).normalize("NFKC").replace(/\s/g, "");
+  const payment = text.match(/(?:^|\()(현불|선불|신용|착불)(?:\)|$)/)?.[1] ?? text;
+  return payment === "현불" || payment === "선불" || payment === "신용" ? "선불" : "착불";
 }
 
 function buildWaybillMessageText(params: {
@@ -718,10 +719,12 @@ function parseWaybillUploadRows(
       const fare = parseNumberValue(
         getRowValue(row, ["택배운임", "총운임", "운임", "총배송비"]),
       );
+      // 대신은 운송구분 한 열에 정기(현불), 택배(착불)처럼 두 값을 함께 제공하기도 한다.
+      const combinedTransport = carrier === "대신" ? getRowValue(row, ["운송구분"]) : "";
       const delivery = carrier === "로젠" ? "택배" : normalizeWaybillDelivery(
-        getRowValue(row, ["운송상품", "운송상품명", "운송방법"]),
+        getRowValue(row, ["운송상품", "운송상품명", "운송방법"]) || combinedTransport,
       );
-      const rawPay = getRowValue(row, ["지불방법", "운임구분"]);
+      const rawPay = getRowValue(row, ["지불방법", "운임구분"]) || combinedTransport;
       const pay = normalizeWaybillPay(rawPay);
       const senderPhone = getRowValue(row, ["송하인전화번호", "송하인전화", "송하인연락처", "발화주전화번호", "발화주전화", "보내는분전화번호"]);
       const memo = getRowValue(row, ["배송메세지", "베송메세지", "배송메시지", "배송메세지내용", "특기사항"]);
