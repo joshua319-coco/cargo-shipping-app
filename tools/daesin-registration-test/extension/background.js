@@ -1,5 +1,5 @@
 'use strict';
-importScripts('registration-policy.js', 'carrier-functions.js');
+importScripts('registration-policy.js', 'carrier-functions.js', 'daily-export.js');
 const APP = 'http://127.0.0.1:4320', CARRIER = 'https://partner.ds3211.co.kr';
 const REGISTER = CARRIER + '/issueSvl?svcGid=customer.issue&svcSid=excelIssuWay';
 const DAILY = CARRIER + '/searchSvl?svcGid=customer.search&svcSid=dailySearch';
@@ -7,7 +7,7 @@ const KEY = 'sanghwaLiveRegistrationJobs';
 let staging = false, serial = Promise.resolve();
 const readJobs = async () => (await chrome.storage.local.get(KEY))[KEY] || [];
 const saveJobs = jobs => chrome.storage.local.set({ [KEY]: jobs });
-const publicJob = job => job ? { id: job.id, shipmentId: job.shipmentId, shipmentDate: job.shipmentDate, receiver: job.receiver, state: job.state, registered: hasDaesinRegistrationSuccess(job), numbers: job.numbers || [], message: job.message || '', updatedAt: job.updatedAt, tabId: job.tabId, destinationNeedsReview: Boolean(job.destinationNeedsReview), destinationReason: job.destinationReason || '' } : null;
+const publicJob = job => job ? { id: job.id, shipmentId: job.shipmentId, shipmentDate: job.shipmentDate, receiver: job.receiver, state: job.state, registered: hasDaesinRegistrationSuccess(job), numbers: job.numbers || [], message: job.message || '', updatedAt: job.updatedAt, tabId: job.tabId, destinationNeedsReview: Boolean(job.destinationNeedsReview), destinationReason: job.destinationReason || '', lookupMessage: job.lookupMessage || '' } : null;
 function isApp(sender) { try { return sender.frameId === 0 && new URL(sender.url).origin === APP; } catch { return false; } }
 async function waitForTab(tabId) {
   for (let i = 0; i < 40; i++) { const tab = await chrome.tabs.get(tabId); if (tab.status === 'complete' && tab.url?.startsWith(CARRIER + '/')) return tab; await new Promise(resolve => setTimeout(resolve, 500)); }
@@ -99,38 +99,24 @@ async function inspect(jobId) {
   await readDestination(job); job.updatedAt = new Date().toISOString(); await saveJobs(jobs);
   return { ok: true, job: publicJob(job) };
 }
-async function verify(jobId) {
-  const jobs = await readJobs(), job = jobs.find(item => item.id === jobId);
-  if (!job || !hasDaesinRegistrationSuccess(job)) throw new Error('대신의 접수 성공 응답이 먼저 필요합니다.');
+async function fetchDaily(shipmentDate) {
+  if (shipmentDate !== '2026-10-06') throw new Error('이번 테스트는 2026-10-06 발송데이터만 가져옵니다.');
   const tabs = (await chrome.tabs.query({ url: CARRIER + '/searchSvl*' })).filter(tab => new URL(tab.url).searchParams.get('svcSid') === 'dailySearch');
-  const found = [], reasons = []; let ambiguous = false;
-  for (const tab of tabs) {
-    try {
-      const source = job.diagnosis?.source || {};
-      const [check] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'ISOLATED',
-        func: job.numbers?.length === 1 ? findCarrierWaybill : findCarrierShipmentWaybill,
-        args: job.numbers?.length === 1 ? [job.numbers[0], job.receiver] : [{ receiver: job.receiver, shipmentDate: job.shipmentDate, quantity: source.quantity, fare: source.fare, delivery: source.delivery, receiverPhone: source.receiverPhone, pay: source.pay }]
-      });
-      if (check?.result?.found) found.push(check.result);
-      else if (check?.result) { reasons.push(check.result.reason); ambiguous ||= check.result.ambiguous; }
-    } catch { reasons.push('대신 조회 화면을 읽지 못했습니다.'); }
-  }
-  const numbers = [...new Set(found.map(row => row.number))];
-  if (!ambiguous && numbers.length === 1) {
-    job.numbers = numbers; job.state = 'verified';
-    const warning = found.find(row => row.destinationNeedsReview);
-    if (warning) { job.destinationNeedsReview = true; job.destinationReason = warning.destinationReason; }
-    job.message = '대신 목록에서 실제 송장번호와 수화주명을 확인했습니다.' + (job.destinationNeedsReview ? ' 도착지 수정 필요 · ' + job.destinationReason : '');
-    job.updatedAt = new Date().toISOString(); await saveJobs(jobs); return { ok: true, job: publicJob(job) };
-  }
-  if (tabs[0]) await chrome.tabs.update(tabs[0].id, { active: true }); else await chrome.tabs.create({ url: DAILY, active: true });
-  return { ok: false, error: numbers.length > 1 || ambiguous ? '같은 출고정보의 송장번호가 여러 개 있어 자동 연결하지 않았습니다.' : (reasons[0] || '대신 일자별조회에서 ' + job.shipmentDate + '를 조회한 후 ‘송장번호 가져오기’를 다시 눌러 주세요.') };
+  tabs.sort((a,b) => Number(b.active)-Number(a.active) || (b.lastAccessed||0)-(a.lastAccessed||0) || b.id-a.id);
+  if (!tabs.length) { await chrome.tabs.create({url:DAILY,active:true}); throw new Error('열린 대신 일자별조회에서 '+shipmentDate+'를 조회한 뒤 다시 가져와 주세요.'); }
+  const [result] = await chrome.scripting.executeScript({target:{tabId:tabs[0].id},world:'ISOLATED',func:fetchDaesinDailyWorkbook,args:[shipmentDate]});
+  if (result?.result?.error) throw new Error(result.result.error);
+  if (!result?.result?.workbook || !Array.isArray(result.result.rows)) throw new Error(result?.error?.message || '대신 엑셀 응답을 받지 못했습니다. 로그인 상태와 조회 날짜를 확인해 주세요.');
+  const dataset = result.result;
+  const jobs = reconcileDaesinDailyJobs(await readJobs(), dataset.rows, shipmentDate);
+  await saveJobs(jobs);
+  return {ok:true,version:'0.4.0',jobs:jobs.map(publicJob),dataset};
 }
 async function handle(message, sender) {
   if (message.type === 'carrier-event') return carrierEvent(message, sender);
   const fromPopup = sender.url === chrome.runtime.getURL('popup.html');
   if (!isApp(sender) && !fromPopup) throw new Error('허용된 테스트 화면에서만 실행할 수 있습니다.');
-  if (message.action === 'ping') return { ok: true, version: '0.3.1' };
+  if (message.action === 'ping') return { ok: true, version: '0.4.0' };
   if (message.action === 'status') {
     const jobs = await readJobs(); let changed = false;
     for (const job of jobs) if (['staged', 'registering', 'submitting'].includes(job.state) && job.deadlineAt && Date.now() > job.deadlineAt) {
@@ -138,7 +124,7 @@ async function handle(message, sender) {
     }
     for (const job of jobs) changed = updateDaesinAcceptedState(job) || changed;
     if (changed) await saveJobs(jobs);
-    return { ok: true, version: '0.3.1', jobs: jobs.map(publicJob) };
+    return { ok: true, version: '0.4.0', jobs: jobs.map(publicJob) };
   }
   if (message.action === 'inspect') return inspect(message.jobId);
   if (message.action === 'report') {
@@ -150,9 +136,10 @@ async function handle(message, sender) {
         if (result?.result) dailyConnections.push(result.result);
       } catch (error) { dailyConnections.push({ error: String(error.message || error) }); }
     }
-    return { ok: true, report: { format: 'sanghwa-live-registration/3', version: '0.3.1', generatedAt: new Date().toISOString(), jobs: (await readJobs()).map(job => ({ ...publicJob(job), diagnosis: job.diagnosis || {} })), dailyConnections } };
+    return { ok: true, report: { format: 'sanghwa-live-registration/3', version: '0.4.0', generatedAt: new Date().toISOString(), jobs: (await readJobs()).map(job => ({ ...publicJob(job), diagnosis: job.diagnosis || {} })), dailyConnections } };
   }
-  if (message.action === 'verify') return verify(message.jobId);
+  if (message.action === 'fetch-daily' && isApp(sender)) return fetchDaily(message.shipmentDate);
+  if (message.action === 'verify') throw new Error('새 테스트 화면의 대신 발송데이터 가져오기를 사용해 주세요.');
   if (message.action === 'stage' && isApp(sender)) return stage(message);
   throw new Error('지원하지 않는 요청입니다.');
 }

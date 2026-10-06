@@ -21,7 +21,7 @@ function loadTs(file, extra = '') {
   return compiledModule.exports;
 }
 const carrier = loadTs('lib/carriers.ts');
-const { __test: helpers } = loadTs('app/page.tsx', '\nexports.__test = { normalizeShipment, suggestFareByQty, toTemplateRow, toShipmentDbPayload, parseWaybillUploadRows, buildWaybillVerificationRows, normalizeSharedVerifyState, buildWaybillMessageText, TEMPLATE_HEADERS, toLogenTemplateRow, LOGEN_TEMPLATE_HEADERS, isValidShipmentDate, isLiveDaesinTestShipment };');
+const { __test: helpers } = loadTs('app/page.tsx', '\nexports.__test = { normalizeShipment, suggestFareByQty, toTemplateRow, toShipmentDbPayload, parseWaybillUploadRows, buildWaybillVerificationRows, normalizeSharedVerifyState, buildWaybillMessageText, TEMPLATE_HEADERS, toLogenTemplateRow, LOGEN_TEMPLATE_HEADERS, isValidShipmentDate, isLiveDaesinTestShipment, validateDaesinDailyImport };');
 const shipment = (patch = {}) => helpers.normalizeShipment({
   id: '1', carrier: '로젠', receiver: '테스트수하인', receiver_phone: '01012345678',
   address: '경기도 수원시 테스트로 10 101호', postal_code: '12345', sender: '상화시스템',
@@ -292,4 +292,14 @@ test('Daesin combined transport/payment fields retain full verification data', (
 test('Daesin separate columns take precedence over combined display labels', () => {
   const [parsed]=helpers.parseWaybillUploadRows([{수화주명:'테스트',운송상품:'화물',지불방법:'현불',운송구분:'택배(착불)'}],'대신');
   assert.equal(parsed.delivery,'정기'); assert.equal(parsed.pay,'선불');
+});
+
+test('automatic daily import preserves existing data on missing assigned/foreign/duplicate rows',()=>{
+  const rows=[{waybill_no:'999999999991',arrival_name:'A',arrival_agencycode:'2401'},{waybill_no:'999999999992',arrival_name:'B',arrival_agencycode:'0000'}];
+  const parsed=[{waybillNo:rows[0].waybill_no}];
+  assert.deepEqual(helpers.validateDaesinDailyImport(parsed,{rows}),[rows[1]]);
+  assert.throws(()=>helpers.validateDaesinDailyImport([],{rows}));
+  assert.throws(()=>helpers.validateDaesinDailyImport([...parsed,...parsed],{rows}));
+  assert.throws(()=>helpers.validateDaesinDailyImport([{waybillNo:'999999999999'}],{rows}));
+  assert.throws(()=>helpers.validateDaesinDailyImport(parsed,{rows:rows.map(r=>({...r,arrival_agencycode:'2401'}))}));
 });

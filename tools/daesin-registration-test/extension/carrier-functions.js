@@ -225,7 +225,7 @@ function inspectDaesinDailyExportConnection() {
   for (let i = 0; i < queue.length && functions.length < 12; i++) {
     for (const match of queue[i].matchAll(/\b([A-Za-z_$][\w$]*)\s*\(/g)) {
       const name = match[1];
-      if (seen.has(name) || !/excel|down|export|select|check|save/i.test(name)) continue;
+      if (seen.has(name) || !/excel|xls|down|export|select|check|save/i.test(name)) continue;
       seen.add(name);
       const descriptor = Object.getOwnPropertyDescriptor(window, name);
       const source = codeOf(descriptor?.value);
