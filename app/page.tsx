@@ -1842,6 +1842,76 @@ function toTemplateRow(
   return row;
 }
 
+type LiveTestJob = { id: string; shipmentId: string; shipmentDate: string; receiver: string; state: string; numbers: string[]; message: string };
+type LiveTestReply = { ok: boolean; error?: string; version?: string; jobs?: LiveTestJob[]; job?: LiveTestJob; repeated?: boolean };
+function callLiveTestBridge(action: string, extra: Record<string, unknown> = {}): Promise<LiveTestReply> {
+  return new Promise((resolve, reject) => {
+    const requestId = crypto.randomUUID();
+    const timer = window.setTimeout(() => { window.removeEventListener('message', receive); reject(new Error(action === 'stage' ? '전송 결과를 받지 못했습니다. 다시 전송하지 말고 대신 화면과 확장 프로그램 상태를 확인해 주세요.' : '실제접수 테스트 확장 프로그램을 설치한 크롬에서 열어 주세요.')); }, action === 'stage' ? 45000 : 5000);
+    function receive(event: MessageEvent) {
+      if (event.source !== window || event.origin !== location.origin || event.data?.channel !== 'sanghwa-live-response' || event.data.requestId !== requestId) return;
+      clearTimeout(timer); window.removeEventListener('message', receive); resolve(event.data.result);
+    }
+    window.addEventListener('message', receive);
+    window.postMessage({ channel: 'sanghwa-live-request', requestId, action, ...extra }, location.origin);
+  });
+}
+function DaesinLiveTestPanel({ rows, mapRow, hasWaybill }: { rows: SavedShipment[]; mapRow: (row: SavedShipment) => Record<string, string | number>; hasWaybill: (id: string) => boolean }) {
+  const [enabled, setEnabled] = useState(false), [busy, setBusy] = useState(false), [connected, setConnected] = useState(false);
+  const [message, setMessage] = useState(''), [jobs, setJobs] = useState<LiveTestJob[]>([]);
+  const inFlight = useRef(false);
+  useEffect(() => { setEnabled(process.env.NODE_ENV === 'development' && location.origin === 'http://127.0.0.1:4320' && new URLSearchParams(location.search).get('registrationTest') === '1'); }, []);
+  const refresh = async () => {
+    try { const response = await callLiveTestBridge('status'); if (!response.ok) throw new Error(response.error); setConnected(true); setJobs(response.jobs || []); setMessage('연결됨 · 실제 접수 테스트는 1건씩 진행합니다.'); }
+    catch (error) { setConnected(false); setMessage(error instanceof Error ? error.message : '연결 실패'); }
+  };
+  const stage = async () => {
+    if (inFlight.current) return;
+    if (rows.length !== 1 || rows[0].carrier !== '대신') return setMessage('목록에서 아직 접수하지 않은 대신 출고 1건만 선택해 주세요.');
+    const row = rows[0];
+    const target = new URLSearchParams(location.search);
+    if (row.id !== target.get('shipmentId') || row.shipmentDate !== target.get('shipmentDate')) return setMessage('이번 테스트는 지정된 날짜의 ‘대신자동업로드테스트’ 1건으로만 진행합니다.');
+    if (hasWaybill(row.id)) return setMessage('이미 송장번호가 연결된 출고건입니다. 중복 접수하지 않습니다.');
+    const mapped = mapRow(row);
+    if (!mapped.우편번호 || !/^\d{5}$/.test(String(mapped.우편번호)) || Number(mapped.수량) < 1 || !row.receiver.trim() || !row.receiverPhone.trim()) return setMessage('수화주명·전화번호·우편번호·수량을 확인해 주세요.');
+    if (!window.confirm(`${row.receiver}\n출고일 ${row.shipmentDate}\n대신 전송 수량 ${mapped.수량}${row.pack} / 운임 ${mapped.총운임}원 / ${row.pay}\n도착지 ${row.delivery === '정기' ? row.branch : row.address}\n\n아직 대신에 접수하지 않은 1건이 맞나요? 대신 등록 화면으로 실제 데이터를 전송합니다. 최종 등록은 대신 화면에서 확인 후 진행합니다.`)) return;
+    inFlight.current = true; setBusy(true); setMessage('대신 등록 화면을 열고 선택한 1건을 전달하고 있습니다.');
+    try {
+      const XLSX = await import('xlsx');
+      const sheet = XLSX.utils.aoa_to_sheet([[...TEMPLATE_HEADERS], TEMPLATE_HEADERS.map(header => mapped[header])]);
+      const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, sheet, TEMPLATE_SHEET_NAME);
+      const buffer = new Uint8Array(XLSX.write(workbook, { bookType: 'xlsx', type: 'array' }));
+      let binary = ''; for (let i = 0; i < buffer.length; i++) binary += String.fromCharCode(buffer[i]);
+      const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify({ id: row.id, date: row.shipmentDate, mapped })));
+      const fingerprint = Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('');
+      const response = await callLiveTestBridge('stage', { payload: { shipmentId: row.id, shipmentDate: row.shipmentDate, receiver: row.receiver, fingerprint, workbook: btoa(binary) } });
+      if (!response.ok) throw new Error(response.error);
+      if (response.job) setJobs(previous => [...previous.filter(job => job.id !== response.job!.id), response.job!]);
+      setMessage(response.repeated ? '이미 전송한 출고건입니다. 새로 전송하지 않고 기존 결과를 표시합니다.' : '대신 등록 화면에 전달했습니다. 그 화면의 1건을 확인한 뒤 최종 등록을 진행해 주세요.');
+    } catch (error) { setMessage(error instanceof Error ? error.message : '연결 결과를 확인해 주세요.'); }
+    finally { inFlight.current = false; setBusy(false); }
+  };
+  const verify = async (id: string) => {
+    try { const response = await callLiveTestBridge('verify', { jobId: id }); if (!response.ok) throw new Error(response.error); if (response.job) setJobs(previous => previous.map(job => job.id === id ? response.job! : job)); setMessage(response.job?.message || '확인했습니다.'); }
+    catch (error) { setMessage(error instanceof Error ? error.message : '조회결과 확인 필요'); }
+  };
+  if (!enabled) return null;
+  return <section aria-label="대신 실제접수 테스트" style={{ border: '1px solid #bfdbfe', background: '#f8fbff', padding: 14, borderRadius: 12, marginBottom: 14 }}>
+    <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+      <strong>대신 실제접수 테스트</strong><button type="button" onClick={() => void refresh()} disabled={busy} style={exportBtnSecondary}>연결·결과 확인</button>
+      <button type="button" onClick={() => void stage()} disabled={!connected || busy} style={{ ...exportBtnPrimary, opacity: !connected || busy ? .5 : 1 }}>{busy ? '전송 중…' : '선택 1건 대신 등록 화면으로'}</button>
+      <a href="/registration-test-setup/index.html" target="_blank" rel="noreferrer" style={{ fontSize: 13 }}>연결 도구 설치</a>
+    </div>
+    <p role="status" style={{ fontSize: 13, color: '#475569', margin: '10px 0 0' }}>{message || '운영 출고정보를 사용합니다. 전송할 1건을 선택하고 연결을 확인해 주세요. 실제 접수 확인 전까지 등록완료로 표시하지 않습니다.'}</p>
+    {jobs.map(job => <div key={job.id} style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', borderTop: '1px solid #dbe5f3', marginTop: 10, paddingTop: 10, fontSize: 13 }}>
+      <strong>{job.receiver}</strong><span>{job.shipmentDate}</span><span>{job.numbers.join(', ')}</span>
+      <span style={{ color: job.state === 'verified' ? '#15803d' : '#475569' }}>{job.state === 'verified' ? '대신 목록에서 접수 확인됨' : job.message || '처리상태 확인 필요'}</span>
+      {job.numbers.length === 1 && <button type="button" style={exportBtnSecondary} onClick={() => void verify(job.id)} disabled={busy}>실제 등록 확인</button>}
+    </div>)}
+  </section>;
+}
+
+
 export default function Home() {
   const [tab, setTab] = useState<TabType>(() => {
     if (typeof window === "undefined") return "출고등록";
@@ -2995,6 +3065,16 @@ export default function Home() {
     }
     setTab(nextTab);
   };
+
+  useEffect(() => {
+    if (process.env.NODE_ENV !== 'development' || location.origin !== 'http://127.0.0.1:4320') return;
+    const target = new URLSearchParams(location.search);
+    if (target.get('registrationTest') !== '1') return;
+    const id = target.get('shipmentId'), date = target.get('shipmentDate');
+    setTab('출고목록'); setCarrierFilter('대신');
+    if (id && /^\d+$/.test(id)) setSelectedIds([id]);
+    if (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) { setListDateFrom(date); setListDateTo(date); setListDateFromDraft(date); setListDateToDraft(date); }
+  }, []);
 
   const shipmentWaybillInfoById = useMemo(() => {
     const result = new Map<
@@ -5442,6 +5522,8 @@ export default function Home() {
                 필터 초기화
               </button>
             </div>
+
+            <DaesinLiveTestPanel rows={sortedShipments.filter(row => selectedIds.includes(row.id))} mapRow={row => toTemplateRow(row, resolvePostalCodeValue)} hasWaybill={id => shipmentWaybillInfoById.has(id)} />
 
             <div style={carrierFilter === "전체" ? { ...exportBar, flexDirection: "column", alignItems: "stretch", gap: 6, marginBottom: 8 } : exportBar} role="group" aria-label="출고목록 도구">
               {renderWaybillUploadControls(true)}

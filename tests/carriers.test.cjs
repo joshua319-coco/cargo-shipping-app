@@ -234,3 +234,12 @@ test('shipment dates reject empty and invalid dates while allowing leap dates', 
     assert.equal(helpers.isValidShipmentDate(date), true, date);
   }
 });
+
+test('Daesin half-box exports as one physical box without changing its fare or internal quantity', () => {
+  const input=shipment({carrier:'대신',qty:0.5,fare:6600,pay:'착불'});
+  const mapped=helpers.toTemplateRow(input,()=> '18624');
+  assert.equal(mapped.수량,1); assert.equal(mapped.총운임,6600); assert.equal(Number(input.qty),0.5);
+  const workbook=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook,XLSX.utils.json_to_sheet([mapped]),'Sheet1');
+  const parsed=XLSX.read(XLSX.write(workbook,{type:'buffer',bookType:'xlsx'}),{type:'buffer'});
+  assert.equal(XLSX.utils.sheet_to_json(parsed.Sheets.Sheet1)[0].수량,1);
+});
