@@ -9,10 +9,11 @@ try {
   Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'extension') -Destination (Join-Path $stage '연결확인도구') -Recurse
   $guide = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'guide.html') -Raw -Encoding utf8
   [System.IO.File]::WriteAllText((Join-Path $publicOutput 'index.html'), $guide, [System.Text.UTF8Encoding]::new($false))
-  $offlineGuide = $guide.Replace('<a class="download" href="cargo-print-connection-check.zip" download>연결 확인 도구 다운로드</a>', '<p class="note">압축을 이미 푸셨다면 아래 <strong>2번</strong>부터 진행하세요.</p>')
+  $offlineGuide = $guide.Replace('<a class="download" href="cargo-print-connection-check-v0.2.0.zip" download>연결 확인 도구 다운로드</a>', '<p class="note">이미 압축을 푸셨습니다. 아래 <strong>1번의 파일 복사</strong>부터 진행하세요. 처음 설치할 때는 아래 <strong>처음 설치하거나 기존 폴더를 모를 때</strong>를 펼쳐 주세요.</p>')
   [System.IO.File]::WriteAllText((Join-Path $stage '처음읽어주세요.html'), $offlineGuide, [System.Text.UTF8Encoding]::new($false))
   $archive = Join-Path $publicOutput 'cargo-print-connection-check.zip'
   Compress-Archive -LiteralPath @((Join-Path $stage '연결확인도구'), (Join-Path $stage '처음읽어주세요.html')) -DestinationPath $archive -Force
+  Copy-Item -LiteralPath $archive -Destination (Join-Path $publicOutput 'cargo-print-connection-check-v0.2.0.zip') -Force
   Get-Item -LiteralPath $archive | Select-Object Name, Length
   Get-FileHash -LiteralPath $archive -Algorithm SHA256 | Select-Object Algorithm, Hash
 } finally {

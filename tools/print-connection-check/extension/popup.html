@@ -2,12 +2,12 @@
 <html lang="ko">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>운송장 연결 확인</title><link rel="stylesheet" href="popup.css"></head>
 <body>
-  <h1>운송장 연결 확인</h1>
-  <p class="intro">대신은 <strong>일자별 조회</strong>, 로젠은 <strong>운송장 미리보기</strong>를 연 뒤 눌러 주세요.</p>
+  <h1>운송장 연결 확인 <small style="font-size:12px;color:#64748b">0.2.0</small></h1>
+  <p class="intro">대신 자동등록 확인: <strong>엑셀일괄발행</strong> 화면을 열고 눌러 주세요. 파일을 올리거나 등록할 필요는 없습니다.</p>
   <button id="inspect" class="primary">현재 화면 확인</button>
-  <p id="message" role="status" aria-live="polite">출력 버튼과 프로그램 연결 정보를 확인합니다.</p>
-  <div class="results"><div><span>대신</span><strong id="daesin">확인 전</strong></div><div><span>로젠</span><strong id="logen">확인 전</strong></div></div>
+  <p id="message" role="status" aria-live="polite">현재 화면의 등록 또는 출력 연결 정보를 확인합니다.</p>
+  <div class="results"><div><span>대신 등록</span><strong id="registration">확인 전</strong></div><div><span>대신 출력</span><strong id="daesin">확인 전</strong></div><div><span>로젠 출력</span><strong id="logen">확인 전</strong></div></div>
   <button id="save" disabled>확인 결과 파일 저장</button>
-  <p class="note">실제 인쇄와 데이터 변경은 하지 않습니다.<br>결과는 이 컴퓨터에만 저장되며 자동 전송되지 않습니다.</p>
-  <script src="probe.js"></script><script src="popup.js"></script>
+  <p class="note">실제 등록·인쇄와 데이터 변경은 하지 않습니다.<br>결과는 이 컴퓨터에만 저장되며 자동 전송되지 않습니다.</p>
+  <script src="probe.js"></script><script src="registration-probe.js"></script><script src="popup.js"></script>
 </body></html>

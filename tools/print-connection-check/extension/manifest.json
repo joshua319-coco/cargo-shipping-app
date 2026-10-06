@@ -1,11 +1,8 @@
 {
   "manifest_version": 3,
   "name": "상화 운송장 연결 확인",
-  "version": "0.1.0",
-  "description": "대신·로젠 화면의 출력 버튼과 출력 모듈 연결 정보를 사용자가 요청할 때만 확인합니다.",
+  "version": "0.2.0",
+  "description": "대신 엑셀등록 화면과 대신·로젠 출력 연결의 기술 정보를 사용자가 요청할 때만 확인합니다.",
   "permissions": ["activeTab", "scripting", "storage"],
-  "action": {
-    "default_title": "상화 운송장 연결 확인",
-    "default_popup": "popup.html"
-  }
+  "action": { "default_title": "상화 운송장 연결 확인", "default_popup": "popup.html" }
 }

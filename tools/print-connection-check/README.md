@@ -1,21 +1,13 @@
-# Printer connection discovery
+# Read-only carrier connection checker
 
-Read-only, user-invoked Chrome/Edge extension to identify the existing carrier print integration before implementing automatic waybill printing.
+Version 0.2.0 adds a dedicated Daesin Excel registration probe for `/issueSvl?svcGid=customer.issue&svcSid=excelIssuWay`. The previous 0.1.0 print probe did not collect registration controls or inline business logic. A report from that version cannot establish the upload/submit flow.
 
-## Known setup
+The extension still requests only `activeTab`, `scripting`, and `storage`. It runs on an explicit click. Print inspection remains unchanged. Registration inspection injects the bundled MIT-licensed Acorn 8.16.0 parser into the extension's ISOLATED world, then parses DOM inline scripts as syntax without evaluating carrier code. It does not make network calls, submit forms, select/upload files, print, or access cookies or page storage.
 
-- Daesin: `partner.ds3211.co.kr`, BIXOLON Web Print SDK 2.0.6, SLP-DL410, logical printer `Printer1`. The existing Print button prints without a further dialog.
-- Logen: `logis.ilogen.com`, `(신)감열B` preview followed by confirmation and printer dialog, printer `PS100`.
-- Printers are connected to a different PC without Codex.
+The exported registration report includes technical form field names, known UI labels, script paths, allowlisted same-origin service routes, and a syntax summary of calls/assignments/callbacks. General string and numeric literals are omitted, as are input values, rows, source text and parse-error messages. Only narrowly allowlisted technical contexts retain service IDs, selectors, request field names, HTTP methods and endpoint paths. Array data is never serialized. Size/node/depth/event limits and parser failures are reported as partial results, not successful registration readiness. Neither captured nor partial status establishes automation feasibility.
 
-## Requested printing behavior (not implemented by this tool)
+Old carrier print reports remain in `sanghwaPrintConnectionV1`. Registration uses a separate `sanghwaRegistrationConnectionV1` entry. Bundle version 2 retains both and downloads as `등록_연결확인.json` when registration data exists. A versioned ZIP avoids downloading a cached old tool; the original ZIP URL is maintained for compatibility.
 
-Every PDA false-to-true transition, including bulk and completion actions, requests printing. Existing true values do not produce another request. Uncheck then recheck allows a reprint after the user's confirmation. Browser refresh and synchronization must not create new print requests. The carrier and actual waybill must be bound to each request, and delivery/retry handling must not silently duplicate prints.
+Run `powershell -NoProfile -ExecutionPolicy Bypass -File tools/print-connection-check/package.ps1` to regenerate the public guide and both ZIP files. Keep the vendor license alongside Acorn. The guide explains overwriting the existing unpacked extension directory and reloading it in `chrome://extensions`.
 
-## Discovery tool
-
-The extension uses only `activeTab`, `scripting`, and `storage`. It has no host permissions, background worker, content script, network requests, print calls, cookie access, or page storage access. Clicking its action and then the inspection button is required. Only the two exact HTTPS carrier hosts are accepted. It inspects same-origin frames, script paths, allowlisted print-button labels and callee names, and module/method names. Query strings are removed except the known Daesin route keys; inline handler literals are discarded. It does not collect shipment rows, input values, full page HTML, screenshots, module object contents, or credentials.
-
-Reports are retained in extension-local storage and exported by the user as one JSON file. This file is needed to locate carrier-owned print entry points and report-viewer integration. It is not proof of successful printing or a replacement for testing on the printer PC.
-
-Run `package.ps1` from PowerShell to produce `public/print-setup/index.html` and `public/print-setup/cargo-print-connection-check.zip`. Source and the distributed archive should be kept in sync. The guide is also included in the archive for offline setup.
+This is a diagnostic only. It does not implement automatic registration or printing. Reprinting must preserve the existing waybill number; Logen's normal RePrint flow can allocate a new number and must not be used for that requirement.
