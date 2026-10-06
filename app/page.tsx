@@ -1851,7 +1851,7 @@ type LiveTestReply = { ok: boolean; error?: string; version?: string; jobs?: Liv
 function callLiveTestBridge(action: string, extra: Record<string, unknown> = {}): Promise<LiveTestReply> {
   return new Promise((resolve, reject) => {
     const requestId = crypto.randomUUID();
-    const timer = window.setTimeout(() => { window.removeEventListener('message', receive); reject(new Error(action === 'stage' ? '전송 결과를 받지 못했습니다. 다시 전송하지 말고 대신 화면과 확장 프로그램 상태를 확인해 주세요.' : '실제접수 테스트 확장 프로그램을 설치한 크롬에서 열어 주세요.')); }, action === 'stage' ? 45000 : 5000);
+    const timer = window.setTimeout(() => { window.removeEventListener('message', receive); reject(new Error(action === 'stage' ? '전송 결과를 받지 못했습니다. 다시 전송하지 말고 대신 화면과 확장 프로그램 상태를 확인해 주세요.' : action === 'verify' ? '송장번호 조회 응답이 늦어지고 있습니다. 연결·결과 확인을 눌러 상태를 확인해 주세요. 다시 등록할 필요는 없습니다.' : '실제접수 테스트 확장 프로그램을 설치한 크롬에서 열어 주세요.')); }, action === 'stage' ? 45000 : action === 'verify' ? 20000 : 5000);
     function receive(event: MessageEvent) {
       if (event.source !== window || event.origin !== location.origin || event.data?.channel !== 'sanghwa-live-response' || event.data.requestId !== requestId) return;
       clearTimeout(timer); window.removeEventListener('message', receive); resolve(event.data.result);
@@ -1863,10 +1863,12 @@ function callLiveTestBridge(action: string, extra: Record<string, unknown> = {})
 function DaesinLiveTestPanel({ rows, mapRow, hasWaybill }: { rows: SavedShipment[]; mapRow: (row: SavedShipment) => Record<string, string | number>; hasWaybill: (id: string) => boolean }) {
   const [enabled, setEnabled] = useState(false), [busy, setBusy] = useState(false), [connected, setConnected] = useState(false);
   const [message, setMessage] = useState(''), [jobs, setJobs] = useState<LiveTestJob[]>([]);
+  const [verifyingId, setVerifyingId] = useState<string | null>(null);
+  const [lookupFeedback, setLookupFeedback] = useState<Record<string, { state: 'loading' | 'success' | 'error'; text: string }>>({});
   const inFlight = useRef(false);
   useEffect(() => { setEnabled(process.env.NODE_ENV === 'development' && location.origin === 'http://127.0.0.1:4320' && new URLSearchParams(location.search).get('registrationTest') === '1'); }, []);
   useEffect(() => {
-    if (!enabled || !connected) return;
+    if (!enabled || !connected || busy) return;
     let active = true;
     const timer = window.setInterval(() => {
       void callLiveTestBridge('status').then(response => {
@@ -1874,7 +1876,7 @@ function DaesinLiveTestPanel({ rows, mapRow, hasWaybill }: { rows: SavedShipment
       }).catch(() => {});
     }, 3000);
     return () => { active = false; clearInterval(timer); };
-  }, [enabled, connected]);
+  }, [enabled, connected, busy]);
   const refresh = async () => {
     try { const response = await callLiveTestBridge('status'); if (!response.ok) throw new Error(response.error); if (response.version !== '0.3.1') throw new Error('새 연결 도구 0.3.1을 설치하고 이 화면을 새로고침해 주세요.'); setConnected(true); setJobs(response.jobs || []); setMessage('연결됨 · 실제 접수 테스트는 1건씩 진행합니다.'); }
     catch (error) { setConnected(false); setMessage(error instanceof Error ? error.message : '연결 실패'); }
@@ -1905,8 +1907,20 @@ function DaesinLiveTestPanel({ rows, mapRow, hasWaybill }: { rows: SavedShipment
     finally { inFlight.current = false; setBusy(false); }
   };
   const verify = async (id: string) => {
-    try { const response = await callLiveTestBridge('verify', { jobId: id }); if (!response.ok) throw new Error(response.error); if (response.job) setJobs(previous => previous.map(job => job.id === id ? response.job! : job)); setMessage(response.job?.message || '확인했습니다.'); }
-    catch (error) { setMessage(error instanceof Error ? error.message : '조회결과 확인 필요'); }
+    if (inFlight.current) return;
+    inFlight.current = true; setBusy(true); setVerifyingId(id);
+    const pending = '대신 일자별조회에서 송장번호를 확인 중입니다…';
+    setMessage(pending); setLookupFeedback(previous => ({ ...previous, [id]: { state: 'loading', text: pending } }));
+    try {
+      const response = await callLiveTestBridge('verify', { jobId: id });
+      if (!response.ok) throw new Error(response.error || '조회 결과를 확인하지 못했습니다. 대신 일자별조회를 열어둔 상태에서 확인결과 파일을 저장해 주세요.');
+      if (response.job) setJobs(previous => previous.map(job => job.id === id ? response.job! : job));
+      const result = response.job?.numbers.length === 1 ? '송장번호 ' + response.job.numbers[0] + ' 연결 완료' : response.job?.message || '확인했습니다.';
+      setMessage(result); setLookupFeedback(previous => ({ ...previous, [id]: { state: 'success', text: result } }));
+    } catch (error) {
+      const result = error instanceof Error ? error.message : '조회 결과를 확인하지 못했습니다.';
+      setMessage(result); setLookupFeedback(previous => ({ ...previous, [id]: { state: 'error', text: result } }));
+    } finally { inFlight.current = false; setBusy(false); setVerifyingId(null); }
   };
   const inspect = async (id: string) => {
     try { const response = await callLiveTestBridge('inspect', { jobId: id }); if (!response.ok) throw new Error(response.error); if (response.job) setJobs(previous => previous.map(job => job.id === id ? response.job! : job)); setMessage(response.job?.message || '도착지를 확인했습니다.'); }
@@ -1923,7 +1937,7 @@ function DaesinLiveTestPanel({ rows, mapRow, hasWaybill }: { rows: SavedShipment
   return <section aria-label="대신 실제접수 테스트" style={{ border: '1px solid #bfdbfe', background: '#f8fbff', padding: 14, borderRadius: 12, marginBottom: 14 }}>
     <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
       <strong>대신 실제접수 테스트 · 0.3.1</strong><button type="button" onClick={() => void refresh()} disabled={busy} style={exportBtnSecondary}>연결·결과 확인</button>
-      <button type="button" onClick={() => void stage()} disabled={!connected || busy} style={{ ...exportBtnPrimary, opacity: !connected || busy ? .5 : 1 }}>{busy ? '전송 중…' : '선택 1건 자동 등록(출력안함)'}</button>
+      <button type="button" onClick={() => void stage()} disabled={!connected || busy} style={{ ...exportBtnPrimary, opacity: !connected || busy ? .5 : 1 }}>{busy && !verifyingId ? '전송 중…' : '선택 1건 자동 등록(출력안함)'}</button>
       <button type="button" onClick={() => void downloadReport()} disabled={!connected || busy} style={exportBtnSecondary}>확인결과 파일 저장</button>
       <a href="/registration-test-setup/index.html" target="_blank" rel="noreferrer" style={{ fontSize: 13 }}>연결 도구 설치</a>
     </div>
@@ -1934,7 +1948,8 @@ function DaesinLiveTestPanel({ rows, mapRow, hasWaybill }: { rows: SavedShipment
       <span style={{ color: job.state === 'verified' ? '#15803d' : '#475569' }}>{job.state === 'verified' ? '대신 목록에서 접수 확인됨' : job.message || '처리상태 확인 필요'}</span>
       {['carrier-ready', 'destination-pending', 'needs-review', 'not-registered'].includes(job.state) && <button type="button" style={exportBtnSecondary} onClick={() => void inspect(job.id)} disabled={busy}>도착지 다시 확인</button>}
       {job.destinationNeedsReview && (job.registered || job.numbers.length === 1) && <strong style={{ color: '#b45309' }}>마감관리에서 도착지 수정 필요</strong>}
-      {(job.registered || job.numbers.length === 1) && <button type="button" style={exportBtnSecondary} onClick={() => void verify(job.id)} disabled={busy}>{job.numbers.length === 1 ? "실제 등록 확인" : "송장번호 가져오기"}</button>}
+      {(job.registered || job.numbers.length === 1) && <button type="button" style={exportBtnSecondary} onClick={() => void verify(job.id)} disabled={busy}>{verifyingId === job.id ? "조회 중…" : job.numbers.length === 1 ? "실제 등록 확인" : "송장번호 가져오기"}</button>}
+      {lookupFeedback[job.id] && <span role={lookupFeedback[job.id].state === "error" ? "alert" : "status"} style={{ flexBasis: "100%", color: lookupFeedback[job.id].state === "error" ? "#b91c1c" : lookupFeedback[job.id].state === "success" ? "#15803d" : "#475569", fontWeight: 700 }}>{lookupFeedback[job.id].text}</span>}
     </div>)}
   </section>;
 }
