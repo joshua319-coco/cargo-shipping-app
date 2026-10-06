@@ -53,6 +53,7 @@ const ADDRESS_REGION_ALIASES: Record<string, string> = {
   대구광역시: "대구", 대구시: "대구",
   인천광역시: "인천", 인천시: "인천",
   광주광역시: "광주",
+  전남광주통합특별시: "광주",
   대전광역시: "대전", 대전시: "대전",
   울산광역시: "울산", 울산시: "울산",
   세종특별자치시: "세종", 세종시: "세종",
@@ -80,6 +81,8 @@ export function normalizeParcelAddress(value: string) {
     beforeDetails = [region, locality, roadName, buildingNumber].filter(Boolean).join(" ");
   }
   const tokens = beforeDetails.split(/\s+/);
+  // 발송데이터의 두 단어 지역명도 통일하되 경기도 광주시는 구분한다.
+  if (["전남", "전라남도"].includes(tokens[0]) && tokens[1] === "광주") tokens.splice(0, 2, "광주");
   tokens[0] = ADDRESS_REGION_ALIASES[tokens[0]] ?? tokens[0];
   // 하이픈을 보존해야 1-5와 15가 다른 건물번호로 비교된다.
   return tokens.join("").toLowerCase();

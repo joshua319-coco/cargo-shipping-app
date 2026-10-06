@@ -253,3 +253,14 @@ test('live registration accepts numbered named tests after recreation, without f
     assert.equal(helpers.isLiveDaesinTestShipment({...allowed,...patch}), false);
   }
 });
+
+test('Logen verification accepts the observed Gwangju aliases without suppressing other errors',()=>{
+  const s=shipment({qty:1,fare:3300,address:'전남광주통합특별시 순천시 남산로 43 (남정동)'});
+  const u=parse({박스수량:1,택배운임:3300,수하인주소:'광주 순천시 남산로 43 (남정동 559-5)',상세주소:'(남정동)'});
+  const matched=helpers.buildWaybillVerificationRows([s],[u])[0];
+  assert.equal(matched.status,'일치');assert.deepEqual(matched.reasons,[]);
+  for(const [patch,reason] of [[{address:'광주 순천시 남산로 44'},'주소 확인'],[{fare:3500},'택배운임 확인']]){
+    const mismatch=helpers.buildWaybillVerificationRows([s],[{...u,...patch}])[0];
+    assert.equal(mismatch.status,'확인필요');assert.ok(mismatch.reasons.includes(reason));
+  }
+});

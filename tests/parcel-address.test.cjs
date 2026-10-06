@@ -19,3 +19,24 @@ test('locality restoration does not accept wrong or missing locality or differen
   assert.equal(sameParcelAddress('서울특별시, 강남구 예시로 1','서울특별시, 강북구 예시로 2'),false);
   assert.equal(sameParcelAddress('경기 예시시 예시로 1-5','경기 예시시 예시로 15'),false);
 });
+
+test('all five observed Gwangju region labels match with the full lower-level address retained',()=>{
+  const labels=['광주광역시','광주','전남 광주','전라남도 광주','전남광주통합특별시'];
+  for(const left of labels) for(const right of labels){
+    assert.equal(sameParcelAddress(left+' 순천시 남산로 43 (남정동)',right+' 순천시 남산로 43 (남정동 559-5) (남정동)'),true,left+' / '+right);
+  }
+  assert.equal(sameParcelAddress('전남  광주 순천시 남산로 43','광주 순천시 남산로 43'),true);
+  const source='전남광주통합특별시 순천시 남산로 43 (남정동)';
+  for(const other of [
+    '광주 순천시 남산로 44 (남정동 559-5)',
+    '전남 광주 순천시 남산로 43-1',
+    '광주 순천시 남삼로 43',
+    '광주 여수시 남산로 43',
+    '경기 순천시 남산로 43',
+    '광주 남산로 43',
+    '순천시 남산로 43',
+  ]) assert.equal(sameParcelAddress(source,other),false,other);
+  assert.equal(sameParcelAddress('전남광주통합특별시 북구 예시로 43','광주 남구 예시로 43'),false);
+  assert.equal(sameParcelAddress('경기도 광주시 남산로 43','광주 순천시 남산로 43'),false);
+  assert.equal(sameParcelAddress('전남 광주시 남산로 43','광주 남산로 43'),false);
+});
