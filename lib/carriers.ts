@@ -13,10 +13,11 @@ export function isLogenQuantity(value: string | number) {
   return Number.isSafeInteger(qty) && qty > 0;
 }
 
-export function logenFare(qty: string | number, address = "") {
+export function logenFare(qty: string | number, address = "", pay: "착불" | "선불" = "착불") {
   if (!isLogenQuantity(qty)) return "";
   const jeju = /제주|서귀포/.test(address.replace(/\s/g, ""));
-  return String(Number(qty) * 3300 + (jeju ? 3000 : 0));
+  const perBox = pay === "선불" ? 3300 : 3500;
+  return String(Number(qty) * perBox + (jeju ? 3000 : 0));
 }
 
 export function exportCarrier(

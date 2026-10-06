@@ -49,18 +49,24 @@ test('legacy records and histories remain Daesin', () => {
   assert.equal(state.waybill_upload_rows[0].id, 'old');
   assert.deepEqual(state.logen_upload_rows, []);
 });
-test('Logen integer rates and one Jeju surcharge per shipment', () => {
-  for (const [qty, normal, jeju] of [[1,3300,6300],[2,6600,9600],[3,9900,12900],[10,33000,36000]]) {
-    assert.equal(carrier.logenFare(qty, '서울특별시'), String(normal));
-    assert.equal(carrier.logenFare(qty, '제주특별자치도 제주시'), String(jeju));
-    assert.equal(carrier.logenFare(qty, '서귀포시'), String(jeju));
+test('Logen prepaid/collect rates and one Jeju surcharge per shipment', () => {
+  for (const [pay, unit] of [['선불',3300],['착불',3500]]) {
+    for (const qty of [1,2,3,10]) {
+      assert.equal(carrier.logenFare(qty, '서울특별시', pay), String(qty * unit));
+      for (const address of ['제주특별자치도 제주시','서귀포시']) {
+        assert.equal(carrier.logenFare(qty, address, pay), String(qty * unit + 3000));
+        assert.equal(helpers.suggestFareByQty({carrier:'로젠',pay,qty:String(qty),delivery:'택배',pack:'박스',address}), String(qty * unit + 3000));
+      }
+    }
+    for (const qty of ['', '0', '-1', '0.5', '1.5', 'abc', 'Infinity']) assert.equal(carrier.logenFare(qty, '', pay), '');
   }
-  for (const qty of ['', '0', '-1', '0.5', '1.5', 'abc', 'Infinity']) assert.equal(carrier.logenFare(qty), '');
+  assert.equal(carrier.logenFare(1), '3500');
+  assert.equal(helpers.suggestFareByQty({carrier:'로젠',qty:'1',delivery:'택배',pack:'박스'}), '3500');
 });
 test('Daesin half-box and double Jeju rates are preserved', () => {
   assert.equal(helpers.suggestFareByQty({qty:'0.5',delivery:'정기',pack:'박스'}), '4400');
   assert.equal(helpers.suggestFareByQty({qty:'1',delivery:'택배',pack:'박스',address:'제주시'}), '14300');
-  assert.equal(helpers.suggestFareByQty({carrier:'로젠',qty:'2',delivery:'택배',pack:'박스',address:'제주시'}), '9600');
+  assert.equal(helpers.suggestFareByQty({carrier:'로젠',pay:'선불',qty:'2',delivery:'택배',pack:'박스',address:'제주시'}), '9600');
 });
 test('DB payload keeps manually entered Logen fare and still enforces integer parcel boxes', () => {
   const payload=helpers.toShipmentDbPayload(shipment({delivery:'정기',fare:'7,200',address:'제주시'}));

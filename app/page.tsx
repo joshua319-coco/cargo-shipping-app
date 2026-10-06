@@ -1429,13 +1429,14 @@ function isJejuDestination(params: {
 
 function suggestFareByQty(params: {
   carrier?: Carrier;
+  pay?: PayType;
   qty: string;
   delivery: DeliveryType;
   pack: string;
   address?: string;
   branch?: string;
 }) {
-  if (normalizeCarrier(params.carrier) === "로젠") return logenFare(params.qty, params.address);
+  if (normalizeCarrier(params.carrier) === "로젠") return logenFare(params.qty, params.address, params.pay);
   const n = Number(params.qty);
   if (!n) return "";
 
@@ -3192,6 +3193,7 @@ export default function Home() {
     setReceiverFocused(false);
     setFare(
       suggestFareByQty({
+        pay,
         carrier,
         qty,
         delivery,
@@ -3235,7 +3237,15 @@ export default function Home() {
     setDelivery(nextDelivery);
     setQty(nextQty);
     setPostalCode(resolvePostalCodeValue({ delivery: nextDelivery, receiver, branch, currentPostalCode: "" }));
-    setFare(suggestFareByQty({ carrier: next, qty: nextQty, delivery: nextDelivery, pack, address, branch }));
+    setFare(suggestFareByQty({ pay, carrier: next, qty: nextQty, delivery: nextDelivery, pack, address, branch }));
+  };
+
+  const handlePayChange = (next: PayType) => {
+    if (next === pay) return;
+    setPay(next);
+    if (carrier === "로젠") {
+      setFare(suggestFareByQty({ carrier, pay: next, qty, delivery, pack, address, branch }));
+    }
   };
 
   const handleCarrierFilterChange = (next: CarrierFilter) => {
@@ -3249,6 +3259,7 @@ export default function Home() {
     setQty(v);
     setFare(
       suggestFareByQty({
+        pay,
         carrier,
         qty: v,
         delivery,
@@ -3658,6 +3669,16 @@ export default function Home() {
     setEditForm((prev) => {
       if (!prev) return prev;
       return { ...prev, [key]: value };
+    });
+  };
+
+  const handleEditPayChange = (next: PayType) => {
+    setEditForm((prev) => {
+      if (!prev || prev.pay === next) return prev;
+      const nextForm = { ...prev, pay: next };
+      return prev.carrier === "로젠"
+        ? { ...nextForm, fare: suggestFareByQty(nextForm) }
+        : nextForm;
     });
   };
 
@@ -5058,7 +5079,7 @@ export default function Home() {
                       label="지불방법"
                       value={pay}
                       activeColor={carrierAccent(carrier)}
-                      set={setPay}
+                      set={handlePayChange}
                       options={["착불", "선불"]}
                     />
                     <Toggle<DeliveryType>
@@ -5077,6 +5098,7 @@ export default function Home() {
                         );
                         setFare(
                           suggestFareByQty({
+                            pay,
                             carrier,
                             qty,
                             delivery: v,
@@ -5152,6 +5174,7 @@ export default function Home() {
                         setPack(v);
                         setFare(
                           suggestFareByQty({
+                            pay,
                             carrier,
                             qty,
                             delivery,
@@ -5178,6 +5201,7 @@ export default function Home() {
                             setAddress(v);
                             setFare(
                               suggestFareByQty({
+                                pay,
                                 carrier,
                                 qty,
                                 delivery,
@@ -5233,6 +5257,7 @@ export default function Home() {
                         );
                         setFare(
                           suggestFareByQty({
+                            pay,
                             carrier,
                             qty,
                             delivery,
@@ -6781,7 +6806,7 @@ export default function Home() {
                   label="지불방법"
                   value={editForm.pay}
                   activeColor={carrierAccent(editForm.carrier)}
-                  set={(v) => updateEditField("pay", v)}
+                  set={handleEditPayChange}
                   options={["착불", "선불"]}
                 />
                 <Toggle<DeliveryType>
@@ -6802,6 +6827,7 @@ export default function Home() {
                     updateEditField(
                       "fare",
                       suggestFareByQty({
+                        pay: editForm.pay,
                         carrier: editForm.carrier,
                         qty: editForm.qty,
                         delivery: v,
@@ -6826,6 +6852,7 @@ export default function Home() {
                     updateEditField(
                       "fare",
                       suggestFareByQty({
+                        pay: editForm.pay,
                         carrier: editForm.carrier,
                         qty: v,
                         delivery: editForm.delivery,
@@ -6852,6 +6879,7 @@ export default function Home() {
                         updateEditField(
                           "fare",
                           suggestFareByQty({
+                            pay: editForm.pay,
                             carrier: editForm.carrier,
                             qty: editForm.qty,
                             delivery: editForm.delivery,
@@ -6881,6 +6909,7 @@ export default function Home() {
                       updateEditField(
                         "fare",
                         suggestFareByQty({
+                          pay: editForm.pay,
                           carrier: editForm.carrier,
                           qty: editForm.qty,
                           delivery: editForm.delivery,
@@ -6909,6 +6938,7 @@ export default function Home() {
                       updateEditField(
                         "fare",
                         suggestFareByQty({
+                          pay: editForm.pay,
                           carrier: editForm.carrier,
                           qty: editForm.qty,
                           delivery: editForm.delivery,
@@ -6988,6 +7018,7 @@ export default function Home() {
                     updateEditField(
                       "fare",
                       suggestFareByQty({
+                        pay: editForm.pay,
                         carrier: editForm.carrier,
                         qty: editForm.qty,
                         delivery: editForm.delivery,
@@ -7109,6 +7140,7 @@ export default function Home() {
                       // 운임도 자동 반영
                       setFare(
                         suggestFareByQty({
+                          pay,
                           carrier,
                           qty,
                           delivery,
