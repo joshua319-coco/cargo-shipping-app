@@ -66,7 +66,19 @@ const ADDRESS_REGION_ALIASES: Record<string, string> = {
 
 export function normalizeParcelAddress(value: string) {
   // NFKC는 전각 괄호도 처리한다. 지번/건물명/상세주소가 붙는 첫 괄호부터 제외한다.
-  const beforeDetails = value.normalize("NFKC").split("(")[0].trim();
+  const normalized = value.normalize("NFKC");
+  let beforeDetails = normalized.split("(")[0].trim();
+  // 로젠은 읍·면을 도로명 앞에서 첫 괄호 안으로 옮기기도 한다.
+  // 없애서 비교하지 않고 해당 읍·면을 복원하여 다른 지역과 구분한다.
+  // 쉼표 상세주소도 도로명과 건물번호가 확인된 경우에만 제외한다.
+  const road = beforeDetails.match(/^(.+?)\s+([^\s]+(?:대로|로|길)(?:\s+\d+번길)?)\s+(\d+(?:-\d+)?)(?:,\s*.*)?$/);
+  if (road) {
+    const [, region, roadName, buildingNumber] = road;
+    const localityPattern = /(?:^|\s)([^\s]+(?:읍|면))(?=\s|$)/;
+    const parenthetical = normalized.match(/\(([^)]*)\)/)?.[1] ?? "";
+    const locality = !localityPattern.test(region) ? parenthetical.match(localityPattern)?.[1] : "";
+    beforeDetails = [region, locality, roadName, buildingNumber].filter(Boolean).join(" ");
+  }
   const tokens = beforeDetails.split(/\s+/);
   tokens[0] = ADDRESS_REGION_ALIASES[tokens[0]] ?? tokens[0];
   // 하이픈을 보존해야 1-5와 15가 다른 건물번호로 비교된다.
