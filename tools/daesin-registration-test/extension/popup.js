@@ -4,14 +4,14 @@ async function render() {
   const response = await chrome.runtime.sendMessage({ action: 'status' });
   jobs.replaceChildren();
   const summary = document.createElement('p');
-  summary.textContent = '등록 완료 ' + (response.jobs || []).filter(job => job.numbers.length === 1).length + '건 · 도착지 수정 필요 ' + (response.jobs || []).filter(job => job.numbers.length === 1 && job.destinationNeedsReview).length + '건 · 등록 안됨 ' + (response.jobs || []).filter(job => job.state === 'not-registered').length + '건';
+  summary.textContent = '등록 완료 ' + (response.jobs || []).filter(job => job.registered || job.numbers.length === 1).length + '건 · 도착지 수정 필요 ' + (response.jobs || []).filter(job => (job.registered || job.numbers.length === 1) && job.destinationNeedsReview).length + '건 · 등록 안됨 ' + (response.jobs || []).filter(job => job.state === 'not-registered').length + '건';
   jobs.append(summary);
   for (const job of (response.jobs || []).slice().reverse()) {
     const card = document.createElement('div'); card.className = 'job';
     const name = document.createElement('strong'); name.textContent = job.receiver + ' · ' + job.shipmentDate;
     const info = document.createElement('p'); info.textContent = job.message || '등록 화면 준비 중';
     const number = document.createElement('code'); number.textContent = job.numbers.join(', ');
-    const button = document.createElement('button'); button.textContent = job.state === 'verified' ? '대신 목록 확인 완료' : '실제 등록 확인'; button.disabled = job.numbers.length !== 1 || job.state === 'verified';
+    const button = document.createElement('button'); button.textContent = job.state === 'verified' ? '대신 목록 확인 완료' : job.numbers.length === 1 ? '실제 등록 확인' : '송장번호 가져오기'; button.disabled = (!job.registered && job.numbers.length !== 1) || job.state === 'verified';
     button.addEventListener('click', async () => { button.disabled = true; const result = await chrome.runtime.sendMessage({ action: 'verify', jobId: job.id }); message.textContent = result.ok ? result.job.message : result.error; await render(); });
     const inspect = document.createElement('button'); inspect.textContent = '도착지 다시 확인';
     inspect.addEventListener('click', async () => { inspect.disabled = true; const result = await chrome.runtime.sendMessage({ action: 'inspect', jobId: job.id }); message.textContent = result.ok ? result.job.message : result.error; await render(); });

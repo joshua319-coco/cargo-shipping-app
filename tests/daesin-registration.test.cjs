@@ -16,3 +16,16 @@ test('unknown/multirow results cannot initiate automatic one-row registration',(
   assert.equal(c({}).kind,'unknown');assert.equal(c({...diagnosis('2422'),upload:{rowCount:2,destinations:[{},{}]}}).kind,'unknown');
   assert.equal(c(diagnosis('','알 수 없는 상태')).kind,'unknown');
 });
+
+test('explicit single-row SUCCESS is registered even while its waybill is pending',()=>{
+  const {hasDaesinRegistrationSuccess:accepted,updateDaesinAcceptedState:update}=require('../tools/daesin-registration-test/extension/registration-policy.js');
+  const job={state:'unknown',numbers:[],diagnosis:{upload:{rowCount:1},registration:{result:'SUCCESS',message:'SUCCESS'}},destinationNeedsReview:true,destinationReason:'공동관할구역'};
+  assert.equal(accepted(job),true);assert.equal(update(job),true);
+  assert.equal(job.state,'registered-awaiting-number');assert.match(job.message,/등록 완료/);assert.match(job.message,/공동관할구역/);assert.deepEqual(job.numbers,[]);
+  assert.equal(update(job),false);
+  for(const result of [undefined,'ERROR','NOT_SUCCESS']){
+    const unknown={state:'unknown',numbers:[],diagnosis:{upload:{rowCount:1},registration:{result}}};
+    assert.equal(accepted(unknown),false);assert.equal(update(unknown),false);assert.equal(unknown.state,'unknown');
+  }
+  assert.equal(accepted({diagnosis:{upload:{rowCount:2},registration:{result:'SUCCESS'}}}),false);
+});

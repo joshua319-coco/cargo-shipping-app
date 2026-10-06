@@ -141,7 +141,103 @@ function findCarrierWaybill(number, receiver) {
     if (row && row.getClientRects().length) hits.add(row);
   }
   if (hits.size !== 1) return { found: false, reason: hits.size ? '같은 송장번호가 여러 행에 있어 확인이 필요합니다.' : '현재 조회목록에서 송장번호를 찾지 못했습니다.' };
-  const rowText = [...hits][0].innerText.replace(/\s+/g, '');
-  const receiverMatches = rowText.includes(receiver.replace(/\s+/g, ''));
+  const row = [...hits][0];
+  const name = receiver.normalize('NFKC').replace(/\s+/g, '');
+  const receiverMatches = [...row.querySelectorAll('td, input')].some(element => (element instanceof HTMLInputElement ? element.value : element.textContent || '').normalize('NFKC').replace(/\s+/g, '') === name);
   return { found: receiverMatches, number, receiverMatches, reason: receiverMatches ? '' : '송장번호는 있으나 수화주명이 달라 직접 확인이 필요합니다.' };
+}
+
+function findCarrierShipmentWaybill(expected) {
+  const url = new URL(location.href);
+  if (url.origin !== 'https://partner.ds3211.co.kr' || url.pathname !== '/searchSvl' || url.searchParams.get('svcSid') !== 'dailySearch') return { found: false, reason: '일자별조회 화면이 아닙니다.' };
+  const normalize = value => String(value || '').normalize('NFKC').replace(/\s+/g, '');
+  const visible = element => element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden';
+  const dateKey = value => {
+    const match = String(value || '').trim().match(/^(20\d{2})[-./]\s*(\d{1,2})[-./]\s*(\d{1,2})\.?$/);
+    return match ? match[1] + '-' + match[2].padStart(2, '0') + '-' + match[3].padStart(2, '0') : '';
+  };
+  const selectedDates = [...document.querySelectorAll('input')].filter(visible).map(input => dateKey(input.value)).filter(Boolean);
+  if (!selectedDates.length || selectedDates.some(date => date !== expected.shipmentDate)) return { found: false, reason: '일자별조회 날짜를 ' + expected.shipmentDate + '로 조회한 뒤 다시 눌러 주세요.' };
+  const matches = [];
+  let supportedTable = false, receiverRows = 0;
+  for (const table of document.querySelectorAll('table')) {
+    if (!visible(table)) continue;
+    const rows = [...table.rows];
+    const cleanLabel = cell => (cell.textContent || '').replace(/[^가-힣a-zA-Z0-9]/g, '');
+    const header = rows.find(row => [...row.cells].map(cleanLabel).includes('운송장번호') && [...row.cells].map(cleanLabel).includes('수화주명'));
+    if (!header) continue;
+    const labels = [...header.cells].map(cleanLabel);
+    const columns = Object.fromEntries(['운송장번호', '수화주명', '수량', '총운임', '운송구분', '등록일자'].map(label => [label, labels.indexOf(label)]));
+    if (Object.values(columns).some(index => index < 0)) continue;
+    supportedTable = true;
+    for (const row of rows) {
+      if (row === header || !visible(row)) continue;
+      const cell = name => row.cells[columns[name]]?.innerText?.trim() || '';
+      if (normalize(cell('수화주명')) !== normalize(expected.receiver)) continue;
+      receiverRows++;
+      const number = normalize(cell('운송장번호')).replace(/-/g, '');
+      const quantity = Number(cell('수량').replace(/[,\s]/g, ''));
+      const fare = Number(cell('총운임').replace(/[,원\s]/g, ''));
+      const transport = normalize(cell('운송구분'));
+      const registeredAt = cell('등록일자').match(/^(?:(20\d{2})[-./]\s*)?(\d{1,2})[-./]\s*(\d{1,2})\s+/);
+      const [, year, month, day] = registeredAt || [];
+      const rowDate = registeredAt ? (year || expected.shipmentDate.slice(0, 4)) + '-' + month.padStart(2, '0') + '-' + day.padStart(2, '0') : '';
+      const phoneColumn = labels.indexOf('수화주전화');
+      const phone = phoneColumn < 0 ? '' : (row.cells[phoneColumn]?.innerText || '').replace(/\D/g, '');
+      const expectedPhone = String(expected.receiverPhone || '').replace(/\D/g, '');
+      const payMatches = !expected.pay || (expected.pay === '선불' ? /선불|현불/.test(transport) : /착불/.test(transport));
+      if (!/^\d{12}$/.test(number) || rowDate !== expected.shipmentDate || quantity !== Number(expected.quantity) || fare !== Number(expected.fare) || !transport.startsWith(expected.delivery) || !payMatches || (expectedPhone && phone !== expectedPhone)) continue;
+      const destinationColumn = labels.indexOf('도착지');
+      const destination = destinationColumn < 0 ? '' : row.cells[destinationColumn]?.innerText?.trim() || '';
+      matches.push({ number, destinationNeedsReview: /공동관할|미지정|미설정/.test(destination), destinationReason: /공동관할|미지정|미설정/.test(destination) ? destination : '' });
+    }
+  }
+  const numbers = [...new Set(matches.map(match => match.number))];
+  if (numbers.length !== 1 || receiverRows !== 1) return { found: false, ambiguous: receiverRows > 1, reason: !supportedTable ? '일자별조회 표의 필수 열을 확인하지 못했습니다.' : receiverRows > 1 ? '같은 수화주가 여러 행에 있어 송장번호를 자동 연결하지 않았습니다.' : '날짜·수화주명·수량·운임·운송구분이 모두 맞는 1건을 찾지 못했습니다.' };
+  return { found: true, ...matches[0] };
+}
+
+function inspectDaesinDailyExportConnection() {
+  const url = new URL(location.href);
+  if (url.origin !== 'https://partner.ds3211.co.kr' || url.pathname !== '/searchSvl' || url.searchParams.get('svcSid') !== 'dailySearch') throw new Error('대신 일자별조회 화면이 아닙니다.');
+  const visible = element => Boolean(element.getClientRects().length);
+  const label = element => (element instanceof HTMLInputElement ? element.value : element.textContent || '').trim().replace(/\s+/g, ' ');
+  const exports = [...document.querySelectorAll('button,a,input[type=button],input[type=submit]')].filter(element => visible(element) && label(element).replace(/\s/g, '') === '엑셀저장');
+  const selections = [...document.querySelectorAll('select')].filter(element => visible(element) && [...element.options].some(option => option.text.trim() === '전체') && [...element.options].some(option => option.text.trim() === '접수'));
+  const controls = [...exports, ...selections];
+  const functions = [], seen = new Set(), queue = [];
+  const codeOf = fn => {
+    if (typeof fn !== 'function') return '';
+    const source = Function.prototype.toString.call(fn);
+    return /password|access[_-]?token|refresh[_-]?token|document\.cookie/i.test(source) ? '[민감정보 접근 코드 제외]' : source.slice(0, 12000);
+  };
+  const describe = element => {
+    const handlers = [codeOf(element.onclick), codeOf(element.onchange)].filter(Boolean);
+    if (window.jQuery?._data) {
+      const events = window.jQuery._data(element, 'events') || {};
+      for (const event of ['click', 'change']) for (const entry of events[event] || []) handlers.push(codeOf(entry.handler));
+    }
+    queue.push(...handlers);
+    return { tag: element.tagName, id: element.id || '', name: element.getAttribute('name') || '', label: element.tagName === 'SELECT' ? '' : label(element), handlers,
+      options: element.tagName === 'SELECT' ? [...element.options].map(option => ({ label: option.text.trim(), value: option.value })) : undefined };
+  };
+  const described = controls.map(describe);
+  for (let i = 0; i < queue.length && functions.length < 12; i++) {
+    for (const match of queue[i].matchAll(/\b([A-Za-z_$][\w$]*)\s*\(/g)) {
+      const name = match[1];
+      if (seen.has(name) || !/excel|down|export|select|check|save/i.test(name)) continue;
+      seen.add(name);
+      const descriptor = Object.getOwnPropertyDescriptor(window, name);
+      const source = codeOf(descriptor?.value);
+      if (source) { functions.push({ name, source }); queue.push(source); }
+      if (functions.length >= 12) break;
+    }
+  }
+  return { capturedAt: new Date().toISOString(), url: url.origin + url.pathname + '?svcGid=customer.search&svcSid=dailySearch',
+    collection: 'Control labels, form field names, headers and export-handler definitions only; no shipment values, cookies, storage, export requests or print calls.',
+    controls: described, functions,
+    forms: [...document.forms].map(form => ({ id: form.id, method: form.method, actionPath: new URL(form.action || location.href).pathname, fields: [...form.elements].map(input => ({ tag: input.tagName, id: input.id, name: input.name, type: input.type })) })),
+    tables: [...document.querySelectorAll('table')].filter(visible).map(table => ({ id: table.id, headers: [...table.querySelectorAll('th')].map(cell => (cell.textContent || '').trim().slice(0, 60)), rowCount: table.rows.length })),
+    dates: [...document.querySelectorAll('input')].filter(input => visible(input) && /^20\d{2}[-./]\d{1,2}[-./]\d{1,2}$/.test(input.value)).map(input => ({ id: input.id, name: input.name, value: input.value }))
+  };
 }

@@ -17,4 +17,16 @@ function classifyDaesinDestination(diagnosis) {
   if (/^\d{4}$/.test(code) && !/^0+$/.test(code) && !reason) return { kind: 'ready', reason: '' };
   return { kind: 'unknown', reason: reason || '대신의 도착지 변환 상태를 확인하지 못했습니다.' };
 }
-if (typeof module !== 'undefined') module.exports = { classifyDaesinDestination, isDaesinRegistrationBlocked };
+function hasDaesinRegistrationSuccess(job) {
+  return job?.numbers?.length === 1 || job?.state === 'verified' ||
+    (job?.diagnosis?.upload?.rowCount === 1 && job?.diagnosis?.registration?.result === 'SUCCESS');
+}
+function updateDaesinAcceptedState(job) {
+  if (!hasDaesinRegistrationSuccess(job) || job.numbers?.length || !['unknown', 'needs-review', 'registered-awaiting-number'].includes(job.state)) return false;
+  const message = '등록 완료 · 송장번호 확인 대기' + (job.destinationNeedsReview ? ' · 도착지 수정 필요: ' + job.destinationReason : '');
+  const changed = job.state !== 'registered-awaiting-number' || job.message !== message;
+  job.state = 'registered-awaiting-number'; job.message = message;
+  return changed;
+}
+
+if (typeof module !== 'undefined') module.exports = { classifyDaesinDestination, isDaesinRegistrationBlocked, hasDaesinRegistrationSuccess, updateDaesinAcceptedState };
