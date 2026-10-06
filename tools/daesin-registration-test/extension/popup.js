@@ -3,6 +3,9 @@ const jobs = document.querySelector('#jobs'), message = document.querySelector('
 async function render() {
   const response = await chrome.runtime.sendMessage({ action: 'status' });
   jobs.replaceChildren();
+  const summary = document.createElement('p');
+  summary.textContent = '등록 완료 ' + (response.jobs || []).filter(job => job.numbers.length === 1).length + '건 · 도착지 수정 필요 ' + (response.jobs || []).filter(job => job.numbers.length === 1 && job.destinationNeedsReview).length + '건 · 등록 안됨 ' + (response.jobs || []).filter(job => job.state === 'not-registered').length + '건';
+  jobs.append(summary);
   for (const job of (response.jobs || []).slice().reverse()) {
     const card = document.createElement('div'); card.className = 'job';
     const name = document.createElement('strong'); name.textContent = job.receiver + ' · ' + job.shipmentDate;

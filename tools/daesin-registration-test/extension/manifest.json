@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "상화 대신 실제접수 테스트",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "선택한 출고 1건을 대신 엑셀일괄발행 화면에 전달하고 실제 접수 응답과 조회 결과를 확인합니다.",
   "permissions": ["scripting", "storage"],
   "host_permissions": ["http://127.0.0.1/*", "https://partner.ds3211.co.kr/*"],

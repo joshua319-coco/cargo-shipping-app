@@ -44,7 +44,11 @@ async function stageCarrierWorkbook(job) {
     }
     if (['excelUploadShowData', 'insertFixUnsongApply'].includes(service)) {
       const registration = service === 'insertFixUnsongApply';
-      if (registration) emit('submitting');
+      if (registration) {
+        const form = document.querySelector('#waybillFrm');
+        if (form) form.dataset.sanghwaSubmissionStarted = '1';
+        emit('submitting');
+      }
       this.addEventListener('loadend', () => {
         try {
           if (this.status < 200 || this.status >= 300) throw new Error('응답 상태 확인 필요');
@@ -70,7 +74,7 @@ async function stageCarrierWorkbook(job) {
   transfer.items.add(new File([bytes], '상화_실제접수테스트_1건.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
   input.files = transfer.files;
   input.dispatchEvent(new Event('change', { bubbles: true }));
-  // The final register/print action is deliberately left to the carrier's native reviewed UI.
+  // The background worker may click only the explicitly authorized no-print button after this upload response.
   return { staged: true, bytes: bytes.length };
 }
 function inspectCarrierDestination() {
@@ -82,9 +86,48 @@ function inspectCarrierDestination() {
   return {
     checkedAt: new Date().toISOString(), missingDestinationCount: digits ? Number(digits[0]) : null,
     destinationCounter: text.slice(0, 120),
+    blockedDestinationCounter: document.querySelector('#span_limit-selectedAgency')?.textContent?.trim().slice(0, 160) || '',
+    blockedDestinationCount: Number(document.querySelector('#span_limit-selectedAgency')?.textContent?.match(/\d+/)?.[0] || 0),
+    row: (() => {
+      const rows = document.querySelectorAll('#tbody_excelList tr');
+      if (rows.length !== 1) return null;
+      const code = rows[0].querySelector('input[id^="arrival_agencycode"]');
+      if (!code) return null;
+      return { arrival_agencycode: code.value, unregistered_post: rows[0].querySelector('input[id^="rowPostMsg"]')?.value || '' };
+    })(),
     format: document.querySelector('#waybillFrm #excelFormClass')?.value || '',
     postalOptions: [...document.querySelectorAll('#waybillFrm input[name=procCheck]')].map(el => ({ id: el.id, checked: el.checked })),
   };
+}
+async function clickCarrierRegisterNoPrint(expected) {
+  const url = new URL(location.href);
+  if (url.origin !== 'https://partner.ds3211.co.kr' || url.pathname !== '/issueSvl' || url.searchParams.get('svcSid') !== 'excelIssuWay') throw new Error('대신 등록 화면이 아닙니다.');
+  const form = document.querySelector('#waybillFrm');
+  const rows = document.querySelectorAll('#tbody_excelList tr');
+  if (!form || rows.length !== 1) throw new Error('대신 화면에 선택한 1건만 있는지 확인하지 못해 자동 등록을 멈췄습니다.');
+  const visible = element => element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden';
+  const candidates = [...document.querySelectorAll('button, a, input[type=button], input[type=submit]')].filter(element =>
+    visible(element) && (element instanceof HTMLInputElement ? element.value : element.textContent || '').replace(/\s/g, '') === '등록(출력안함)'
+  );
+  if (candidates.length !== 1 || candidates[0].disabled || candidates[0].getAttribute('aria-disabled') === 'true') throw new Error('사용 가능한 ‘등록(출력안함)’ 버튼 1개를 찾지 못했습니다. 일반 등록 버튼은 누르지 않았습니다.');
+  if (form.dataset.sanghwaNoPrintAttempted || form.dataset.sanghwaSubmissionStarted) return { clicked: false, repeated: true };
+  const row = rows[0];
+  const name = row.querySelector('input[id^="arrival_name"]');
+  const quantity = row.querySelector('input[id^="quantity"]');
+  const fare = row.querySelector('input[id^="total_amount"]');
+  const normalize = value => String(value || '').normalize('NFKC').replace(/\s/g, '');
+  if (!name || normalize(name.value) !== normalize(expected.receiver) || !quantity || Number(quantity.value) !== Number(expected.quantity) || !fare || Number(fare.value.replace(/[,원\s]/g, '')) !== Number(expected.fare)) throw new Error('대신 행의 수화주·수량·운임이 전송한 건과 같은지 확인하지 못해 자동 등록을 멈췄습니다.');
+  const checks = [...row.querySelectorAll('input[type=checkbox]')].filter(input => /^check\d+$/.test(input.id));
+  if (checks.length !== 1 || checks[0].disabled) throw new Error('등록할 행의 체크박스 1개를 찾지 못했습니다.');
+  if (!checks[0].checked) checks[0].click();
+  // A native click runs Daesin's own handler, including its hidden row-selection fields.
+  await new Promise(resolve => setTimeout(resolve, 100));
+  if (!checks[0].isConnected || !checks[0].checked || document.querySelectorAll('#tbody_excelList tr').length !== 1) throw new Error('등록할 행이 체크되지 않아 등록하지 않았습니다.');
+  if (!candidates[0].isConnected || !visible(candidates[0])) throw new Error('등록(출력안함) 버튼이 변경되어 등록하지 않았습니다.');
+  if (form.dataset.sanghwaSubmissionStarted) return { clicked: false, repeated: true };
+  form.dataset.sanghwaNoPrintAttempted = '1';
+  candidates[0].click();
+  return { clicked: true };
 }
 function findCarrierWaybill(number, receiver) {
   const url = new URL(location.href);

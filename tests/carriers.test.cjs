@@ -244,12 +244,12 @@ test('Daesin half-box exports as one physical box without changing its fare or i
   assert.equal(XLSX.utils.sheet_to_json(parsed.Sheets.Sheet1)[0].수량,1);
 });
 
-test('live registration accepts three named tests after recreation, without fixed IDs', () => {
-  for (const id of ['2760', '990001', '990002']) for (const index of [1,2,3]) {
+test('live registration accepts numbered named tests after recreation, without fixed IDs', () => {
+  for (const id of ['2760', '990001', '990002']) for (const index of [1,2,3,4,10]) {
     assert.equal(helpers.isLiveDaesinTestShipment({id, receiver:'대신자동업로드테스트'+index, shipmentDate:'2026-10-06', carrier:'대신'}), true);
   }
   const allowed = {receiver:'대신자동업로드테스트1', shipmentDate:'2026-10-06', carrier:'대신'};
-  for (const patch of [{receiver:'대신자동업로드테스트'}, {receiver:'일반 거래처'}, {receiver:'대신자동업로드테스트4'}, {carrier:'로젠'}, {shipmentDate:'2026-10-07'}]) {
+  for (const patch of [{receiver:'대신자동업로드테스트'}, {receiver:'일반 거래처'}, {receiver:'대신자동업로드테스트0'}, {carrier:'로젠'}, {shipmentDate:'2026-10-07'}]) {
     assert.equal(helpers.isLiveDaesinTestShipment({...allowed,...patch}), false);
   }
 });

@@ -1,5 +1,5 @@
 'use strict';
-importScripts('carrier-functions.js');
+importScripts('registration-policy.js', 'carrier-functions.js');
 const APP = 'http://127.0.0.1:4320', CARRIER = 'https://partner.ds3211.co.kr';
 const REGISTER = CARRIER + '/issueSvl?svcGid=customer.issue&svcSid=excelIssuWay';
 const DAILY = CARRIER + '/searchSvl?svcGid=customer.search&svcSid=dailySearch';
@@ -7,7 +7,7 @@ const KEY = 'sanghwaLiveRegistrationJobs';
 let staging = false, serial = Promise.resolve();
 const readJobs = async () => (await chrome.storage.local.get(KEY))[KEY] || [];
 const saveJobs = jobs => chrome.storage.local.set({ [KEY]: jobs });
-const publicJob = job => job ? { id: job.id, shipmentId: job.shipmentId, shipmentDate: job.shipmentDate, receiver: job.receiver, state: job.state, numbers: job.numbers || [], message: job.message || '', updatedAt: job.updatedAt, tabId: job.tabId } : null;
+const publicJob = job => job ? { id: job.id, shipmentId: job.shipmentId, shipmentDate: job.shipmentDate, receiver: job.receiver, state: job.state, numbers: job.numbers || [], message: job.message || '', updatedAt: job.updatedAt, tabId: job.tabId, destinationNeedsReview: Boolean(job.destinationNeedsReview), destinationReason: job.destinationReason || '' } : null;
 function isApp(sender) { try { return sender.frameId === 0 && new URL(sender.url).origin === APP; } catch { return false; } }
 async function waitForTab(tabId) {
   for (let i = 0; i < 40; i++) { const tab = await chrome.tabs.get(tabId); if (tab.status === 'complete' && tab.url?.startsWith(CARRIER + '/')) return tab; await new Promise(resolve => setTimeout(resolve, 500)); }
@@ -19,11 +19,12 @@ async function stage(request) {
   try {
     const p = request.payload;
     if (!p || typeof p.workbook !== 'string' || p.workbook.length > 1400000 || !/^[A-Za-z0-9+/]+=*$/.test(p.workbook) || !/^\d+$/.test(p.shipmentId) || !/^[a-f0-9]{64}$/.test(p.fingerprint) || typeof p.receiver !== 'string' || !p.receiver.trim() || !/^\d{4}-\d{2}-\d{2}$/.test(p.shipmentDate)) throw new Error('출고 1건의 전송정보를 확인할 수 없습니다.');
-    if (p.shipmentDate !== '2026-10-06' || !/^대신자동업로드테스트[123]$/.test(p.receiver.trim())) throw new Error('2026-10-06 대신자동업로드테스트1·2·3만 전송할 수 있습니다.');
+    if (p.shipmentDate !== '2026-10-06' || !/^대신자동업로드테스트[1-9]\d*$/.test(p.receiver.trim())) throw new Error('2026-10-06 대신자동업로드테스트와 번호로 된 테스트 건만 전송할 수 있습니다.');
+    if (p.autoRegister !== true) throw new Error('업로드 후 등록(출력안함)까지 진행하는 새 테스트 화면을 열어 주세요.');
     let jobs = await readJobs();
     const previous = jobs.find(job => job.shipmentId === p.shipmentId);
     if (previous) { if (previous.tabId) await chrome.tabs.update(previous.tabId, { active: true }).catch(() => {}); return { ok: true, job: publicJob(previous), repeated: true }; }
-    const job = { id: crypto.randomUUID(), nonce: crypto.randomUUID(), shipmentId: p.shipmentId, shipmentDate: p.shipmentDate, fingerprint: p.fingerprint, receiver: p.receiver, state: 'opening', updatedAt: new Date().toISOString() };
+    const job = { id: crypto.randomUUID(), nonce: crypto.randomUUID(), shipmentId: p.shipmentId, shipmentDate: p.shipmentDate, fingerprint: p.fingerprint, receiver: p.receiver, autoRegister: true, state: 'opening', updatedAt: new Date().toISOString() };
     const source = p.source || {};
     job.diagnosis = { source: Object.fromEntries(['postalCode', 'address', 'branch', 'quantity', 'fare', 'delivery'].filter(key => ['string', 'number'].includes(typeof source[key])).map(key => [key, String(source[key]).slice(0, 500)])) };
     jobs.push(job); await saveJobs(jobs);
@@ -32,7 +33,7 @@ async function stage(request) {
       job.tabId = tab.id; job.state = 'opening'; await saveJobs(jobs);
       await waitForTab(tab.id);
       await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'ISOLATED', func: installCarrierRelay, args: [job.id, job.nonce] });
-      job.state = 'staged'; job.message = '대신 화면에서 변환된 1건을 확인한 뒤 최종 등록을 진행해 주세요.'; await saveJobs(jobs);
+      job.state = 'staged'; job.message = '업로드 확인 후 등록(출력안함)까지 진행합니다.'; job.deadlineAt = Date.now() + 60000; await saveJobs(jobs);
       await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', func: stageCarrierWorkbook, args: [{ workbook: p.workbook, nonce: job.nonce }] });
       return { ok: true, job: publicJob(job) };
     } catch (error) {
@@ -52,11 +53,23 @@ async function carrierEvent(message, sender) {
     job.diagnosis ||= {};
     job.diagnosis.upload = { rowCount: d.rowCount, destinations: d.destinations };
     await readDestination(job);
+    // Only a NEW explicit automatic request may proceed; old 0.2 jobs remain observational.
+    if (job.autoRegister && !job.autoAttempted && ['carrier-ready', 'destination-pending'].includes(job.state)) {
+      job.autoAttempted = true; job.state = 'registering'; job.deadlineAt = Date.now() + 60000;
+      job.message = '등록(출력안함)을 진행하고 있습니다.'; await saveJobs(jobs);
+      try {
+        const [click] = await chrome.scripting.executeScript({ target: { tabId: job.tabId }, world: 'MAIN', func: clickCarrierRegisterNoPrint, args: [{ receiver: job.receiver, quantity: job.diagnosis.source.quantity, fare: job.diagnosis.source.fare }] });
+        if (!click?.result?.clicked) throw new Error('이미 등록을 시도한 화면입니다. 대신 접수 결과를 먼저 확인해 주세요.');
+      } catch (error) { job.state = 'needs-review'; job.message = String(error.message || error); }
+    }
   }
   if (d.kind === 'registration-response') {
     const numbers = Array.isArray(d.numbers) ? d.numbers.filter(number => /^\d{12}$/.test(number)) : [];
     job.numbers = [...new Set(numbers)]; job.state = job.numbers.length === 1 ? 'response-received' : 'needs-review';
-    job.message = job.numbers.length === 1 ? '대신이 실제 송장번호를 응답했습니다. 일자별조회에서 같은 번호와 수화주명을 확인해 주세요.' : '접수 응답은 받았지만 송장번호 1건을 확인하지 못했습니다. 자동으로 다시 접수하지 않습니다.';
+    job.diagnosis.registration = { result: d.result, message: typeof d.message === 'string' ? d.message.slice(0, 500) : '' };
+    if (job.numbers.length === 1) job.message = '등록 완료 · 송장번호 ' + job.numbers[0] + (job.destinationNeedsReview ? ' · 도착지 수정 필요: ' + job.destinationReason + ' (대신 마감관리에서 수정)' : ' · 출력안함');
+    else if (isDaesinRegistrationBlocked(d.message)) { job.state = 'not-registered'; job.message = '등록 안됨 · ' + d.message; }
+    else { job.state = 'unknown'; job.message = '접수 응답은 받았지만 송장번호를 확인하지 못했습니다. 대신 목록 확인이 필요하며 자동 재접수하지 않습니다.'; }
   }
   if (d.kind === 'unknown') { job.state = 'unknown'; job.message = '통신 결과가 불명확합니다. 대신 일자별조회에서 확인하기 전에는 다시 접수하지 마세요.'; }
   job.updatedAt = new Date().toISOString(); await saveJobs(jobs); return { ok: true };
@@ -70,12 +83,14 @@ async function readDestination(job) {
     delete job.diagnosis.readError;
   } catch (error) { job.diagnosis.readError = String(error.message || error); }
   // A later inspection must never turn an uncertain/submitted result into a new upload.
-  if (job.submissionStarted || !['staged', 'carrier-review', 'needs-review'].includes(job.state) || job.numbers?.length) return;
-  const missing = job.diagnosis.readError ? null : job.diagnosis.destination?.missingDestinationCount;
-  job.state = missing === 0 && job.diagnosis.upload?.rowCount === 1 ? 'carrier-review' : 'needs-review';
-  job.message = missing > 0 ? '대신에서 도착지 미지정 ' + missing + '건이 표시됩니다. 대신 화면의 도착지를 확인·수정하고 ‘도착지 다시 확인’을 눌러 주세요.'
-    : job.state === 'carrier-review' ? '대신에서 1건을 읽었고 도착지 미지정은 0건입니다. 수량·운임·도착지를 확인한 뒤 대신의 등록 버튼으로 접수해 주세요.'
-    : '업로드 결과의 도착지 지정 여부를 확인하지 못했습니다. 대신 화면을 확인하고 확인결과 파일을 저장해 주세요.';
+  if (job.submissionStarted || !['staged', 'carrier-review', 'carrier-ready', 'destination-pending', 'needs-review', 'not-registered'].includes(job.state) || job.numbers?.length) return;
+  const result = classifyDaesinDestination(job.diagnosis);
+  job.destinationNeedsReview = result.kind === 'destination-review'; job.destinationReason = result.reason;
+  job.state = result.kind === 'ready' ? 'carrier-ready' : result.kind === 'destination-review' ? 'destination-pending' : result.kind === 'blocked' ? 'not-registered' : 'needs-review';
+  job.message = result.kind === 'blocked' ? '등록 안됨 · ' + result.reason
+    : result.kind === 'destination-review' ? '등록 가능한 건입니다. 접수 후 도착지 수정 필요 · ' + result.reason
+    : result.kind === 'ready' ? '대신에서 1건을 읽었습니다. 도착영업소가 지정되어 있습니다.'
+    : result.reason + ' 대신 화면을 확인해 주세요.';
 }
 async function inspect(jobId) {
   const jobs = await readJobs(), job = jobs.find(item => item.id === jobId);
@@ -89,7 +104,7 @@ async function verify(jobId) {
   const tabs = await chrome.tabs.query({ url: CARRIER + '/searchSvl*' });
   for (const tab of tabs.filter(tab => new URL(tab.url).searchParams.get('svcSid') === 'dailySearch')) {
     const [check] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'ISOLATED', func: findCarrierWaybill, args: [job.numbers[0], job.receiver] });
-    if (check?.result?.found) { job.state = 'verified'; job.message = '대신 일자별조회에서 실제 송장번호와 수화주명이 일치하는 출고 1건을 확인했습니다.'; job.updatedAt = new Date().toISOString(); await saveJobs(jobs); return { ok: true, job: publicJob(job) }; }
+    if (check?.result?.found) { job.state = 'verified'; job.message = '대신 목록에서 실제 송장번호와 수화주명을 확인했습니다.' + (job.destinationNeedsReview ? ' 도착지 수정 필요 · ' + job.destinationReason : ''); job.updatedAt = new Date().toISOString(); await saveJobs(jobs); return { ok: true, job: publicJob(job) }; }
   }
   const existing = tabs.find(tab => new URL(tab.url).searchParams.get('svcSid') === 'dailySearch');
   if (existing) await chrome.tabs.update(existing.id, { active: true }); else await chrome.tabs.create({ url: DAILY, active: true });
@@ -99,10 +114,17 @@ async function handle(message, sender) {
   if (message.type === 'carrier-event') return carrierEvent(message, sender);
   const fromPopup = sender.url === chrome.runtime.getURL('popup.html');
   if (!isApp(sender) && !fromPopup) throw new Error('허용된 테스트 화면에서만 실행할 수 있습니다.');
-  if (message.action === 'ping') return { ok: true, version: '0.2.0' };
-  if (message.action === 'status') return { ok: true, version: '0.2.0', jobs: (await readJobs()).map(publicJob) };
+  if (message.action === 'ping') return { ok: true, version: '0.3.0' };
+  if (message.action === 'status') {
+    const jobs = await readJobs(); let changed = false;
+    for (const job of jobs) if (['staged', 'registering', 'submitting'].includes(job.state) && job.deadlineAt && Date.now() > job.deadlineAt) {
+      job.state = 'unknown'; job.message = '대신의 접수 결과를 확인하지 못했습니다. 화면의 안내와 일자별조회를 확인해 주세요. 자동 재접수하지 않습니다.'; job.updatedAt = new Date().toISOString(); changed = true;
+    }
+    if (changed) await saveJobs(jobs);
+    return { ok: true, version: '0.3.0', jobs: jobs.map(publicJob) };
+  }
   if (message.action === 'inspect') return inspect(message.jobId);
-  if (message.action === 'report') return { ok: true, report: { format: 'sanghwa-live-registration/2', version: '0.2.0', generatedAt: new Date().toISOString(), jobs: (await readJobs()).map(job => ({ ...publicJob(job), diagnosis: job.diagnosis || {} })) } };
+  if (message.action === 'report') return { ok: true, report: { format: 'sanghwa-live-registration/2', version: '0.3.0', generatedAt: new Date().toISOString(), jobs: (await readJobs()).map(job => ({ ...publicJob(job), diagnosis: job.diagnosis || {} })) } };
   if (message.action === 'verify') return verify(message.jobId);
   if (message.action === 'stage' && isApp(sender)) return stage(message);
   throw new Error('지원하지 않는 요청입니다.');

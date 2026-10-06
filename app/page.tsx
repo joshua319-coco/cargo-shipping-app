@@ -1843,10 +1843,10 @@ function toTemplateRow(
 }
 
 function isLiveDaesinTestShipment(row: Pick<SavedShipment, 'receiver' | 'shipmentDate' | 'carrier'>) {
-  return row.carrier === '대신' && row.shipmentDate === '2026-10-06' && /^대신자동업로드테스트[123]$/.test(row.receiver.trim());
+  return row.carrier === '대신' && row.shipmentDate === '2026-10-06' && /^대신자동업로드테스트[1-9]\d*$/.test(row.receiver.trim());
 }
 
-type LiveTestJob = { id: string; shipmentId: string; shipmentDate: string; receiver: string; state: string; numbers: string[]; message: string };
+type LiveTestJob = { id: string; shipmentId: string; shipmentDate: string; receiver: string; state: string; numbers: string[]; message: string; destinationNeedsReview?: boolean; destinationReason?: string };
 type LiveTestReply = { ok: boolean; error?: string; version?: string; jobs?: LiveTestJob[]; job?: LiveTestJob; repeated?: boolean; report?: Record<string, unknown> };
 function callLiveTestBridge(action: string, extra: Record<string, unknown> = {}): Promise<LiveTestReply> {
   return new Promise((resolve, reject) => {
@@ -1865,19 +1865,29 @@ function DaesinLiveTestPanel({ rows, mapRow, hasWaybill }: { rows: SavedShipment
   const [message, setMessage] = useState(''), [jobs, setJobs] = useState<LiveTestJob[]>([]);
   const inFlight = useRef(false);
   useEffect(() => { setEnabled(process.env.NODE_ENV === 'development' && location.origin === 'http://127.0.0.1:4320' && new URLSearchParams(location.search).get('registrationTest') === '1'); }, []);
+  useEffect(() => {
+    if (!enabled || !connected) return;
+    let active = true;
+    const timer = window.setInterval(() => {
+      void callLiveTestBridge('status').then(response => {
+        if (active && response.ok && response.jobs) setJobs(response.jobs);
+      }).catch(() => {});
+    }, 3000);
+    return () => { active = false; clearInterval(timer); };
+  }, [enabled, connected]);
   const refresh = async () => {
-    try { const response = await callLiveTestBridge('status'); if (!response.ok) throw new Error(response.error); if (response.version !== '0.2.0') throw new Error('새 연결 도구 0.2.0을 설치하고 이 화면을 새로고침해 주세요.'); setConnected(true); setJobs(response.jobs || []); setMessage('연결됨 · 실제 접수 테스트는 1건씩 진행합니다.'); }
+    try { const response = await callLiveTestBridge('status'); if (!response.ok) throw new Error(response.error); if (response.version !== '0.3.0') throw new Error('새 연결 도구 0.3.0을 설치하고 이 화면을 새로고침해 주세요.'); setConnected(true); setJobs(response.jobs || []); setMessage('연결됨 · 실제 접수 테스트는 1건씩 진행합니다.'); }
     catch (error) { setConnected(false); setMessage(error instanceof Error ? error.message : '연결 실패'); }
   };
   const stage = async () => {
     if (inFlight.current) return;
     if (rows.length !== 1 || rows[0].carrier !== '대신') return setMessage('목록에서 아직 접수하지 않은 대신 출고 1건만 선택해 주세요.');
     const row = rows[0];
-    if (!isLiveDaesinTestShipment(row)) return setMessage('2026-10-06의 대신자동업로드테스트1·2·3 중 1건을 선택해 주세요. 삭제 후 새로 만든 건도 선택할 수 있습니다.');
+    if (!isLiveDaesinTestShipment(row)) return setMessage('2026-10-06의 대신자동업로드테스트 뒤에 번호를 붙인 새 출고건 1건을 선택해 주세요.');
     if (hasWaybill(row.id)) return setMessage('이미 송장번호가 연결된 출고건입니다. 중복 접수하지 않습니다.');
     const mapped = mapRow(row);
     if (!mapped.우편번호 || !/^\d{5}$/.test(String(mapped.우편번호)) || Number(mapped.수량) < 1 || !row.receiver.trim() || !row.receiverPhone.trim()) return setMessage('수화주명·전화번호·우편번호·수량을 확인해 주세요.');
-    if (!window.confirm(`${row.receiver}\n출고일 ${row.shipmentDate}\n대신 전송 수량 ${mapped.수량}${row.pack} / 운임 ${mapped.총운임}원 / ${row.pay}\n도착지 ${row.delivery === '정기' ? row.branch : row.address}\n\n아직 대신에 접수하지 않은 1건이 맞나요? 대신 등록 화면으로 실제 데이터를 전송합니다. 최종 등록은 대신 화면에서 확인 후 진행합니다.`)) return;
+    if (!window.confirm(`${row.receiver}\n출고일 ${row.shipmentDate}\n대신 전송 수량 ${mapped.수량}${row.pack} / 운임 ${mapped.총운임}원 / ${row.pay}\n도착지 ${row.delivery === '정기' ? row.branch : row.address}\n\n아직 대신에 접수하지 않은 1건이 맞나요? 대신 등록 화면으로 실제 데이터를 전송하고 등록(출력안함)까지 자동 진행합니다. 공동관할·미지정은 등록 후 마감관리에서 수정하세요.`)) return;
     inFlight.current = true; setBusy(true); setMessage('대신 등록 화면을 열고 선택한 1건을 전달하고 있습니다.');
     try {
       const XLSX = await import('xlsx');
@@ -1887,10 +1897,10 @@ function DaesinLiveTestPanel({ rows, mapRow, hasWaybill }: { rows: SavedShipment
       let binary = ''; for (let i = 0; i < buffer.length; i++) binary += String.fromCharCode(buffer[i]);
       const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify({ id: row.id, date: row.shipmentDate, mapped })));
       const fingerprint = Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('');
-      const response = await callLiveTestBridge('stage', { payload: { shipmentId: row.id, shipmentDate: row.shipmentDate, receiver: row.receiver, fingerprint, workbook: btoa(binary), source: { postalCode: String(mapped.우편번호), address: String(mapped.주소), branch: String(mapped.도착영업소), quantity: Number(mapped.수량), fare: Number(mapped.총운임), delivery: row.delivery } } });
+      const response = await callLiveTestBridge('stage', { payload: { shipmentId: row.id, shipmentDate: row.shipmentDate, receiver: row.receiver, fingerprint, autoRegister: true, workbook: btoa(binary), source: { postalCode: String(mapped.우편번호), address: String(mapped.주소), branch: String(mapped.도착영업소), quantity: Number(mapped.수량), fare: Number(mapped.총운임), delivery: row.delivery } } });
       if (!response.ok) throw new Error(response.error);
       if (response.job) setJobs(previous => [...previous.filter(job => job.id !== response.job!.id), response.job!]);
-      setMessage(response.repeated ? '이미 전송한 출고건입니다. 새로 전송하지 않고 기존 결과를 표시합니다.' : '대신 등록 화면에 전달했습니다. 그 화면의 1건을 확인한 뒤 최종 등록을 진행해 주세요.');
+      setMessage(response.repeated ? '이미 전송한 출고건입니다. 새로 전송하지 않고 기존 결과를 표시합니다.' : '업로드 후 등록(출력안함)을 자동 진행합니다. 접수 결과가 아래에 표시됩니다.');
     } catch (error) { setMessage(error instanceof Error ? error.message : '연결 결과를 확인해 주세요.'); }
     finally { inFlight.current = false; setBusy(false); }
   };
@@ -1912,16 +1922,18 @@ function DaesinLiveTestPanel({ rows, mapRow, hasWaybill }: { rows: SavedShipment
   if (!enabled) return null;
   return <section aria-label="대신 실제접수 테스트" style={{ border: '1px solid #bfdbfe', background: '#f8fbff', padding: 14, borderRadius: 12, marginBottom: 14 }}>
     <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-      <strong>대신 실제접수 테스트 · 0.2.0</strong><button type="button" onClick={() => void refresh()} disabled={busy} style={exportBtnSecondary}>연결·결과 확인</button>
-      <button type="button" onClick={() => void stage()} disabled={!connected || busy} style={{ ...exportBtnPrimary, opacity: !connected || busy ? .5 : 1 }}>{busy ? '전송 중…' : '선택 1건 대신 등록 화면으로'}</button>
+      <strong>대신 실제접수 테스트 · 0.3.0</strong><button type="button" onClick={() => void refresh()} disabled={busy} style={exportBtnSecondary}>연결·결과 확인</button>
+      <button type="button" onClick={() => void stage()} disabled={!connected || busy} style={{ ...exportBtnPrimary, opacity: !connected || busy ? .5 : 1 }}>{busy ? '전송 중…' : '선택 1건 자동 등록(출력안함)'}</button>
       <button type="button" onClick={() => void downloadReport()} disabled={!connected || busy} style={exportBtnSecondary}>확인결과 파일 저장</button>
       <a href="/registration-test-setup/index.html" target="_blank" rel="noreferrer" style={{ fontSize: 13 }}>연결 도구 설치</a>
     </div>
-    <p role="status" style={{ fontSize: 13, color: '#475569', margin: '10px 0 0' }}>{message || '2026-10-06 · 대신자동업로드테스트1·2·3을 한 건씩 시험합니다. 삭제 후 다시 만든 건은 새로 선택하세요.'}</p>
+    <p role="status" style={{ fontSize: 13, color: '#475569', margin: '10px 0 0' }}>{message || '2026-10-06 · 아직 접수하지 않은 새 테스트 건을 한 건씩 자동 등록합니다. 이미 접수한 건은 다시 선택하지 마세요.'}</p>
+    {jobs.length > 0 && <p style={{ fontSize: 13, fontWeight: 700 }}>등록 완료 {jobs.filter(job => job.numbers.length === 1).length}건 · 도착지 수정 필요 {jobs.filter(job => job.numbers.length === 1 && job.destinationNeedsReview).length}건 · 등록 안됨 {jobs.filter(job => job.state === 'not-registered').length}건 · 결과 확인 필요 {jobs.filter(job => ['unknown', 'needs-review'].includes(job.state)).length}건</p>}
     {jobs.map(job => <div key={job.id} style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', borderTop: '1px solid #dbe5f3', marginTop: 10, paddingTop: 10, fontSize: 13 }}>
       <strong>{job.receiver}</strong><span>{job.shipmentDate}</span><span>{job.numbers.join(', ')}</span>
       <span style={{ color: job.state === 'verified' ? '#15803d' : '#475569' }}>{job.state === 'verified' ? '대신 목록에서 접수 확인됨' : job.message || '처리상태 확인 필요'}</span>
-      {['staged', 'carrier-review', 'needs-review'].includes(job.state) && <button type="button" style={exportBtnSecondary} onClick={() => void inspect(job.id)} disabled={busy}>도착지 다시 확인</button>}
+      {['carrier-ready', 'destination-pending', 'needs-review', 'not-registered'].includes(job.state) && <button type="button" style={exportBtnSecondary} onClick={() => void inspect(job.id)} disabled={busy}>도착지 다시 확인</button>}
+      {job.destinationNeedsReview && job.numbers.length === 1 && <strong style={{ color: '#b45309' }}>마감관리에서 도착지 수정 필요</strong>}
       {job.numbers.length === 1 && <button type="button" style={exportBtnSecondary} onClick={() => void verify(job.id)} disabled={busy}>실제 등록 확인</button>}
     </div>)}
   </section>;
