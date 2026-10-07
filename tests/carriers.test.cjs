@@ -21,7 +21,7 @@ function loadTs(file, extra = '') {
   return compiledModule.exports;
 }
 const carrier = loadTs('lib/carriers.ts');
-const { __test: helpers } = loadTs('app/page.tsx', '\nexports.__test = { normalizeShipment, suggestFareByQty, toTemplateRow, toShipmentDbPayload, parseWaybillUploadRows, buildWaybillVerificationRows, normalizeSharedVerifyState, buildWaybillMessageText, TEMPLATE_HEADERS, toLogenTemplateRow, LOGEN_TEMPLATE_HEADERS, isValidShipmentDate, isLiveDaesinTestShipment, validateDaesinDailyImport };');
+const { __test: helpers } = loadTs('app/page.tsx', '\nexports.__test = { normalizeShipment, suggestFareByQty, jejuShipmentNotice, toTemplateRow, toShipmentDbPayload, parseWaybillUploadRows, buildWaybillVerificationRows, normalizeSharedVerifyState, buildWaybillMessageText, TEMPLATE_HEADERS, toLogenTemplateRow, LOGEN_TEMPLATE_HEADERS, isValidShipmentDate, isLiveDaesinTestShipment, validateDaesinDailyImport };');
 const shipment = (patch = {}) => helpers.normalizeShipment({
   id: '1', carrier: '로젠', receiver: '테스트수하인', receiver_phone: '01012345678',
   address: '경기도 수원시 테스트로 10 101호', postal_code: '12345', sender: '상화시스템',
@@ -49,13 +49,13 @@ test('legacy records and histories remain Daesin', () => {
   assert.equal(state.waybill_upload_rows[0].id, 'old');
   assert.deepEqual(state.logen_upload_rows, []);
 });
-test('Logen prepaid/collect rates and one Jeju surcharge per shipment', () => {
+test('Logen prepaid/collect base rates exclude the manual Jeju surcharge', () => {
   for (const [pay, unit] of [['선불',3300],['착불',3500]]) {
     for (const qty of [1,2,3,10]) {
       assert.equal(carrier.logenFare(qty, '서울특별시', pay), String(qty * unit));
       for (const address of ['제주특별자치도 제주시','서귀포시']) {
-        assert.equal(carrier.logenFare(qty, address, pay), String(qty * unit + 3000));
-        assert.equal(helpers.suggestFareByQty({carrier:'로젠',pay,qty:String(qty),delivery:'택배',pack:'박스',address}), String(qty * unit + 3000));
+        assert.equal(carrier.logenFare(qty, address, pay), String(qty * unit));
+        assert.equal(helpers.suggestFareByQty({carrier:'로젠',pay,qty:String(qty),delivery:'택배',pack:'박스',address}), String(qty * unit));
       }
     }
     for (const qty of ['', '0', '-1', '0.5', '1.5', 'abc', 'Infinity']) assert.equal(carrier.logenFare(qty, '', pay), '');
@@ -66,7 +66,7 @@ test('Logen prepaid/collect rates and one Jeju surcharge per shipment', () => {
 test('Daesin half-box and double Jeju rates are preserved', () => {
   assert.equal(helpers.suggestFareByQty({qty:'0.5',delivery:'정기',pack:'박스'}), '4400');
   assert.equal(helpers.suggestFareByQty({qty:'1',delivery:'택배',pack:'박스',address:'제주시'}), '14300');
-  assert.equal(helpers.suggestFareByQty({carrier:'로젠',pay:'선불',qty:'2',delivery:'택배',pack:'박스',address:'제주시'}), '9600');
+  assert.equal(helpers.suggestFareByQty({carrier:'로젠',pay:'선불',qty:'2',delivery:'택배',pack:'박스',address:'제주시'}), '6600');
 });
 test('DB payload keeps manually entered Logen fare and still enforces integer parcel boxes', () => {
   const payload=helpers.toShipmentDbPayload(shipment({delivery:'정기',fare:'7,200',address:'제주시'}));
@@ -320,4 +320,13 @@ test('Daesin bound invoice survives quantity, fare and recipient edits while dis
  assert.ok(bound.reasons.includes('수량 확인'));assert.ok(bound.reasons.includes('총운임 확인'));
  assert.equal(matched.find(row=>row.shipmentId==='2').status,'출고목록만');
  const payload=helpers.toShipmentDbPayload(source);assert.equal(Object.hasOwn(payload,'daesin_registration'),false,'normal edits do not erase carrier state');
+});
+
+
+test('Jeju list notices use carrier-specific wording and destination source',()=>{
+ assert.equal(helpers.jejuShipmentNotice(shipment({carrier:'로젠',address:'제주특별자치도 서귀포시 예시로 10'})),'제주 | +3천원');
+ assert.equal(helpers.jejuShipmentNotice(shipment({carrier:'대신',delivery:'택배',address:'제주시 예시로 10'})),'제주 | 운임X2');
+ assert.equal(helpers.jejuShipmentNotice(shipment({carrier:'대신',delivery:'정기',address:'서울특별시',branch:'서귀포영업소'})),'제주 | 운임X2');
+ assert.equal(helpers.jejuShipmentNotice(shipment({carrier:'로젠',address:'서울특별시',branch:'제주'})),'');
+ assert.equal(helpers.jejuShipmentNotice(shipment({carrier:'대신',address:'서울특별시'})),'');
 });

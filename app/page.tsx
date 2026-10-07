@@ -1437,6 +1437,12 @@ function isJejuDestination(params: {
   return text.includes("제주") || text.includes("서귀포");
 }
 
+function jejuShipmentNotice(shipment: Pick<SavedShipment, 'carrier' | 'delivery' | 'address' | 'branch'>) {
+  return isJejuDestination({ ...shipment, delivery: shipment.carrier === '로젠' ? '택배' : shipment.delivery })
+    ? shipment.carrier === '로젠' ? '제주 | +3천원' : '제주 | 운임X2'
+    : '';
+}
+
 function suggestFareByQty(params: {
   carrier?: Carrier;
   pay?: PayType;
@@ -5402,7 +5408,10 @@ export default function Home() {
 
                   <div style={{ ...row2, marginTop: 16 }}>
                     <Input label="수량" value={qty} set={handleQty} integer={carrier === "로젠"} style={carrier === "로젠" ? { background: "#f3f4f6" } : undefined} />
-                    <Input label="운임" value={fare} set={setFare} style={carrier === "로젠" ? { background: "#f3f4f6" } : undefined} />
+                    <div>
+                      <Input label="운임" value={fare} set={setFare} style={carrier === "로젠" ? { background: "#f3f4f6" } : undefined} />
+                      {carrier === '로젠' && isJejuDestination({delivery:'택배',address}) && <div style={jejuNoticeStyle}>제주지역 +3000원 추가할증</div>}
+                    </div>
                   </div>
                 </Section>
 
@@ -5937,6 +5946,7 @@ export default function Home() {
                                   shipment.receiver,
                                 )}
                               </button>
+                              {jejuShipmentNotice(shipment) && <div style={jejuNoticeStyle}>{jejuShipmentNotice(shipment)}</div>}
                             </div>
 
                             <div style={ovPay}>{shipment.pay}</div>
@@ -7183,6 +7193,7 @@ export default function Home() {
                       재계산
                     </button>
                   </div>
+                  {editForm.carrier === '로젠' && isJejuDestination({delivery:'택배',address:editForm.address}) && <div style={jejuNoticeStyle}>제주지역 +3000원 추가할증</div>}
                 </div>
               </div>
 
@@ -8452,6 +8463,8 @@ const ovSelect: CSSProperties = {
   display: "flex",
   justifyContent: "center",
 };
+
+const jejuNoticeStyle: CSSProperties = { color: '#dc2626', fontSize: 11, fontWeight: 500, lineHeight: '16px', marginTop: 4 };
 
 const ovCompany: CSSProperties = {
   minWidth: 0,
