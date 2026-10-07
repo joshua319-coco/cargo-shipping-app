@@ -5645,7 +5645,8 @@ export default function Home() {
                               )}
                             </div>
 
-                            <div style={ovCompany}>
+                            <div style={{ minWidth: 0, position: 'relative' }}>
+                              <div style={ovCompany}>
                               <button
                                 type="button"
                                 style={companyLinkBtn}
@@ -5656,7 +5657,8 @@ export default function Home() {
                                   shipment.receiver,
                                 )}
                               </button>
-                              {jejuShipmentNotice(shipment) && <div style={jejuNoticeStyle}>{jejuShipmentNotice(shipment)}</div>}
+                              </div>
+                              {jejuShipmentNotice(shipment) && <div style={{ ...jejuNoticeStyle, position: 'absolute', top: '100%', left: 0, marginTop: 2 }}>{jejuShipmentNotice(shipment)}</div>}
                             </div>
 
                             <div style={ovPay}>{shipment.pay}</div>
