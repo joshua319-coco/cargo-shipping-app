@@ -36,7 +36,7 @@ async function fetchDaesinDailyWorkbook(shipmentDate) {
     const invalid = [], grouped = new Map();
     rows.forEach((row, index) => {
       const number = numbers[index];
-      if (!/^\d{12}$/.test(number)) invalid.push({ row: index + 1, type: typeof row?.waybill_no, value: String(row?.waybill_no ?? '').slice(0, 80), length: number.length, fields: Object.keys(row || {}).slice(0, 60) });
+      if (!/^\d{12,13}$/.test(number)) invalid.push({ row: index + 1, type: typeof row?.waybill_no, value: String(row?.waybill_no ?? '').slice(0, 80), length: number.length, fields: Object.keys(row || {}).slice(0, 60) });
       else { const indices = grouped.get(number) || []; indices.push(index + 1); grouped.set(number, indices); }
     });
     const duplicates = [...grouped].filter(([, indices]) => indices.length > 1).map(([number, indices]) => ({ number, rows: indices }));
@@ -84,7 +84,7 @@ function reconcileDaesinDailyJobs(jobs, rows, shipmentDate) {
     const row = candidates.length === 1 ? candidates[0] : null;
     const delivery = row?.transit_mode === '1' ? '정기' : row?.transit_mode === '2' ? '택배' : '';
     const pay = row?.payment_mode === '1' ? '선불' : row?.payment_mode === '2' ? '착불' : '';
-    const matches = row && /^\d{12}$/.test(row.waybill_no) && Number(row.quantity) === Number(source.quantity) &&
+    const matches = row && /^\d{12,13}$/.test(row.waybill_no) && Number(row.quantity) === Number(source.quantity) &&
       Number(row.supply_price) + Number(row.tax_amount) === Number(source.fare) && delivery === (source.delivery === '화물' ? '정기' : source.delivery) &&
       (!source.pay || pay === source.pay) && (!source.receiverPhone || digits(row.arrival_phone_number1) === digits(source.receiverPhone));
     if (!matches || (job.numbers?.length && !job.numbers.includes(row.waybill_no))) {

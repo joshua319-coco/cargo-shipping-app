@@ -56,7 +56,7 @@ async function stageCarrierWorkbook(job) {
           if (registration) {
             // Only the specifically observed waybill field is read; unrelated responses are excluded.
             const raw = JSON.stringify(data.resultBillNos ?? '');
-            const numbers = [...new Set(raw.match(/(?<!\d)\d{12}(?!\d)/g) || [])];
+            const numbers = [...new Set(raw.match(/(?<!\d)\d{12,13}(?!\d)/g) || [])];
             emit('registration-response', { numbers, result: typeof data.result === 'string' || typeof data.result === 'number' ? data.result : null, message: typeof data.message === 'string' ? data.message.slice(0, 500) : '', responseReceived: true });
           } else {
             const destinationFields = ['arrival_agencycode', 'unregistered_post', 'unregistered_post_state', 'transit_mode'];
@@ -186,7 +186,7 @@ function findCarrierShipmentWaybill(expected) {
       const phone = phoneColumn < 0 ? '' : (row.cells[phoneColumn]?.innerText || '').replace(/\D/g, '');
       const expectedPhone = String(expected.receiverPhone || '').replace(/\D/g, '');
       const payMatches = !expected.pay || (expected.pay === '선불' ? /선불|현불/.test(transport) : /착불/.test(transport));
-      if (!/^\d{12}$/.test(number) || rowDate !== expected.shipmentDate || quantity !== Number(expected.quantity) || fare !== Number(expected.fare) || !transport.startsWith(expected.delivery) || !payMatches || (expectedPhone && phone !== expectedPhone)) continue;
+      if (!/^\d{12,13}$/.test(number) || rowDate !== expected.shipmentDate || quantity !== Number(expected.quantity) || fare !== Number(expected.fare) || !transport.startsWith(expected.delivery) || !payMatches || (expectedPhone && phone !== expectedPhone)) continue;
       const destinationColumn = labels.indexOf('도착지');
       const destination = destinationColumn < 0 ? '' : row.cells[destinationColumn]?.innerText?.trim() || '';
       matches.push({ number, destinationNeedsReview: /공동관할|미지정|미설정/.test(destination), destinationReason: /공동관할|미지정|미설정/.test(destination) ? destination : '' });

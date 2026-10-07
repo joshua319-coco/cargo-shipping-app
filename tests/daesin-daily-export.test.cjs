@@ -16,3 +16,7 @@ test('ambiguous names or any differing identity/amount/service never overwrite a
  const differentDay=job();reconcile([differentDay],[row()],'2026-10-05');assert.equal(differentDay.numbers.length,0);
  const unknown=job();unknown.diagnosis.registration.result='ERROR';reconcile([unknown],[row()],date);assert.equal(unknown.numbers.length,0);
 });
+
+test('daily reconciliation retains the observed full 13-digit number',()=>{
+ const j=job();reconcile([j],[{...row(),waybill_no:'2140649004964'}],date);assert.deepEqual(Array.from(j.numbers),['2140649004964']);assert.equal(j.state,'verified');
+});

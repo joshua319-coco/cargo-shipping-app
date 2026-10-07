@@ -35,3 +35,11 @@ test('failed query diagnostics are bounded without dropping the error counts',as
  const {result,calls}=await fetchRows(Array.from({length:35},()=>({waybill_no:''})));
  assert.equal(calls.length,1);assert.equal(result.diagnosis.blankCount,35);assert.equal(result.diagnosis.invalidSamples.length,10);
 });
+
+test('observed 13-digit Daesin numbers pass query and export unchanged',async()=>{
+ const numbers=['2140649004964','2140649004963','2140649004962','2140649004961','2140649004960'];
+ const {result,calls}=await fetchRows(numbers.map(waybill_no=>({waybill_no})));
+ assert.equal(result.error,undefined);assert.deepEqual(result.rows.map(r=>r.waybill_no),numbers);
+ assert.equal(new URLSearchParams(calls[1].options.body).get('waybillNos'),numbers.join(','));
+ for(const invalid of ['21406490049','21406490049640','2.140649004964e12','214064900496x'])assert.match((await fetchRows([{waybill_no:invalid}])).result.error,/번호 형식 오류/);
+});

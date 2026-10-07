@@ -1853,7 +1853,7 @@ type DaesinDailyDataset = { shipmentDate: string; fileName: string; workbook: st
 function validateDaesinDailyImport(parsedRows: WaybillUploadRow[], dataset: DaesinDailyDataset) {
   const expected = new Map(dataset.rows.map(row => [row.waybill_no, row]));
   const actual = new Set(parsedRows.map(row => row.waybillNo));
-  if (!parsedRows.length || actual.size !== parsedRows.length || parsedRows.some(row => !/^\d{12}$/.test(row.waybillNo) || !expected.has(row.waybillNo))) throw new Error('엑셀 송장번호와 대신 조회 결과가 일치하지 않아 기존 데이터를 유지했습니다.');
+  if (!parsedRows.length || actual.size !== parsedRows.length || parsedRows.some(row => !/^\d{12,13}$/.test(row.waybillNo) || !expected.has(row.waybillNo))) throw new Error('엑셀 송장번호와 대신 조회 결과가 일치하지 않아 기존 데이터를 유지했습니다.');
   const missing = dataset.rows.filter(row => !actual.has(row.waybill_no));
   if (missing.some(row => row.arrival_agencycode !== '0000')) throw new Error('도착지가 지정된 건이 엑셀에서 누락되어 기존 데이터를 유지했습니다. 다시 가져와 주세요.');
   return missing;
@@ -1863,7 +1863,7 @@ type LiveTestReply = { ok: boolean; error?: string; version?: string; jobs?: Liv
 function callLiveTestBridge(action: string, extra: Record<string, unknown> = {}): Promise<LiveTestReply> {
   return new Promise((resolve, reject) => {
     const requestId = crypto.randomUUID();
-    const timer = window.setTimeout(() => { window.removeEventListener('message', receive); reject(new Error(action === 'stage' ? '전송 결과를 받지 못했습니다. 다시 전송하지 말고 대신 화면과 확장 프로그램 상태를 확인해 주세요.' : action === 'fetch-daily' || action === 'verify' ? '발송데이터 조회 응답이 늦어지고 있습니다. 연결·결과 확인을 눌러 상태를 확인해 주세요. 다시 등록할 필요는 없습니다.' : '실제접수 테스트 확장 프로그램을 설치한 크롬에서 열어 주세요.')); }, action === 'stage' || action === 'fetch-daily' ? 55000 : action === 'verify' ? 20000 : 10000);
+    const timer = window.setTimeout(() => { window.removeEventListener('message', receive); reject(new Error(action === 'stage' ? '전송 결과를 받지 못했습니다. 다시 전송하지 말고 대신 화면과 확장 프로그램 상태를 확인해 주세요.' : action === 'fetch-daily' || action === 'verify' ? '발송데이터 조회 응답이 늦어지고 있습니다. 연결·결과 확인을 눌러 상태를 확인해 주세요. 다시 등록할 필요는 없습니다.' : action === 'report' ? '확인결과 응답이 10초 안에 오지 않았습니다. 연결 도구를 업데이트했다면 확장 프로그램과 이 페이지를 모두 새로고침해 주세요.' : '연결 도구에서 응답이 오지 않았습니다. 확장 프로그램이 있는 크롬인지 확인하고 이 페이지를 새로고침해 주세요.')); }, action === 'stage' || action === 'fetch-daily' ? 55000 : action === 'verify' ? 20000 : 10000);
     function receive(event: MessageEvent) {
       if (event.source !== window || event.origin !== location.origin || event.data?.channel !== 'sanghwa-live-response' || event.data.requestId !== requestId) return;
       clearTimeout(timer); window.removeEventListener('message', receive); resolve(event.data.result);
@@ -1876,7 +1876,10 @@ function DaesinLiveTestPanel({ rows, mapRow, hasWaybill, onImport }: { rows: Sav
   const [enabled, setEnabled] = useState(false), [busy, setBusy] = useState(false), [connected, setConnected] = useState(false);
   const [message, setMessage] = useState(''), [jobs, setJobs] = useState<LiveTestJob[]>([]);
   const [verifyingId, setVerifyingId] = useState<string | null>(null);
-  const inFlight = useRef(false);
+  const inFlight = useRef(false), reportInFlight = useRef(false);
+  const [reportBusy, setReportBusy] = useState(false);
+  const [preparedReport, setPreparedReport] = useState<{ url: string; text: string } | null>(null);
+  useEffect(() => () => { if (preparedReport) URL.revokeObjectURL(preparedReport.url); }, [preparedReport]);
   useEffect(() => { setEnabled(process.env.NODE_ENV === 'development' && location.origin === 'http://127.0.0.1:4320' && new URLSearchParams(location.search).get('registrationTest') === '1'); }, []);
   useEffect(() => {
     if (!enabled || !connected || busy) return;
@@ -1889,7 +1892,7 @@ function DaesinLiveTestPanel({ rows, mapRow, hasWaybill, onImport }: { rows: Sav
     return () => { active = false; clearInterval(timer); };
   }, [enabled, connected, busy]);
   const refresh = async () => {
-    try { const response = await callLiveTestBridge('status'); if (!response.ok) throw new Error(response.error); if (response.version !== '0.4.1') throw new Error('새 연결 도구 0.4.1을 설치하고 이 화면을 새로고침해 주세요.'); setConnected(true); setJobs(response.jobs || []); setMessage('연결됨 · 실제 접수 테스트는 1건씩 진행합니다.'); }
+    try { const response = await callLiveTestBridge('status'); if (!response.ok) throw new Error(response.error); if (response.version !== '0.4.2') throw new Error('새 연결 도구 0.4.2을 설치하고 이 화면을 새로고침해 주세요.'); setConnected(true); setJobs(response.jobs || []); setMessage('연결됨 · 실제 접수 테스트는 1건씩 진행합니다.'); }
     catch (error) { setConnected(false); setMessage(error instanceof Error ? error.message : '연결 실패'); }
   };
   const stage = async () => {
@@ -1935,22 +1938,39 @@ function DaesinLiveTestPanel({ rows, mapRow, hasWaybill, onImport }: { rows: Sav
     catch (error) { setMessage(error instanceof Error ? error.message : '대신 화면 확인 필요'); }
   };
   const downloadReport = async () => {
+    if (reportInFlight.current) return;
+    reportInFlight.current = true; setReportBusy(true); setPreparedReport(null);
+    setMessage('저장된 확인결과를 파일로 준비 중입니다…');
     try {
-      const response = await callLiveTestBridge('report'); if (!response.ok || !response.report) throw new Error(response.error || '확인결과가 없습니다.');
-      const url = URL.createObjectURL(new Blob([JSON.stringify(response.report, null, 2)], { type: 'application/json' }));
-      const link = document.createElement('a'); link.href = url; link.download = '대신_등록테스트_확인결과.json'; document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+      const response = await callLiveTestBridge('report'); if (!response.ok || !response.report) throw new Error(response.error || '저장된 확인결과를 받지 못했습니다.');
+      const text = JSON.stringify(response.report, null, 2);
+      const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+      setPreparedReport({ url, text });
+      const link = document.createElement('a'); link.href = url; link.download = '대신_등록테스트_확인결과.json'; document.body.append(link); link.click(); link.remove();
+      setMessage('확인결과 다운로드를 요청했습니다. 파일이 안 보이면 아래 파일 직접 다운로드를 눌러 주세요.');
     } catch (error) { setMessage(error instanceof Error ? error.message : '확인결과 저장 실패'); }
+    finally { reportInFlight.current = false; setReportBusy(false); }
+  };
+  const copyReport = async () => {
+    if (!preparedReport) return;
+    try { await navigator.clipboard.writeText(preparedReport.text); setMessage('확인결과를 복사했습니다. 채팅에 붙여넣어 주세요.'); }
+    catch { setMessage('자동 복사가 허용되지 않았습니다. 확인결과 내용 보기를 펼쳐 내용을 선택한 뒤 복사해 주세요.'); }
   };
   if (!enabled) return null;
   return <section aria-label="대신 실제접수 테스트" style={{ border: '1px solid #bfdbfe', background: '#f8fbff', padding: 14, borderRadius: 12, marginBottom: 14 }}>
     <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-      <strong>대신 실제접수 테스트 · 0.4.1</strong><button type="button" onClick={() => void refresh()} disabled={busy} style={exportBtnSecondary}>연결·결과 확인</button>
+      <strong>대신 실제접수 테스트 · 0.4.2</strong><button type="button" onClick={() => void refresh()} disabled={busy} style={exportBtnSecondary}>연결·결과 확인</button>
       <button type="button" onClick={() => void stage()} disabled={!connected || busy} style={{ ...exportBtnPrimary, opacity: !connected || busy ? .5 : 1 }}>{busy && !verifyingId ? '전송 중…' : '선택 1건 자동 등록(출력안함)'}</button>
       <button type="button" onClick={() => void fetchDaily()} disabled={!connected || busy} style={exportBtnPrimary}>{verifyingId ? "발송데이터 가져오는 중…" : "대신 발송데이터 가져오기"}</button>
-      <button type="button" onClick={() => void downloadReport()} disabled={!connected || busy} style={exportBtnSecondary}>확인결과 파일 저장</button>
+      <button type="button" onClick={() => void downloadReport()} disabled={reportBusy} style={exportBtnSecondary}>{reportBusy ? "확인결과 준비 중…" : "확인결과 파일 저장"}</button>
       <a href="/registration-test-setup/index.html" target="_blank" rel="noreferrer" style={{ fontSize: 13 }}>연결 도구 설치</a>
     </div>
     <p role="status" style={{ fontSize: 13, color: '#475569', margin: '10px 0 0' }}>{message || '2026-10-06 · 아직 접수하지 않은 새 테스트 건을 한 건씩 자동 등록합니다. 이미 접수한 건은 다시 선택하지 마세요.'}</p>
+    {preparedReport && <div style={{ marginTop: 10 }}>
+      <a href={preparedReport.url} download="대신_등록테스트_확인결과.json" style={{ marginRight: 12 }}>파일 직접 다운로드</a>
+      <button type="button" style={exportBtnSecondary} onClick={() => void copyReport()}>확인결과 복사</button>
+      <details style={{ marginTop: 8 }}><summary>확인결과 내용 보기</summary><textarea aria-label="확인결과 내용" readOnly value={preparedReport.text} onFocus={event => event.currentTarget.select()} style={{ width: '100%', height: 180, marginTop: 8, fontFamily: 'monospace' }} /></details>
+    </div>}
     {jobs.length > 0 && <p style={{ fontSize: 13, fontWeight: 700 }}>등록 완료 {jobs.filter(job => job.registered || job.numbers.length === 1).length}건 · 도착지 수정 필요 {jobs.filter(job => (job.registered || job.numbers.length === 1) && job.destinationNeedsReview).length}건 · 등록 안됨 {jobs.filter(job => job.state === 'not-registered').length}건 · 결과 확인 필요 {jobs.filter(job => ['unknown', 'needs-review'].includes(job.state)).length}건</p>}
     {jobs.map(job => <div key={job.id} style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', borderTop: '1px solid #dbe5f3', marginTop: 10, paddingTop: 10, fontSize: 13 }}>
       <strong>{job.receiver}</strong><span>{job.shipmentDate}</span><span>{job.numbers.join(', ')}</span>

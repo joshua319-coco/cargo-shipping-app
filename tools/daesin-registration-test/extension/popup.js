@@ -23,11 +23,17 @@ async function render() {
 document.querySelector('#refresh').addEventListener('click', () => render().catch(error => message.textContent = error.message));
 render().catch(error => message.textContent = error.message);
 
+let reportUrl = '';
 document.querySelector('#report').addEventListener('click', async () => {
+  const button = document.querySelector('#report');
+  button.disabled = true; button.textContent = '확인결과 준비 중…'; message.textContent = '저장된 확인결과를 읽고 있습니다.';
   try {
     const response = await chrome.runtime.sendMessage({ action: 'report' });
     if (!response.ok) throw new Error(response.error);
-    const url = URL.createObjectURL(new Blob([JSON.stringify(response.report, null, 2)], { type: 'application/json' }));
-    const link = document.createElement('a'); link.href = url; link.download = '대신_등록테스트_확인결과.json'; document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+    if (reportUrl) URL.revokeObjectURL(reportUrl);
+    reportUrl = URL.createObjectURL(new Blob([JSON.stringify(response.report, null, 2)], { type: 'application/json' }));
+    const link = document.querySelector('#report-download'); link.href = reportUrl; link.hidden = false; link.click();
+    message.textContent = '다운로드를 요청했습니다. 파일이 안 보이면 파일 직접 다운로드를 눌러 주세요.';
   } catch (error) { message.textContent = error.message; }
+  finally { button.disabled = false; button.textContent = '확인결과 파일 저장'; }
 });

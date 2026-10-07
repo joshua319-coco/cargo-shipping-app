@@ -303,3 +303,8 @@ test('automatic daily import preserves existing data on missing assigned/foreign
   assert.throws(()=>helpers.validateDaesinDailyImport([{waybillNo:'999999999999'}],{rows}));
   assert.throws(()=>helpers.validateDaesinDailyImport(parsed,{rows:rows.map(r=>({...r,arrival_agencycode:'2401'}))}));
 });
+
+test('full 13-digit number survives Excel parsing and automatic import validation',()=>{
+ const [parsed]=helpers.parseWaybillUploadRows([{수화주명:'테스트',운송장번호:'2140649004964'}],'대신');
+ assert.equal(parsed.waybillNo,'2140649004964');assert.deepEqual(helpers.validateDaesinDailyImport([parsed],{rows:[{waybill_no:'2140649004964',arrival_agencycode:'2401'}]}),[]);
+});
