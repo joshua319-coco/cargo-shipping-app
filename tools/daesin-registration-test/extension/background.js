@@ -105,18 +105,21 @@ async function fetchDaily(shipmentDate) {
   tabs.sort((a,b) => Number(b.active)-Number(a.active) || (b.lastAccessed||0)-(a.lastAccessed||0) || b.id-a.id);
   if (!tabs.length) { await chrome.tabs.create({url:DAILY,active:true}); throw new Error('열린 대신 일자별조회에서 '+shipmentDate+'를 조회한 뒤 다시 가져와 주세요.'); }
   const [result] = await chrome.scripting.executeScript({target:{tabId:tabs[0].id},world:'ISOLATED',func:fetchDaesinDailyWorkbook,args:[shipmentDate]});
+  const attempt = { ...(result?.result?.diagnosis || { shipmentDate, stage: 'page' }), error: result?.result?.error || result?.error?.message || '', version: '0.4.1' };
+  const history = (await chrome.storage.local.get('sanghwaDailyFetchHistory')).sanghwaDailyFetchHistory || [];
+  await chrome.storage.local.set({ sanghwaDailyFetchHistory: [...history, attempt].slice(-5) });
   if (result?.result?.error) throw new Error(result.result.error);
   if (!result?.result?.workbook || !Array.isArray(result.result.rows)) throw new Error(result?.error?.message || '대신 엑셀 응답을 받지 못했습니다. 로그인 상태와 조회 날짜를 확인해 주세요.');
   const dataset = result.result;
   const jobs = reconcileDaesinDailyJobs(await readJobs(), dataset.rows, shipmentDate);
   await saveJobs(jobs);
-  return {ok:true,version:'0.4.0',jobs:jobs.map(publicJob),dataset};
+  return {ok:true,version:'0.4.1',jobs:jobs.map(publicJob),dataset};
 }
 async function handle(message, sender) {
   if (message.type === 'carrier-event') return carrierEvent(message, sender);
   const fromPopup = sender.url === chrome.runtime.getURL('popup.html');
   if (!isApp(sender) && !fromPopup) throw new Error('허용된 테스트 화면에서만 실행할 수 있습니다.');
-  if (message.action === 'ping') return { ok: true, version: '0.4.0' };
+  if (message.action === 'ping') return { ok: true, version: '0.4.1' };
   if (message.action === 'status') {
     const jobs = await readJobs(); let changed = false;
     for (const job of jobs) if (['staged', 'registering', 'submitting'].includes(job.state) && job.deadlineAt && Date.now() > job.deadlineAt) {
@@ -124,7 +127,7 @@ async function handle(message, sender) {
     }
     for (const job of jobs) changed = updateDaesinAcceptedState(job) || changed;
     if (changed) await saveJobs(jobs);
-    return { ok: true, version: '0.4.0', jobs: jobs.map(publicJob) };
+    return { ok: true, version: '0.4.1', jobs: jobs.map(publicJob) };
   }
   if (message.action === 'inspect') return inspect(message.jobId);
   if (message.action === 'report') {
@@ -136,7 +139,8 @@ async function handle(message, sender) {
         if (result?.result) dailyConnections.push(result.result);
       } catch (error) { dailyConnections.push({ error: String(error.message || error) }); }
     }
-    return { ok: true, report: { format: 'sanghwa-live-registration/3', version: '0.4.0', generatedAt: new Date().toISOString(), jobs: (await readJobs()).map(job => ({ ...publicJob(job), diagnosis: job.diagnosis || {} })), dailyConnections } };
+    const fetchHistory = (await chrome.storage.local.get('sanghwaDailyFetchHistory')).sanghwaDailyFetchHistory || [];
+    return { ok: true, report: { format: 'sanghwa-live-registration/3', version: '0.4.1', generatedAt: new Date().toISOString(), jobs: (await readJobs()).map(job => ({ ...publicJob(job), diagnosis: job.diagnosis || {} })), dailyConnections, fetchHistory } };
   }
   if (message.action === 'fetch-daily' && isApp(sender)) return fetchDaily(message.shipmentDate);
   if (message.action === 'verify') throw new Error('새 테스트 화면의 대신 발송데이터 가져오기를 사용해 주세요.');

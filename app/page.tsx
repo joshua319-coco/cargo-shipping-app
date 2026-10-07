@@ -1889,7 +1889,7 @@ function DaesinLiveTestPanel({ rows, mapRow, hasWaybill, onImport }: { rows: Sav
     return () => { active = false; clearInterval(timer); };
   }, [enabled, connected, busy]);
   const refresh = async () => {
-    try { const response = await callLiveTestBridge('status'); if (!response.ok) throw new Error(response.error); if (response.version !== '0.4.0') throw new Error('새 연결 도구 0.4.0을 설치하고 이 화면을 새로고침해 주세요.'); setConnected(true); setJobs(response.jobs || []); setMessage('연결됨 · 실제 접수 테스트는 1건씩 진행합니다.'); }
+    try { const response = await callLiveTestBridge('status'); if (!response.ok) throw new Error(response.error); if (response.version !== '0.4.1') throw new Error('새 연결 도구 0.4.1을 설치하고 이 화면을 새로고침해 주세요.'); setConnected(true); setJobs(response.jobs || []); setMessage('연결됨 · 실제 접수 테스트는 1건씩 진행합니다.'); }
     catch (error) { setConnected(false); setMessage(error instanceof Error ? error.message : '연결 실패'); }
   };
   const stage = async () => {
@@ -1944,7 +1944,7 @@ function DaesinLiveTestPanel({ rows, mapRow, hasWaybill, onImport }: { rows: Sav
   if (!enabled) return null;
   return <section aria-label="대신 실제접수 테스트" style={{ border: '1px solid #bfdbfe', background: '#f8fbff', padding: 14, borderRadius: 12, marginBottom: 14 }}>
     <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-      <strong>대신 실제접수 테스트 · 0.4.0</strong><button type="button" onClick={() => void refresh()} disabled={busy} style={exportBtnSecondary}>연결·결과 확인</button>
+      <strong>대신 실제접수 테스트 · 0.4.1</strong><button type="button" onClick={() => void refresh()} disabled={busy} style={exportBtnSecondary}>연결·결과 확인</button>
       <button type="button" onClick={() => void stage()} disabled={!connected || busy} style={{ ...exportBtnPrimary, opacity: !connected || busy ? .5 : 1 }}>{busy && !verifyingId ? '전송 중…' : '선택 1건 자동 등록(출력안함)'}</button>
       <button type="button" onClick={() => void fetchDaily()} disabled={!connected || busy} style={exportBtnPrimary}>{verifyingId ? "발송데이터 가져오는 중…" : "대신 발송데이터 가져오기"}</button>
       <button type="button" onClick={() => void downloadReport()} disabled={!connected || busy} style={exportBtnSecondary}>확인결과 파일 저장</button>
@@ -2145,6 +2145,8 @@ export default function Home() {
     DatedWaybillUploadRow[]
   >([]);
   const [waybillHistoryLoading, setWaybillHistoryLoading] = useState(false);
+
+  const [testVerificationDate, setTestVerificationDate] = useState<string | null>(null);
 
   const [verifyTab, setVerifyTab] = useState<VerifySubTab>("송장검증");
 
@@ -2379,8 +2381,8 @@ export default function Home() {
 
   const performSharedVerifyPatch = async (
     patch: Partial<SharedVerifyStateRow>,
+    sessionDate: string,
   ) => {
-    const sessionDate = getVerifySessionDate();
     const updatePayload: Partial<SharedVerifyStateRow> = { ...patch };
     delete updatePayload.session_date;
     delete updatePayload.updated_at;
@@ -2426,13 +2428,14 @@ export default function Home() {
 
   const saveSharedVerifyStateToDb = async (
     patch: Partial<SharedVerifyStateRow> = {},
+    sessionDate = getVerifySessionDate(),
   ) => {
     let saved = true;
     const queuedWrite = sharedVerifyWriteQueueRef.current
       .catch(() => undefined)
       .then(async () => {
         try {
-          await performSharedVerifyPatch(patch);
+          await performSharedVerifyPatch(patch, sessionDate);
         } catch (error) {
           saved = false;
           console.error("공유 검증데이터 저장 실패", error);
@@ -3124,7 +3127,14 @@ export default function Home() {
     const date = '2026-10-06';
     setTab('출고목록'); setCarrierFilter('대신'); setSelectedIds([]); setFilterKeyword('대신자동업로드테스트');
     setListDateFrom(date); setListDateTo(date); setListDateFromDraft(date); setListDateToDraft(date);
+    setTestVerificationDate(date);
   }, []);
+
+  useEffect(() => {
+    if (session && tab === '발송검증' && testVerificationDate) {
+      void loadWaybillHistoryFromDb(testVerificationDate, testVerificationDate);
+    }
+  }, [session?.user.id, tab, testVerificationDate]);
 
   const shipmentWaybillInfoById = useMemo(() => {
     const result = new Map<
@@ -4467,24 +4477,27 @@ export default function Home() {
 
       let missing: DaesinDailyDataset['rows'] = [];
       if (automatic) {
-        if (automatic.shipmentDate !== getVerifySessionDate()) throw new Error('현재 검증 날짜와 다른 발송데이터는 저장하지 않습니다.');
+        if (automatic.shipmentDate !== '2026-10-06') throw new Error('테스트 조회 날짜와 다른 발송데이터는 저장하지 않습니다.');
         const headers = rawRows[headerIndex].map(normalizeHeaderKey);
         for (const group of [['발화주명','송하인명','송하인'],['수화주주소','수하인주소','주소'],['운송장번호','송장번호']]) {
           if (!group.some(header => headers.includes(header))) throw new Error('발화주·주소·송장번호가 포함된 원본 엑셀이 아닙니다. 기존 데이터는 유지합니다.');
         }
         missing = validateDaesinDailyImport(parsedRows, automatic);
       }
-      if (!await saveSharedVerifyStateToDb({ waybill_upload_rows: parsedRows, waybill_upload_file_name: file.name })) { if (automatic) throw new Error('발송데이터 저장에 실패했습니다. 가져오기를 다시 시도해 주세요.'); return; }
-      setWaybillUploadRows(parsedRows);
-      setWaybillUploadFileName(file.name);
+      const importDate = automatic?.shipmentDate ?? getVerifySessionDate();
+      if (!await saveSharedVerifyStateToDb({ waybill_upload_rows: parsedRows, waybill_upload_file_name: file.name }, importDate)) { if (automatic) throw new Error('발송데이터 저장에 실패했습니다. 가져오기를 다시 시도해 주세요.'); return; }
+      if (importDate === getVerifySessionDate()) {
+        setWaybillUploadRows(parsedRows);
+        setWaybillUploadFileName(file.name);
+      }
+      if (automatic) setTestVerificationDate(importDate);
       setVerificationKeyword("");
       setVerificationMismatchOnly(false);
       setCopiedWaybillMessageId("");
-      const todayKey = getTodaySeoulDateKey();
-      if (tab === "출고목록" && isDateKeyInRange(todayKey, listDateFrom, listDateTo)) {
+      if (tab === "출고목록" && isDateKeyInRange(importDate, listDateFrom, listDateTo)) {
         await loadWaybillHistoryFromDb(listDateFrom, listDateTo);
       }
-      return '발송데이터 ' + parsedRows.length + '건 반영 완료 · 출고목록의 송장번호와 송장검증 탭을 확인해 주세요.' + (missing.length ? ' 도착지 미지정으로 엑셀에 빠진 ' + missing.length + '건: ' + missing.map(row => row.arrival_name).join(', ') + ' — 마감관리에서 수정 후 다시 가져와 주세요.' : '');
+      return importDate + ' 발송데이터 ' + parsedRows.length + '건 반영 완료 · 출고목록의 송장번호와 송장검증 탭을 확인해 주세요.' + (missing.length ? ' 도착지 미지정으로 엑셀에 빠진 ' + missing.length + '건: ' + missing.map(row => row.arrival_name).join(', ') + ' — 마감관리에서 수정 후 다시 가져와 주세요.' : '');
     } catch (error) {
       if (automatic) throw error;
       console.error(error);
@@ -4495,7 +4508,7 @@ export default function Home() {
   };
 
   const handleDailyWorkbook = async (dataset: DaesinDailyDataset) => {
-    if (dataset.shipmentDate !== getVerifySessionDate() || !Array.isArray(dataset.rows) || !dataset.rows.length || dataset.rows.length > 1000 || typeof dataset.workbook !== 'string' || dataset.workbook.length > 14000000) throw new Error('가져온 발송데이터의 날짜·크기를 확인해 주세요.');
+    if (dataset.shipmentDate !== '2026-10-06' || !Array.isArray(dataset.rows) || !dataset.rows.length || dataset.rows.length > 1000 || typeof dataset.workbook !== 'string' || dataset.workbook.length > 14000000) throw new Error('가져온 발송데이터의 날짜·크기를 확인해 주세요.');
     const bytes = Uint8Array.from(atob(dataset.workbook), character => character.charCodeAt(0));
     const result = await handleWaybillUpload(new File([bytes], dataset.fileName, {type:'application/vnd.ms-excel'}), dataset);
     if (!result) throw new Error('발송데이터 저장 결과를 확인하지 못했습니다.');
@@ -4729,16 +4742,18 @@ export default function Home() {
     }
   };
 
-  const todayShipments = useMemo(() => {
-    const todayKey = getTodaySeoulDateKey();
-    return savedShipments.filter(
-      (shipment) => shipment.shipmentDate === todayKey,
-    );
-  }, [savedShipments]);
+  const verificationDate = testVerificationDate ?? getTodaySeoulDateKey();
+  const historicalVerification = verificationDate !== getTodaySeoulDateKey();
+  const verificationUploads = useMemo(() => historicalVerification
+    ? waybillHistoryRows.filter(row => row.sessionDate === verificationDate)
+    : allWaybillUploadRows, [historicalVerification, verificationDate, waybillHistoryRows, allWaybillUploadRows]);
+  const verificationShipments = useMemo(() => savedShipments.filter(
+    shipment => shipment.shipmentDate === verificationDate,
+  ), [savedShipments, verificationDate]);
 
   const waybillVerificationRows = useMemo(
-    () => buildWaybillVerificationRows(todayShipments, allWaybillUploadRows),
-    [todayShipments, allWaybillUploadRows],
+    () => buildWaybillVerificationRows(verificationShipments, verificationUploads),
+    [verificationShipments, verificationUploads],
   );
 
   const filteredWaybillVerificationRows = useMemo(() => {
@@ -4767,8 +4782,8 @@ export default function Home() {
 
   const waybillVerificationSummary = useMemo(() => {
     return {
-      shipmentCount: todayShipments.length,
-      uploadCount: allWaybillUploadRows.length,
+      shipmentCount: verificationShipments.length,
+      uploadCount: verificationUploads.length,
       matchedCount: waybillVerificationRows.filter(
         (row) => row.status === "일치",
       ).length,
@@ -4782,7 +4797,7 @@ export default function Home() {
         (row) => row.status === "발송데이터만",
       ).length,
     };
-  }, [todayShipments, allWaybillUploadRows, waybillVerificationRows]);
+  }, [verificationShipments, verificationUploads, waybillVerificationRows]);
 
   const waybillWarningShipmentIds = useMemo(() => {
     return new Set(
@@ -5966,11 +5981,11 @@ export default function Home() {
 
             {verifyTab === "송장검증" && (
               <>
-                {renderWaybillUploadControls()}
+                {historicalVerification ? <p role="status">{verificationDate} 발송데이터 검증{waybillHistoryLoading ? " · 불러오는 중…" : ""} <button type="button" style={smallGrayBtn} onClick={() => setTestVerificationDate(null)}>오늘 검증으로 돌아가기</button></p> : renderWaybillUploadControls()}
 
                 <div style={verifySummaryGrid}>
                   <div style={verifySummaryItem}>
-                    <div style={verifySummaryLabel}>오늘 출고목록</div>
+                    <div style={verifySummaryLabel}>{historicalVerification ? verificationDate + " 출고목록" : "오늘 출고목록"}</div>
                     <div style={verifySummaryValue}>
                       {waybillVerificationSummary.shipmentCount}건
                     </div>
@@ -6032,7 +6047,7 @@ export default function Home() {
                   </label>
                 </div>
 
-                {allWaybillUploadRows.length === 0 ? (
+                {verificationUploads.length === 0 ? (
                   <div style={emptyText}>
                     대신 엑셀을 업로드하거나 로젠 데이터를 붙여넣어 적용하면 운송사별 검증 결과를 함께 확인할 수 있습니다.
                   </div>

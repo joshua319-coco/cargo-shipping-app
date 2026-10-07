@@ -41,3 +41,10 @@ Supersedes the DOM number-only recovery above. The user supplied dailySearch HTM
 The workbook bytes are passed in memory through the local bridge into the existing handleWaybillUpload parser and shared verification save path. This user-triggered operation now persists the same two shared verification fields as manual Daesin upload; extension status alone does not claim that this save succeeded. Full sender and parcel address columns are required. Foreign/duplicate numbers, missing assigned rows, empty data and invalid dates preserve the existing dataset. Missing unassigned rows are named separately, with the registered status and independently confirmed waybill preserved. Refreshing the data also updates destination warnings after manual corrections.
 
 Lookup and registration remain distinct: exact unique structured recipient/phone/quantity/fare/service/payment evidence connects a job number; the complete Excel goes through existing cross-verification, including mismatches. The native receiver cell embeds a tooltip address, which made string-only matching unreliable. The old per-row number-only UI is removed. Existing jobs and extension storage keys remain unchanged. Production deployment and batch registration are still pending.
+
+
+## 0.4.1: 날짜 경계와 조회 실패 진단
+
+자동 가져오기는 조회한 2026-10-06 세션에만 저장한다. 오늘 세션의 로젠·대신·PDA 데이터를 덮지 않으며 로컬 테스트의 송장검증도 같은 날짜로 조회한다. 실패한 목록 조회의 빈 번호/형식/중복 건수 및 최대 10개 문제 행을 최근 5회까지 저장하고 확인결과 보고서에 포함한다. 조회 오류의 실제 원인은 이 진단으로 확인해야 하며 중복 행을 임의로 버리지 않는다. 송장번호는 공백/하이픈 제거 후 같은 값을 엑셀 요청과 대조에 일관되게 사용한다.
+
+검증: 단위 회귀 44건 및 TypeScript 검사 통과. 격리된 Edge의 실제 MV3 확장과 로컬 앱을 연결하고 대신/Supabase 통신을 전부 모의 처리하여 10월 7일에 6일 데이터 저장, 당일 상태 보존, 과거 송장검증, 실패 이력 보고서 포함을 확인했다. 실제 대신 조회 오류의 원인은 아직 수집 전이며 운영 배포하지 않았다.
