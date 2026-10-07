@@ -109,7 +109,7 @@ async function fetchDaily(shipmentDate, sourceTab) {
   tabs.sort((a,b) => Number(b.active)-Number(a.active) || (b.lastAccessed||0)-(a.lastAccessed||0) || b.id-a.id);
   if (!tabs.length) { const tab = await chrome.tabs.create({ url: DAILY, active: false, ...(Number.isInteger(sourceTab?.windowId) ? { windowId: sourceTab.windowId } : {}) }); await waitForTab(tab.id); tabs.push(tab); }
   const [result] = await chrome.scripting.executeScript({target:{tabId:tabs[0].id},world:'ISOLATED',func:fetchDaesinDailyWorkbook,args:[shipmentDate]});
-  const attempt = { ...(result?.result?.diagnosis || { shipmentDate, stage: 'page' }), error: result?.result?.error || result?.error?.message || '', version: '0.6.1' };
+  const attempt = { ...(result?.result?.diagnosis || { shipmentDate, stage: 'page' }), error: result?.result?.error || result?.error?.message || '', version: '0.6.2' };
   const history = (await chrome.storage.local.get('sanghwaDailyFetchHistory')).sanghwaDailyFetchHistory || [];
   await chrome.storage.local.set({ sanghwaDailyFetchHistory: [...history, attempt].slice(-5) });
   if (result?.result?.error) {
@@ -121,13 +121,13 @@ async function fetchDaily(shipmentDate, sourceTab) {
   const dataset = result.result;
   const jobs = reconcileDaesinDailyJobs(await readJobs(), dataset.rows, shipmentDate);
   await saveJobs(jobs);
-  return {ok:true,version:'0.6.1',jobs:jobs.map(publicJob),dataset};
+  return {ok:true,version:'0.6.2',jobs:jobs.map(publicJob),dataset};
 }
 async function handle(message, sender) {
   if (message.type === 'carrier-event') return carrierEvent(message, sender);
   const fromPopup = sender.url === chrome.runtime.getURL('popup.html');
   if (!isApp(sender) && !fromPopup) throw new Error('허용된 출고사이트에서만 실행할 수 있습니다.');
-  if (message.action === 'ping') return { ok: true, version: '0.6.1' };
+  if (message.action === 'ping') return { ok: true, version: '0.6.2' };
   if (message.action === 'status') {
     const jobs = await readJobs(); let changed = false;
     for (const job of jobs) if (['staged', 'registering', 'submitting'].includes(job.state) && job.deadlineAt && Date.now() > job.deadlineAt) {
@@ -135,14 +135,15 @@ async function handle(message, sender) {
     }
     for (const job of jobs) changed = updateDaesinAcceptedState(job) || changed;
     if (changed) await saveJobs(jobs);
-    return { ok: true, version: '0.6.1', jobs: jobs.map(publicJob) };
+    return { ok: true, version: '0.6.2', jobs: jobs.map(publicJob) };
   }
   if (message.action === 'inspect') return inspect(message.jobId);
   if (message.action === 'report') {
     // Reports must work even if a carrier tab is suspended or a mutation is waiting.
     // Read one saved snapshot; no tab inspection, carrier request or state mutation.
     const saved = await chrome.storage.local.get([KEY, 'sanghwaDailyFetchHistory']);
-    return { ok: true, report: { format: 'sanghwa-live-registration/3', version: '0.6.1', generatedAt: new Date().toISOString(), collection: 'saved-extension-state', activeOperation,
+    const generated = new Date();
+    return { ok: true, report: { format: 'sanghwa-live-registration/3', version: '0.6.2', generatedAt: generated.toISOString(), generatedAtSeoul: generated.toLocaleString('sv-SE', { timeZone: 'Asia/Seoul', hour12: false }) + ' (한국 시간, UTC+09:00)', collection: 'saved-extension-state', activeOperation,
       jobs: (saved[KEY] || []).map(job => ({ ...publicJob(job), diagnosis: job.diagnosis || {} })),
       fetchHistory: saved.sanghwaDailyFetchHistory || [] } };
   }
