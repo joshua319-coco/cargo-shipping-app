@@ -13,6 +13,7 @@ import { CARRIERS, normalizeCarrier, isLogenQuantity, logenFare, exportCarrier, 
 import type { Carrier, CarrierFilter } from "@/lib/carriers";
 import { daesinRegistrationView, findDaesinCandidate, mayRegister, registrationFromJob, validDaesinDate } from "@/lib/daesin-sync";
 import type { DaesinVerification, DaesinRegistration, DaesinDailyRow, DaesinJob } from "@/lib/daesin-sync";
+import { shipmentRegistrationView } from '@/lib/registration-status';
 import { parseLogenPasteRows } from "@/lib/logen-paste";
 
 type Party = {
@@ -194,6 +195,7 @@ type WaybillVerificationStatus =
 
 type WaybillVerificationRow = {
   id: string;
+  uploadId?: string;
   carrier: Carrier;
   status: WaybillVerificationStatus;
   shipmentId?: string;
@@ -982,6 +984,7 @@ function buildWaybillVerificationRows(
 
     rows.push({
       id: `matched-${index + 1}-${shipment.id}-${upload.id}`,
+      uploadId: upload.id,
       carrier: normalizeCarrier(shipment.carrier),
       shipmentId: shipment.id,
       status: reasons.length === 0 ? "일치" : "확인필요",
@@ -1885,30 +1888,69 @@ function callLiveTestBridge(action: string, extra: Record<string, unknown> = {})
     window.postMessage({ channel: 'sanghwa-live-request', requestId, action, ...extra }, location.origin);
   });
 }
-function DaesinRegistrationDialog({shipment,view,upload,busy,onClose,onEdit,onRegister,onRefresh}: {
-  shipment: SavedShipment; view: ReturnType<typeof daesinRegistrationView>; upload?: WaybillUploadRow;
+function RegistrationDialog({ shipment, view, upload, busy, onClose, onEdit, onRegister, onRefresh }: {
+  shipment: SavedShipment; view: ReturnType<typeof shipmentRegistrationView>; upload?: WaybillUploadRow;
   busy: boolean; onClose: () => void; onEdit: () => void; onRegister: () => void; onRefresh: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => { dialog.current?.showModal(); }, []);
+  const isLogen = shipment.carrier === '로젠';
   const comparisons = upload ? [
-    ['수화주', shipment.receiver, upload.receiver], ['발화주', shipment.sender, upload.sender],
+    ['수화주', shipment.receiver, upload.receiver],
+    ['수화주 전화', shipment.receiverPhone, upload.receiverPhone],
+    ['발화주', shipment.sender, upload.sender],
+    ['발화주 전화', shipment.senderPhone, upload.senderPhone],
     ['수량', ceilQuantityDisplay(shipment.qty, shipment.pack), ceilQuantityDisplay(String(upload.qty), shipment.pack)],
     ['운임', formatFare(shipment.fare), formatFare(String(upload.fare))],
-    ['운송', displayDelivery(shipment.delivery), displayDelivery(upload.delivery)], ['지불',shipment.pay,upload.pay],
-    [shipment.delivery === '택배' ? '주소' : '도착영업소',shipment.delivery === '택배' ? shipment.address : shipment.branch,shipment.delivery === '택배' ? upload.address : upload.branch],
+    ['운송', displayDelivery(shipment.delivery), displayDelivery(upload.delivery)],
+    ['지불', shipment.pay, upload.pay],
+    [shipment.delivery === '택배' ? '주소' : '도착영업소', shipment.delivery === '택배' ? shipment.address : shipment.branch, shipment.delivery === '택배' ? upload.address : upload.branch],
+    ...(isLogen ? [['배송메세지', shipment.memo, upload.memo]] : []),
   ] : [];
-  return <dialog ref={dialog} onClose={onClose} aria-labelledby="daesin-registration-title" style={{margin:'auto',border:0,borderRadius:16,padding:24,width:'min(650px, calc(100vw - 48px))',maxHeight:'85vh',overflowY:'auto',color:'#0f172a',boxShadow:'0 18px 60px #0004'}}>
-    <div style={{display:'flex',justifyContent:'space-between',gap:16,alignItems:'center'}}><h2 id="daesin-registration-title" style={{fontSize:20,margin:0}}>{view.label === '미등록' ? '대신 전산에 등록' : view.label}</h2><button type="button" style={smallGrayBtn} onClick={() => dialog.current?.close()}>닫기</button></div>
-    <p><strong>{displayReceiverName(shipment.sender,shipment.receiver)}</strong><br /><span style={{fontSize:13,color:'#64748b'}}>{shipment.shipmentDate}{view.waybillNo ? ' · 송장번호 ' + view.waybillNo : ''}</span></p>
-    {view.label === '미등록' ? <p>이 출고건 1건을 <strong>등록(출력안함)</strong>으로 접수하고 발송데이터를 가져옵니다.</p> : view.label === '등록완료' ? <p style={{color:'#008653'}}>대신 전산 등록과 발송정보 일치를 확인했습니다.</p> : <p>{view.registered ? '등록된 건입니다. 아래 내용을 확인해 주세요.' : '접수 결과를 확인해야 합니다. 전산 데이터를 먼저 새로고침해 주세요.'}</p>}
-    {view.reasons.length > 0 && <ul style={{paddingLeft:20,color:'#b45309',lineHeight:1.8}}>{view.reasons.map(reason => <li key={reason}>{reason}</li>)}</ul>}
-    {shipment.daesinRegistration?.state === 'not-registered' && <p style={{fontSize:13}}>등록 실패 사유에 맞게 출고정보를 수정한 뒤 다시 등록할 수 있습니다.</p>}
-    {comparisons.length > 0 ? <table style={{width:'100%',borderCollapse:'collapse',fontSize:13,margin:'16px 0'}}><thead><tr>{['항목','우리 출고목록','대신 발송데이터'].map(label => <th key={label} style={{textAlign:'left',padding:8,background:'#f1f5f9'}}>{label}</th>)}</tr></thead><tbody>{comparisons.map(([label,source,remote]) => <tr key={label}><th style={{textAlign:'left',padding:8,borderBottom:'1px solid #e2e8f0',whiteSpace:'nowrap'}}>{label}</th><td style={{padding:8,borderBottom:'1px solid #e2e8f0'}}>{source || '—'}</td><td style={{padding:8,borderBottom:'1px solid #e2e8f0'}}>{remote || '—'}</td></tr>)}</tbody></table> : <p style={{fontSize:13,color:'#64748b'}}>{displayDelivery(shipment.delivery)} · {shipment.pay} · {ceilQuantityDisplay(shipment.qty,shipment.pack)} · {formatFare(shipment.fare)}</p>}
-    {view.label === '정보확인' && <p style={{fontSize:13,color:'#64748b'}}>대신 전산에서 수정했다면 전산 데이터 새로고침을 눌러 다시 확인해 주세요.</p>}
+  const closeAnd = (action: () => void) => { dialog.current?.close(); action(); };
+  return <dialog ref={dialog} onClose={onClose} aria-labelledby="registration-dialog-title"
+    style={{margin:'auto',border:0,borderRadius:16,padding:24,width:'min(700px, calc(100vw - 48px))',maxHeight:'85vh',overflowY:'auto',color:'#0f172a',boxShadow:'0 18px 60px #0004'}}>
+    <div style={{display:'flex',justifyContent:'space-between',gap:16,alignItems:'center'}}>
+      <h2 id="registration-dialog-title" style={{fontSize:20,margin:0}}>
+        {view.label === '미등록' ? isLogen ? '로젠 등록용 엑셀 다운로드' : '대신 전산에 등록' : view.label}
+      </h2>
+      <button type="button" style={smallGrayBtn} onClick={() => dialog.current?.close()}>닫기</button>
+    </div>
+    <p><strong>{displayReceiverName(shipment.sender,shipment.receiver)}</strong><br />
+      <span style={{fontSize:13,color:'#64748b'}}>{shipment.shipmentDate}{view.waybillNo ? ' · 송장번호 ' + view.waybillNo : ''}</span>
+    </p>
+    {isLogen ? (
+      <p>{view.label === '정보확인' ? '발송데이터와 다른 항목이 있습니다. 아래 내용을 확인해 주세요.' : view.registered ? '등록용 엑셀을 다운로드한 항목입니다.' : '이 출고건 1건의 등록용 엑셀을 다운로드하면 등록완료로 표시됩니다.'}</p>
+    ) : view.label === '미등록' ? (
+      <p>이 출고건 1건을 <strong>등록(출력안함)</strong>으로 접수하고 발송데이터를 가져옵니다.</p>
+    ) : view.label === '등록완료' ? (
+      <p style={{color:'#008653'}}>대신 전산 등록과 발송정보 일치를 확인했습니다.</p>
+    ) : <p>{view.registered ? '등록된 건입니다. 아래 내용을 확인해 주세요.' : '접수 결과를 확인해야 합니다. 전산 데이터를 먼저 새로고침해 주세요.'}</p>}
+    {view.reasons.length > 0 && <ul style={{paddingLeft:20,color:'#b45309',lineHeight:1.8}}>
+      {view.reasons.map(reason => <li key={reason}>{reason}</li>)}
+    </ul>}
+    {!isLogen && shipment.daesinRegistration?.state === 'not-registered' && <p style={{fontSize:13}}>등록 실패 사유에 맞게 출고정보를 수정한 뒤 다시 등록할 수 있습니다.</p>}
+    {comparisons.length > 0 ? (
+      <table style={{width:'100%',borderCollapse:'collapse',fontSize:13,margin:'16px 0'}}>
+        <thead><tr>{['항목','우리 출고목록',shipment.carrier + ' 발송데이터'].map(label => <th key={label} style={{textAlign:'left',padding:8,background:'#f1f5f9'}}>{label}</th>)}</tr></thead>
+        <tbody>{comparisons.map(([label,source,remote]) => <tr key={label}>
+          <th style={{textAlign:'left',padding:8,borderBottom:'1px solid #e2e8f0',whiteSpace:'nowrap'}}>{label}</th>
+          <td style={{padding:8,borderBottom:'1px solid #e2e8f0'}}>{source || '—'}</td>
+          <td style={{padding:8,borderBottom:'1px solid #e2e8f0'}}>{remote || '—'}</td>
+        </tr>)}</tbody>
+      </table>
+    ) : <p style={{fontSize:13,color:'#64748b'}}>{displayDelivery(shipment.delivery)} · {shipment.pay} · {ceilQuantityDisplay(shipment.qty,shipment.pack)} · {formatFare(shipment.fare)}</p>}
+    {view.label === '정보확인' && <p style={{fontSize:13,color:'#64748b'}}>
+      {isLogen ? '로젠 전산에서 수정했다면 최신 발송데이터를 다시 붙여넣어 확인해 주세요.' : '대신 전산에서 수정했다면 대신 전산데이터 새로고침을 눌러 다시 확인해 주세요.'}
+    </p>}
     <div style={{display:'flex',justifyContent:'flex-end',gap:8,flexWrap:'wrap',marginTop:20}}>
-      <button type="button" style={exportBtnSecondary} disabled={busy} onClick={() => { dialog.current?.close(); onEdit(); }}>출고정보 수정</button>
-      {view.label === '미등록' ? <button type="button" style={exportBtnPrimary} disabled={busy} onClick={() => { dialog.current?.close(); onRegister(); }}>이 건 등록(출력안함)</button> : <button type="button" style={exportBtnPrimary} disabled={busy} onClick={onRefresh}>{busy ? '확인 중…' : '전산 데이터 새로고침'}</button>}
+      <button type="button" style={exportBtnSecondary} disabled={busy} onClick={() => closeAnd(onEdit)}>출고정보 수정</button>
+      {isLogen ? <>
+        <button type="button" style={exportBtnSecondary} onClick={() => closeAnd(onRefresh)}>발송데이터 붙여넣기</button>
+        <button type="button" style={exportBtnPrimary} onClick={() => closeAnd(onRegister)}>이 건 엑셀 다운로드</button>
+      </> : view.label === '미등록' ? (
+        <button type="button" style={exportBtnPrimary} disabled={busy} onClick={() => closeAnd(onRegister)}>이 건 등록(출력안함)</button>
+      ) : <button type="button" style={exportBtnPrimary} disabled={busy} onClick={onRefresh}>{busy ? '확인 중…' : '대신 전산데이터 새로고침'}</button>}
     </div>
   </dialog>;
 }
@@ -1995,7 +2037,7 @@ function DaesinSyncPanel({ rows, allRows, mapRow, onImport, onReload, defaultDat
   };
   const fetchDaily = async () => {
     if (inFlight.current) return;
-    inFlight.current = true; setBusy(true); setMessage("전산 데이터 새로고침 준비 중…");
+    inFlight.current = true; setBusy(true); setMessage("대신 전산데이터 새로고침 준비 중…");
     try {
       await status();
       const dates = [...new Set(visible.length ? visible.map(row => row.shipmentDate) : [defaultDate])];
@@ -2009,7 +2051,7 @@ function DaesinSyncPanel({ rows, allRows, mapRow, onImport, onReload, defaultDat
   const synchronize = async (requestedRows: SavedShipment[] = targets) => {
     const targets = requestedRows;
     if (inFlight.current) return;
-    if (!targets.length) return setMessage('현재 조회목록에 미등록 건이 없습니다. 최신 정보는 전산 데이터 새로고침으로 확인할 수 있습니다.');
+    if (!targets.length) return setMessage('현재 조회목록에 미등록 건이 없습니다. 최신 정보는 대신 전산데이터 새로고침으로 확인할 수 있습니다.');
     inFlight.current = true; stopRequested.current = false; setBusy(true); setMessage("대신 연결과 기존 접수 이력을 확인 중…");
     let submitted = 0, skipped = 0, failed = 0, uncertain = 0;
     const errors: string[] = [], dates = [...new Set(targets.map(row => row.shipmentDate))];
@@ -2077,7 +2119,7 @@ function DaesinSyncPanel({ rows, allRows, mapRow, onImport, onReload, defaultDat
       }
       if (mounted.current) for (const date of dates) {
         try { await readDaily(date); }
-        catch (error) { errors.push(date + ' 데이터 조회 실패: ' + getErrorMessage(error) + ' · 전산 데이터 새로고침만 다시 눌러 주세요.'); }
+        catch (error) { errors.push(date + ' 데이터 조회 실패: ' + getErrorMessage(error) + ' · 대신 전산데이터 새로고침만 다시 눌러 주세요.'); }
       }
       setMessage(`연동 ${stopRequested.current ? '중단' : '완료'} · 신규 등록 ${submitted}건 · 기존 이력/처리 제외 ${skipped}건 · 등록 안됨 ${failed}건 · 결과 확인 필요 ${uncertain}건` + (errors.length ? '\n' + errors.join('\n') : ' · 발송데이터 반영 완료'));
     } catch (error) { setMessage('연동을 멈췄습니다. ' + getErrorMessage(error)); }
@@ -2104,16 +2146,10 @@ function DaesinSyncPanel({ rows, allRows, mapRow, onImport, onReload, defaultDat
   const uncertain = visible.filter(row => ['pending','unknown'].includes(getState(row)?.state || ''));
   const headline = message.split('\n')[0];
   return <section aria-label="대신 전산 연동" style={{marginBottom:16}}>
-    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,flexWrap:'wrap'}}>
-      <button type="button" style={exportBtnSecondary} disabled={busy} onClick={() => void fetchDaily()}>전산 데이터 새로고침</button>
-      <button type="button" style={exportBtnPrimary} disabled={busy || !visible.length} onClick={() => void synchronize()}>대신 전산 연동</button>
-    </div>
-    <div style={{fontSize:12,color:'#64748b',marginTop:8}}>현재 조회목록의 미등록 건을 등록하고 발송데이터까지 가져옵니다.</div>
-    {message && <p role="status" style={{fontSize:13,color:'#334155',margin:'8px 0'}}>{headline.length > 180 ? headline.slice(0,180) + '…' : headline}</p>}
-    {(reviews.length > 0 || failed.length > 0 || uncertain.length > 0) && <div style={{fontSize:12,color:'#b45309',marginTop:6}}>도착지 수정 필요 {reviews.length}건 · 등록 안됨 {failed.length}건 · 접수 확인 필요 {uncertain.length}건 — 목록의 상태 버튼을 눌러 확인해 주세요.</div>}
-    {busy && <button type="button" style={{...smallGrayBtn,marginTop:8}} onClick={() => { stopRequested.current = true; setMessage('현재 건의 결과 확인 후 나머지 등록을 멈춥니다.'); }}>나머지 등록 중지</button>}
-    <div style={{display:'flex',gap:18,flexWrap:'wrap',marginTop:10,fontSize:12,color:'#64748b'}}>
-      <details style={{flex:'1 1 260px'}}><summary style={{cursor:'pointer'}}>상세 결과·연결 설정</summary>
+    <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:12}}>
+      <div style={{display:'flex',alignItems:'flex-start',gap:12,flex:'1 1 auto',minWidth:0}}>
+        <button type="button" style={{...exportBtnPrimary,flexShrink:0}} disabled={busy} onClick={() => void fetchDaily()}>대신 전산데이터 새로고침</button>
+      <details style={{flex:'1 1 260px',minWidth:0,fontSize:12,color:'#64748b'}}><summary style={{cursor:'pointer',padding:'13px 0'}}>상세 결과·연결 설정</summary>
         <div style={{padding:'10px 0'}}>
           <div>등록 완료 {registered.length}건 · 도착지 수정 필요 {reviews.length}건 · 등록 안됨 {failed.length}건 · 접수 확인 필요 {uncertain.length}건</div>
           {message && <p style={{whiteSpace:'pre-line'}}>{message}</p>}
@@ -2124,8 +2160,16 @@ function DaesinSyncPanel({ rows, allRows, mapRow, onImport, onReload, defaultDat
           {preparedReport && <div><a href={preparedReport.url} download="대신_전산연동_확인결과.json">파일 직접 다운로드</a><details><summary>확인결과 내용 보기</summary><textarea aria-label="확인결과 내용" value={preparedReport.text} readOnly style={{width:'100%',height:160}} /></details></div>}
         </div>
       </details>
-      <details style={{flex:'1 1 260px'}}><summary style={{cursor:'pointer'}}>수동 엑셀 기능</summary><div style={{padding:'10px 0',display:'flex',gap:10,flexWrap:'wrap'}}>{manualTools}</div></details>
+      </div>
+      <button type="button" style={{...exportBtnPrimary,flexShrink:0}} disabled={busy || !visible.length} onClick={() => void synchronize()}>대신 전산 연동</button>
     </div>
+    <details style={{marginTop:8,fontSize:12,color:'#64748b'}}><summary style={{cursor:'pointer'}}>수동으로 등록(엑셀)</summary>
+      <div style={{padding:'10px 0',display:'flex',alignItems:'center',gap:10,flexWrap:'nowrap',overflowX:'auto'}}>{manualTools}</div>
+    </details>
+    <div style={{fontSize:12,color:'#64748b',marginTop:8}}>현재 조회목록의 미등록 건을 등록하고 발송데이터까지 가져옵니다.</div>
+    {message && <p role="status" style={{fontSize:13,color:'#334155',margin:'8px 0'}}>{headline.length > 180 ? headline.slice(0,180) + '…' : headline}</p>}
+    {(reviews.length > 0 || failed.length > 0 || uncertain.length > 0) && <div style={{fontSize:12,color:'#b45309',marginTop:6}}>도착지 수정 필요 {reviews.length}건 · 등록 안됨 {failed.length}건 · 접수 확인 필요 {uncertain.length}건 — 목록의 상태 버튼을 눌러 확인해 주세요.</div>}
+    {busy && <button type="button" style={{...smallGrayBtn,marginTop:8}} onClick={() => { stopRequested.current = true; setMessage('현재 건의 결과 확인 후 나머지 등록을 멈춥니다.'); }}>나머지 등록 중지</button>}
   </section>;
 }
 
@@ -3312,6 +3356,7 @@ export default function Home() {
       string,
       {
         id: string;
+        uploadId?: string;
         waybillNo: string;
         message: string;
         status: WaybillVerificationStatus;
@@ -3348,10 +3393,11 @@ export default function Home() {
       );
 
       verificationRows.forEach((row) => {
-        if (!row.shipmentId || !row.waybillNo || !row.waybillMessage) return;
+        if (!row.shipmentId || row.status === '출고목록만') return;
 
         result.set(row.shipmentId, {
           id: `shipment-waybill-${dateKey}-${row.shipmentId}-${row.waybillNo}`,
+          uploadId: row.uploadId,
           waybillNo: row.waybillNo,
           message: row.waybillMessage,
           status: row.status,
@@ -3409,7 +3455,7 @@ export default function Home() {
         ? shipment.sender !== "상화시스템"
         : true;
       const matchesWaybill = waybillUncheckedOnly
-        ? shipment.carrier === '대신' ? daesinRegistrationView(shipment.daesinRegistration, waybillInfo).label === '미등록' : !shipment.checklist.waybill
+        ? shipmentRegistrationView(shipment, waybillInfo).label === '미등록'
         : true;
       const matchesPda = pdaUncheckedOnly ? !shipment.checklist.pda : true;
       const shipmentDateKey = shipment.shipmentDate;
@@ -3887,7 +3933,7 @@ export default function Home() {
 
   const handleChecklistToggle = async (
     shipmentId: string,
-    key: keyof Checklist,
+    key: "pda" | "closedDone",
   ) => {
     const current = savedShipments.find((item) => item.id === shipmentId);
     if (!current) return;
@@ -3898,7 +3944,6 @@ export default function Home() {
       if (nextValue) {
         await updateChecklistColumns([shipmentId], {
           pda: true,
-          waybill: true,
           closed_done: true,
         });
       } else {
@@ -3910,27 +3955,11 @@ export default function Home() {
     }
 
     await updateChecklistColumns([shipmentId], {
-      [key === "pda" ? "pda" : "waybill"]: nextValue,
+      pda: nextValue,
     });
   };
 
-  const handleChecklistRowToggle = async (shipmentId: string) => {
-    const current = savedShipments.find((item) => item.id === shipmentId);
-    if (!current) return;
-
-    const isAllChecked =
-      current.checklist.pda &&
-      (current.carrier === '대신' || current.checklist.waybill) &&
-      current.checklist.closedDone;
-
-    await updateChecklistColumns([shipmentId], {
-      pda: !isAllChecked,
-      waybill: !isAllChecked,
-      closed_done: !isAllChecked,
-    });
-  };
-
-  const handleChecklistColumnToggle = async (key: keyof Checklist) => {
+  const handleChecklistColumnToggle = async (key: "pda" | "closedDone") => {
     const rows = filteredShipments;
     if (rows.length === 0) return;
 
@@ -3941,32 +3970,14 @@ export default function Home() {
         rows.map((item) => item.id),
         allChecked
           ? { closed_done: false }
-          : { pda: true, waybill: true, closed_done: true },
+          : { pda: true, closed_done: true },
       );
       return;
     }
 
     await updateChecklistColumns(
       rows.map((item) => item.id),
-      key === "pda" ? { pda: !allChecked } : { waybill: !allChecked },
-    );
-  };
-
-  const handleChecklistAllToggle = async (nextValue: boolean) => {
-    if (filteredShipments.length === 0) return;
-
-    const confirmed = window.confirm(
-      nextValue
-        ? "현재 목록의 체크리스트를 전체 체크할까요?"
-        : "현재 목록의 체크리스트를 전체 해제할까요?",
-    );
-    if (!confirmed) return;
-
-    await updateChecklistColumns(
-      filteredShipments.map((item) => item.id),
-      nextValue
-        ? { pda: true, waybill: true, closed_done: true }
-        : { pda: false, waybill: false, closed_done: false },
+      { pda: !allChecked },
     );
   };
 
@@ -4124,9 +4135,9 @@ export default function Home() {
     setSelectedIds((prev) => Array.from(new Set([...prev, ...allFilteredIds])));
   };
 
-  const exportRows = async (rows: SavedShipment[], fileLabel: string) => {
+  const exportRows = async (rows: SavedShipment[], fileLabel: string, explicitCarrier?: Carrier) => {
     if (rows.length === 0) return alert("내려받을 출고건이 없습니다.");
-    const selectedCarrier = exportCarrier(carrierFilter, rows);
+    const selectedCarrier = exportCarrier(explicitCarrier ?? carrierFilter, rows);
     if (!selectedCarrier) return alert("대신 또는 로젠을 선택한 뒤 해당 운송사만 다운로드해 주세요.");
 
     const exportOrderRows = [...rows].reverse();
@@ -4192,7 +4203,7 @@ export default function Home() {
     } catch (error) {
       console.error(error);
       alert(
-        '엑셀 다운로드 기능을 쓰려면 먼저 "npm install xlsx"를 실행해 주세요.',
+        '엑셀 다운로드에 실패했습니다: ' + getErrorMessage(error),
       );
     }
   };
@@ -4979,14 +4990,6 @@ export default function Home() {
     };
   }, [verificationShipments, verificationUploads, waybillVerificationRows]);
 
-  const waybillWarningShipmentIds = useMemo(() => {
-    return new Set(
-      waybillVerificationRows
-        .filter((row) => row.shipmentId && row.status !== "일치")
-        .map((row) => row.shipmentId as string),
-    );
-  }, [waybillVerificationRows]);
-
   const presenceVerificationRows = useMemo(() => {
     return buildPresenceVerificationRows(
       orderStatusRows,
@@ -5063,18 +5066,21 @@ export default function Home() {
 
   const renderWaybillUploadControls = (compact = false, onlyCarrier?: Carrier) => {
     const isAllList = compact && carrierFilter === "전체";
+    const manualDaesin = compact && onlyCarrier === "대신";
     const uploadButtonStyle: CSSProperties = {
       ...smallBlueBtn,
       flexShrink: 0,
+      whiteSpace: "nowrap",
       ...(isAllList ? { fontSize: 13, lineHeight: "20px", padding: "6px 10px", borderRadius: 8 } : {}),
     };
     const resetButtonStyle: CSSProperties = isAllList
       ? { ...uploadResetBtn, padding: "4px 8px", lineHeight: "18px" }
       : uploadResetBtn;
-    const fileNameStyle: CSSProperties = isAllList
+    const fileNameStyle: CSSProperties = manualDaesin
+      ? { ...uploadFileNameText, flex: "1 1 120px", minWidth: 0, maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } : isAllList
       ? { ...uploadFileNameText, fontSize: 12 }
       : uploadFileNameText;
-    const groupStyle: CSSProperties = compact
+    const groupStyle: CSSProperties = manualDaesin ? { display: "contents" } : compact
       ? { ...listWaybillUploadBar, ...(carrierFilter === "전체" ? { width: "100%" } : { flex: "1 1 300px" }) }
       : { ...verifyUploadBar, display: "block" };
 
@@ -5084,9 +5090,9 @@ export default function Home() {
           {!compact && <div style={{ ...verifyInfoText, fontSize: "10pt", marginBottom: 8 }}>
             대신 발송데이터 내려받는 법: [대신택배물류시스템 접속] → [일자별조회] → [목록전체선택] → [엑셀저장]
           </div>}
-          <div style={isAllList ? { ...waybillUploadRow, gap: 6 } : waybillUploadRow}>
+          <div style={manualDaesin ? { display: "contents" } : isAllList ? { ...waybillUploadRow, gap: 6 } : waybillUploadRow}>
             <button type="button" style={uploadButtonStyle} disabled={uploadBusy} onClick={() => waybillUploadRef.current?.click()}>
-              대신 엑셀 직접 가져오기
+              대신 발송데이터 업로드
             </button>
             <button type="button" style={resetButtonStyle} aria-label="대신 업로드 초기화" disabled={uploadBusy || waybillUploadRows.length === 0} onClick={() => void resetWaybillUpload("대신")}>
               초기화
@@ -5769,7 +5775,7 @@ export default function Home() {
                   checked={waybillUncheckedOnly}
                   onChange={(e) => setWaybillUncheckedOnly(e.target.checked)}
                 />
-                {carrierFilter === '로젠' ? '운송장 미체크' : carrierFilter === '대신' ? '미등록만' : '미등록 / 운송장 미체크'}
+                미등록만
               </label>
 
               <label style={filterCheckLabel}>
@@ -5810,16 +5816,17 @@ export default function Home() {
                   style={{ ...exportBtnPrimary, background: carrierAccent(carrierFilter) }}
                   onClick={exportFilteredAll}
                 >
-                  현재목록 전체 엑셀 다운로드
+                  현재 목록 전체 엑셀 다운로드
                 </button>
               </div>
             </div>
 
 
             </>) : (<>
+              <div hidden={carrierFilter !== '대신'}>
               <DaesinSyncPanel actionRef={daesinActions} onBusyChange={setDaesinBusy} verifications={shipmentWaybillInfoById} rows={sortedShipments} allRows={savedShipments} mapRow={row => toTemplateRow(row, resolvePostalCodeValue)} onImport={handleDailyWorkbook} onReload={loadShipmentsFromDb} defaultDate={listDateTo || getVerifySessionDate()} manualTools={<>
                 {renderWaybillUploadControls(true, '대신')}
-              {carrierFilter === "대신" && <div style={exportRight}>
+              {carrierFilter === "대신" && <div style={{...exportRight,flexWrap:"nowrap",flexShrink:0,marginLeft:"auto",whiteSpace:"nowrap"}}>
                 <span style={selectedCountText}>
                   선택 {filteredShipments.filter((shipment) => selectedIds.includes(shipment.id)).length}건
                 </span>
@@ -5828,17 +5835,18 @@ export default function Home() {
                   style={exportBtnSecondary}
                   onClick={exportSelected}
                 >
-                  {carrierFilter === '대신' ? '선택 엑셀 (수동 등록용)' : '선택 엑셀 다운로드'}
+                  선택 엑셀 다운로드
                 </button>
                 <button
                   type="button"
-                  style={carrierFilter === '대신' ? exportBtnSecondary : { ...exportBtnPrimary, background: carrierAccent(carrierFilter) }}
+                  style={exportBtnSecondary}
                   onClick={exportFilteredAll}
                 >
-                  {carrierFilter === '대신' ? '현재목록 엑셀 (수동 등록용)' : '현재목록 전체 엑셀 다운로드'}
+                  현재 목록 전체 엑셀 다운로드
                 </button>
               </div>}
               </>} />
+              </div>
               {carrierFilter === '전체' && renderWaybillUploadControls(true, '로젠')}
             </>)}
 
@@ -5860,36 +5868,7 @@ export default function Home() {
                       <div style={groupSelect}></div>
                       <div style={groupInfo}>출고정보</div>
 
-                      <div
-                        style={{
-                          ...groupChecklist,
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          gap: 8,
-                        }}
-                      >
-                        <span>체크리스트</span>
-
-                        <div
-                          style={{ display: "flex", gap: 6, flexWrap: "wrap" }}
-                        >
-                          <button
-                            type="button"
-                            style={smallChecklistBtn}
-                            onClick={() => void handleChecklistAllToggle(true)}
-                          >
-                            전체 체크선택
-                          </button>
-                          <button
-                            type="button"
-                            style={smallChecklistBtn}
-                            onClick={() => void handleChecklistAllToggle(false)}
-                          >
-                            전체 체크해제
-                          </button>
-                        </div>
-                      </div>
+                      <div style={groupChecklist}>체크리스트</div>
 
                       <div style={groupAction} />
                     </div>
@@ -5910,36 +5889,9 @@ export default function Home() {
                       <div style={ovQty}>수량</div>
                       <div style={ovFare}>운임</div>
 
-                      <div style={{ ...ovCheck, ...checkStartBorder }}>
-                        전체
-                      </div>
-
-                      <div style={ovCheck}>
-                        <button
-                          type="button"
-                          style={headerActionBtn}
-                          onClick={() =>
-                            void handleChecklistColumnToggle("pda")
-                          }
-                        >
-                          PDA
-                        </button>
-                      </div>
-                      <div style={ovCheck}>
-                        {carrierFilter === '대신' ? '전산등록' : carrierFilter === '전체' ? '전산등록 / 운송장' : <button type="button" style={headerActionBtn} onClick={() => void handleChecklistColumnToggle('waybill')}>운송장</button>}
-                      </div>
-                      <div style={ovCheck}>
-                        <button
-                          type="button"
-                          style={headerActionBtn}
-                          onClick={() =>
-                            void handleChecklistColumnToggle("closedDone")
-                          }
-                        >
-                          종결완료
-                        </button>
-                      </div>
-                      <div style={ovCheck}>!</div>
+                      <div style={{ ...ovCheck, ...checkStartBorder }}>전산등록</div>
+                      <div style={ovCheck}><button type="button" style={headerActionBtn} onClick={() => void handleChecklistColumnToggle('pda')}>PDA</button></div>
+                      <div style={ovCheck}><button type="button" style={headerActionBtn} onClick={() => void handleChecklistColumnToggle('closedDone')}>종결완료</button></div>
 
                       <div style={ovDelete}>삭제</div>
                     </div>
@@ -5949,18 +5901,16 @@ export default function Home() {
                         shipment.shipmentDate ===
                         getTodaySeoulDateKey();
 
-                      const registrationView = daesinRegistrationView(shipment.daesinRegistration, shipmentWaybillInfoById.get(shipment.id));
+                      const registrationView = shipmentRegistrationView(shipment, shipmentWaybillInfoById.get(shipment.id));
                       const isChecklistDone = shipment.checklist.pda && shipment.checklist.closedDone &&
-                        (shipment.carrier === '대신' ? registrationView.label === '등록완료' : shipment.checklist.waybill);
+                        registrationView.label === '등록완료';
                       const waybillInfo = shipmentWaybillInfoById.get(
                         shipment.id,
                       );
                       const copied =
                         waybillInfo &&
                         copiedWaybillMessageId === waybillInfo.id;
-                      const hasWaybillWarning =
-                        waybillWarningShipmentIds.has(shipment.id) ||
-                        waybillInfo?.status === "확인필요";
+
 
                       return (
                         <div
@@ -5978,8 +5928,8 @@ export default function Home() {
                               borderRadius: 0,
                               background: "transparent",
                               position: "relative",
-                              paddingTop: waybillInfo ? 8 : 16,
-                              paddingBottom: waybillInfo ? 24 : 16,
+                              paddingTop: waybillInfo?.waybillNo ? 8 : 16,
+                              paddingBottom: waybillInfo?.waybillNo ? 24 : 16,
                             }}
                           >
                             <div style={ovSelect}>
@@ -6029,66 +5979,17 @@ export default function Home() {
                             <div style={ovFare}>{formatFare(shipment.fare)}</div>
 
                             <div style={{ ...ovCheck, ...checkStartBorder }}>
-                              <button
-                                type="button"
-                                style={rowActionBtn}
-                                onClick={() =>
-                                  void handleChecklistRowToggle(shipment.id)
-                                }
-                              >
-                                전체
-                              </button>
+                              <button type="button" aria-label={shipment.receiver + ' 전산등록 ' + registrationView.label}
+                                style={{border:0,borderRadius:5,padding:'5px 7px',fontSize:12,fontWeight:700,whiteSpace:'nowrap',cursor:'pointer',background:registrationView.label === '등록완료' ? '#e7f6ef' : registrationView.label === '정보확인' ? '#fff1e9' : '#f1f5f9',color:registrationView.label === '등록완료' ? '#008653' : registrationView.label === '정보확인' ? '#e76c19' : '#64748b'}}
+                                onClick={() => setRegistrationDialogId(shipment.id)}>{registrationView.label}</button>
                             </div>
-
                             <div style={ovCheck}>
-                              <input
-                                type="checkbox"
-                                style={checkboxStyle}
-                                checked={shipment.checklist.pda}
-                                onChange={() =>
-                                  void handleChecklistToggle(
-                                    shipment.id,
-                                    "pda",
-                                  )
-                                }
-                              />
+                              <input type="checkbox" aria-label={shipment.receiver + ' PDA'} style={checkboxStyle} checked={shipment.checklist.pda}
+                                onChange={() => void handleChecklistToggle(shipment.id, 'pda')} />
                             </div>
-
                             <div style={ovCheck}>
-                              {shipment.carrier === '대신' ? <button type="button" aria-label={shipment.receiver + ' 전산등록 ' + registrationView.label} style={{border:0,borderRadius:5,padding:'5px 7px',fontSize:12,fontWeight:700,whiteSpace:'nowrap',cursor:'pointer',background:registrationView.label === '등록완료' ? '#e7f6ef' : registrationView.label === '정보확인' ? '#fff1e9' : '#f1f5f9',color:registrationView.label === '등록완료' ? '#008653' : registrationView.label === '정보확인' ? '#e76c19' : '#64748b'}} onClick={() => setRegistrationDialogId(shipment.id)}>{registrationView.label}</button> : <input
-                                type="checkbox"
-                                style={checkboxStyle}
-                                checked={shipment.checklist.waybill}
-                                onChange={() =>
-                                  void handleChecklistToggle(
-                                    shipment.id,
-                                    "waybill",
-                                  )
-                                }
-                              />}
-
-                            </div>
-
-                            <div style={ovCheck}>
-                              <input
-                                type="checkbox"
-                                style={checkboxStyle}
-                                checked={shipment.checklist.closedDone}
-                                onChange={() =>
-                                  void handleChecklistToggle(
-                                    shipment.id,
-                                    "closedDone",
-                                  )
-                                }
-                              />
-                            </div>
-
-                            <div style={ovCheck}>
-                              {hasWaybillWarning ? (
-                                <span style={warningMark}>!</span>
-                              ) : (
-                                <span style={{ color: "transparent" }}>!</span>
-                              )}
+                              <input type="checkbox" aria-label={shipment.receiver + ' 종결완료'} style={checkboxStyle} checked={shipment.checklist.closedDone}
+                                onChange={() => void handleChecklistToggle(shipment.id, 'closedDone')} />
                             </div>
 
                             <div style={ovDelete}>
@@ -6101,7 +6002,7 @@ export default function Home() {
                               </button>
                             </div>
 
-                            {waybillInfo ? (
+                            {waybillInfo?.waybillNo ? (
                               <div style={shipmentWaybillInlineLayer}>
                                 <div style={shipmentWaybillInlineContent}>
                                   <button
@@ -7132,13 +7033,13 @@ export default function Home() {
         {registrationDialogId && savedShipments.find(row => row.id === registrationDialogId) && (() => {
           const shipment = savedShipments.find(row => row.id === registrationDialogId)!;
           const info = shipmentWaybillInfoById.get(shipment.id);
-          const view = daesinRegistrationView(shipment.daesinRegistration, info);
-          const upload = waybillHistoryRows.find(row => row.carrier === '대신' && row.sessionDate === shipment.shipmentDate && row.waybillNo === view.waybillNo);
-          return <DaesinRegistrationDialog shipment={shipment} view={view} upload={upload} busy={daesinBusy}
+          const view = shipmentRegistrationView(shipment, info);
+          const upload = waybillHistoryRows.find(row => row.carrier === shipment.carrier && row.sessionDate === shipment.shipmentDate && (info?.uploadId ? row.id === info.uploadId : Boolean(view.waybillNo) && row.waybillNo === view.waybillNo));
+          return <RegistrationDialog shipment={shipment} view={view} upload={upload} busy={shipment.carrier === '대신' && daesinBusy}
             onClose={() => setRegistrationDialogId(null)}
             onEdit={() => { setRegistrationDialogId(null); openDetail(shipment); }}
-            onRegister={() => { if (!daesinActions.current) { alert('대신 연결 도구가 있는 크롬에서 연동 화면을 열어 주세요.'); return; } setRegistrationDialogId(null); void daesinActions.current.registerOne(shipment); }}
-            onRefresh={() => { if (!daesinActions.current) { alert('대신 연결 도구가 있는 크롬에서 연동 화면을 열어 주세요.'); return; } void daesinActions.current.refresh(); }} />;
+            onRegister={() => { if (shipment.carrier === '로젠') { setRegistrationDialogId(null); void exportRows([shipment], '개별', '로젠'); return; } if (!daesinActions.current) { alert('대신 연결 도구가 있는 크롬에서 연동 화면을 열어 주세요.'); return; } setRegistrationDialogId(null); void daesinActions.current.registerOne(shipment); }}
+            onRefresh={() => { if (shipment.carrier === '로젠') { setRegistrationDialogId(null); setCarrierFilter('로젠'); setShowLogenPaste(true); return; } if (!daesinActions.current) { alert('대신 연결 도구가 있는 크롬에서 연동 화면을 열어 주세요.'); return; } void daesinActions.current.refresh(); }} />;
         })()}
         {detailOpen && editForm && (
           <div style={modalBackdrop}>
@@ -7152,7 +7053,7 @@ export default function Home() {
                 </div>
 
                 <div style={modalHeaderRight}>
-                  <ProgressBadge checklist={editForm.carrier === '대신' ? { ...editForm.checklist, waybill: daesinRegistrationView(editForm.daesinRegistration, shipmentWaybillInfoById.get(editForm.id)).label === '등록완료' } : editForm.checklist} />
+                  <ProgressBadge checklist={{ ...editForm.checklist, waybill: shipmentRegistrationView(editForm, shipmentWaybillInfoById.get(editForm.id)).label === '등록완료' }} />
                   <button
                     type="button"
                     style={modalCloseBtn}
@@ -8433,7 +8334,7 @@ const overviewWrap: CSSProperties = {
 const groupHeaderRow: CSSProperties = {
   display: "grid",
   gridTemplateColumns:
-    "52px 1.3fr 2.6fr 0.9fr 0.9fr 1fr 1.1fr 70px 70px 70px 90px 40px 88px",
+    "52px 1.3fr 2.6fr 0.9fr 0.9fr 1fr 1.1fr 90px 70px 90px 88px",
   gap: 10,
   alignItems: "center",
   fontSize: 13,
@@ -8452,18 +8353,18 @@ const groupInfo: CSSProperties = {
 };
 
 const groupChecklist: CSSProperties = {
-  gridColumn: "8 / 13",
+  gridColumn: "8 / 11",
   paddingLeft: 12,
 };
 
 const groupAction: CSSProperties = {
-  gridColumn: "13 / 14",
+  gridColumn: "11 / 12",
 };
 
 const overviewRow: CSSProperties = {
   display: "grid",
   gridTemplateColumns:
-    "52px 1.3fr 2.6fr 0.9fr 0.9fr 1fr 1.1fr 70px 70px 70px 90px 40px 88px",
+    "52px 1.3fr 2.6fr 0.9fr 0.9fr 1fr 1.1fr 90px 70px 90px 88px",
   gap: 10,
   alignItems: "center",
   padding: "16px 14px",
@@ -8492,14 +8393,14 @@ const shipmentWaybillInlineLayer: CSSProperties = {
   bottom: 5,
   display: "grid",
   gridTemplateColumns:
-    "52px 1.3fr 2.6fr 0.9fr 0.9fr 1fr 1.1fr 70px 70px 70px 90px 40px 88px",
+    "52px 1.3fr 2.6fr 0.9fr 0.9fr 1fr 1.1fr 90px 70px 90px 88px",
   gap: 10,
   alignItems: "center",
   pointerEvents: "none",
 };
 
 const shipmentWaybillInlineContent: CSSProperties = {
-  gridColumn: "2 / 13",
+  gridColumn: "2 / 11",
   display: "flex",
   alignItems: "center",
   gap: 6,
@@ -8871,19 +8772,6 @@ const smallRedBtn: CSSProperties = {
   fontWeight: 700,
 };
 
-const smallChecklistBtn: CSSProperties = {
-  border: "none",
-  background: "#e5e7eb",
-  color: "#111827",
-  borderRadius: 8,
-  padding: "6px 10px",
-  cursor: "pointer",
-  fontWeight: 700,
-  fontSize: 12,
-  lineHeight: 1.2,
-  whiteSpace: "nowrap",
-};
-
 const headerActionBtn: CSSProperties = {
   border: "none",
   background: "transparent",
@@ -8891,25 +8779,6 @@ const headerActionBtn: CSSProperties = {
   fontWeight: 800,
   cursor: "pointer",
   padding: 0,
-};
-
-const rowActionBtn: CSSProperties = {
-  border: "none",
-  background: "#e5e7eb",
-  color: "#111827",
-  borderRadius: 8,
-  padding: "6px 10px",
-  cursor: "pointer",
-  fontWeight: 700,
-  fontSize: 12,
-};
-
-const warningMark: CSSProperties = {
-  color: "#dc2626",
-  fontWeight: 800,
-  fontSize: 18,
-  lineHeight: 1,
-  display: "inline-block",
 };
 
 const verifyTextArea: CSSProperties = {

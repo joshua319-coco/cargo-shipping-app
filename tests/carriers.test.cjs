@@ -16,12 +16,12 @@ function loadTs(file, extra = '') {
   }}).outputText;
   const compiledModule = { exports: {} };
   const localRequire = (name) => name === '@/lib/supabase' ? { supabase: {} }
-    : name === '@/lib/carriers' ? loadTs('lib/carriers.ts') : name === '@/lib/logen-paste' ? loadTs('lib/logen-paste.ts') : name === '@/lib/daesin-sync' ? loadTs('lib/daesin-sync.ts') : require(name);
+    : name === '@/lib/carriers' ? loadTs('lib/carriers.ts') : name === '@/lib/logen-paste' ? loadTs('lib/logen-paste.ts') : name === './daesin-sync' || name === '@/lib/daesin-sync' ? loadTs('lib/daesin-sync.ts') : name === '@/lib/registration-status' ? loadTs('lib/registration-status.ts') : require(name);
   vm.runInThisContext('(function(require,module,exports){' + output + '\n})', { filename: file })(localRequire, compiledModule, compiledModule.exports);
   return compiledModule.exports;
 }
 const carrier = loadTs('lib/carriers.ts');
-const { __test: helpers } = loadTs('app/page.tsx', '\nexports.__test = { normalizeShipment, suggestFareByQty, jejuShipmentNotice, toTemplateRow, toShipmentDbPayload, parseWaybillUploadRows, buildWaybillVerificationRows, normalizeSharedVerifyState, buildWaybillMessageText, TEMPLATE_HEADERS, toLogenTemplateRow, LOGEN_TEMPLATE_HEADERS, isValidShipmentDate, isLiveDaesinTestShipment, validateDaesinDailyImport };');
+const { __test: helpers } = loadTs('app/page.tsx', '\nexports.__test = { normalizeShipment, suggestFareByQty, jejuShipmentNotice, shipmentRegistrationView, toTemplateRow, toShipmentDbPayload, parseWaybillUploadRows, buildWaybillVerificationRows, normalizeSharedVerifyState, buildWaybillMessageText, TEMPLATE_HEADERS, toLogenTemplateRow, LOGEN_TEMPLATE_HEADERS, isValidShipmentDate, isLiveDaesinTestShipment, validateDaesinDailyImport };');
 const shipment = (patch = {}) => helpers.normalizeShipment({
   id: '1', carrier: '로젠', receiver: '테스트수하인', receiver_phone: '01012345678',
   address: '경기도 수원시 테스트로 10 101호', postal_code: '12345', sender: '상화시스템',
@@ -329,4 +329,34 @@ test('Jeju list notices use carrier-specific wording and destination source',()=
  assert.equal(helpers.jejuShipmentNotice(shipment({carrier:'대신',delivery:'정기',address:'서울특별시',branch:'서귀포영업소'})),'제주 | 운임X2');
  assert.equal(helpers.jejuShipmentNotice(shipment({carrier:'로젠',address:'서울특별시',branch:'제주'})),'');
  assert.equal(helpers.jejuShipmentNotice(shipment({carrier:'대신',address:'서울특별시'})),'');
+});
+
+test('Logen registration status follows Excel export even before a carrier waybill exists',()=>{
+ const source=shipment({waybill:false});
+ assert.equal(helpers.shipmentRegistrationView(source).label,'미등록');
+ source.checklist.waybill=true;
+ assert.equal(helpers.shipmentRegistrationView(source).label,'등록완료');
+ const upload=helpers.parseWaybillUploadRows([logenRaw({운송장번호:''})],'로젠')[0];
+ const verified=helpers.buildWaybillVerificationRows([source],[upload])[0];
+ assert.deepEqual(Array.from(verified.reasons),['운송장번호 없음']);
+ assert.equal(verified.uploadId,upload.id);
+ assert.equal(helpers.shipmentRegistrationView(source,verified).label,'등록완료');
+});
+test('Logen discrepancies override downloaded state and retain detail without an invoice',()=>{
+ const source=shipment({waybill:true});
+ const upload=helpers.parseWaybillUploadRows([logenRaw({운송장번호:'',택배운임:'9900',박스수량:'3'})],'로젠')[0];
+ const verified=helpers.buildWaybillVerificationRows([source],[upload])[0];
+ const status=helpers.shipmentRegistrationView(source,verified);
+ assert.equal(status.label,'정보확인');assert.equal(status.registered,true);
+ assert.deepEqual(Array.from(status.reasons).sort(),['박스수량 확인','택배운임 확인']);
+ assert.equal(status.waybillNo,'');
+ const fixed=helpers.buildWaybillVerificationRows([source],helpers.parseWaybillUploadRows([logenRaw({운송장번호:''})],'로젠'))[0];
+ assert.equal(helpers.shipmentRegistrationView(source,fixed).label,'등록완료');
+});
+test('Daesin registration is not inferred from a manual Excel download or checklist marker',()=>{
+ const source=shipment({carrier:'대신',waybill:true});
+ assert.equal(helpers.shipmentRegistrationView(source).label,'미등록');
+ source.daesinRegistration={state:'registered',waybillNo:'2140649004960',destinationNeedsReview:true,destinationReason:'공동관할구역'};
+ const status=helpers.shipmentRegistrationView(source,{waybillNo:'2140649004960',status:'일치',reasons:[]});
+ assert.equal(status.label,'정보확인');assert.equal(status.registered,true);assert.match(status.reasons[0],/공동관할구역/);
 });

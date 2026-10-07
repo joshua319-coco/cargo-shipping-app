@@ -4,8 +4,12 @@ Local entry: `http://127.0.0.1:4320/?daesinSync=1`. Install/upgrade instructions
 
 ## User flow
 
+The Daesin toolbar is visible only in the Daesin list. The blue **대신 전산데이터 새로고침** button is on the left, with **상세 결과·연결 설정** beside it and **수동으로 등록(엑셀)** underneath. Manual import and both downloads share one row when expanded.
+
+Both carriers show **전산등록 → PDA → 종결완료**. Logen uses the existing persisted Excel-download marker for 등록완료; undownloaded rows remain 미등록. Field discrepancies override this with 정보확인, even before a waybill is assigned. A missing waybill alone is expected before Logen printing and does not trigger the status warning. Row dialogs expose the comparison and single-row Excel download. PDA/closure actions no longer set the registration marker.
+
 - **대신 전산 연동** automatically takes only unregistered Daesin shipments in the current filtered list, independently of row checkboxes. The target set is captured when clicked. Connection is checked automatically. The row-level unregistered button opens a confirmation dialog for registering just that shipment. An initial carrier lookup reconciles previous/manual registrations, then new shipments are submitted sequentially using the proven single-row native registration flow. Data is refreshed again for every target date afterward.
-- **전산 데이터 새로고침** queries the shipment dates represented in the current list, downloads the original export, persists that date's Daesin dataset and runs existing verification. It never registers or prints. Carrier-side quantity/fare/destination corrections become visible without re-registration.
+- **대신 전산데이터 새로고침** queries the shipment dates represented in the current list, downloads the original export, persists that date's Daesin dataset and runs existing verification. It never registers or prints. Carrier-side quantity/fare/destination corrections become visible without re-registration.
 - An empty daily response preserves previously saved data. Invalid, duplicated or foreign waybill IDs, incomplete exports and unavailable carrier responses also preserve it.
 - Prohibited service is a definite failure. Retry requires an edited exported payload; no separate retry checkbox is required. Pending/unknown submissions are held for reconciliation. Missing or ambiguous results are never blindly replayed.
 - Shared/unassigned destinations can register. The native no-print button is used only after selecting the exact row and checking recipient, quantity, fare and receipt date. The UI retains destination correction warnings; missing-destination records omitted by the carrier export are reported separately.
@@ -23,9 +27,10 @@ Migration `20261007055028_daesin_registration_state.sql` was applied and verifie
 
 ## Verification and remaining live check
 
-- `node --test tests/*.test.cjs`: 58 passing tests, including existing Logen regressions, eligibility/ambiguity rules, durable invoice matching and full 13-digit numbers.
+- `node --test tests/*.test.cjs`: 61 passing tests, including existing Logen regressions, eligibility/ambiguity rules, durable invoice matching and full 13-digit numbers.
 - `node node_modules/typescript/bin/tsc --noEmit --incremental false`: passed.
 - PostgreSQL execution in an isolated PGlite database: auth/RLS, competing claims, stale snapshots/callbacks, unknown-result protection, corrected retries, immutable/unique numbers and exclusion of Logen passed.
 - Actual Next UI + unpacked MV3 extension + mocked native carrier + original XLS parser + isolated PostgreSQL RPC passed: single-row confirmation, automatic filtered-list registration regardless of selection, pre-existing manual registration, prohibited/shared destinations, unknown-result exclusion, second-click duplicate prevention, source-edit discrepancies, manual carrier correction and refresh, corrected retry, export failure preservation, historical empty refresh, and downloadable reports. Zero live external requests and zero print clicks.
+- Isolated browser checks for the unified checklist passed: selected/all/single-row Logen Excel downloads persist their status; PDA/closure never mark registration; numberless mismatches show compared values; corrected data clears warnings; Daesin-only toolbar visibility, blue refresh naming and one-line manual controls match the requested layout.
 - Separate MV3 native registration fixture passed ten normal/failure scenarios, preserving row checkbox handlers and avoiding the blue print button.
 - The user confirmed 0.5.0 data refresh against real shipments. The simplified controls and status dialogs have isolated end-to-end evidence; the updated UI still needs the user’s normal live acceptance. This Daesin UI is local, not production-deployed. Existing extension 0.5.0 is sufficient; refresh the app only.
