@@ -11,7 +11,7 @@ import { supabase } from "@/lib/supabase";
 import type { Session } from "@supabase/supabase-js";
 import { CARRIERS, normalizeCarrier, isLogenQuantity, logenFare, exportCarrier, sameCarrierText, sameCarrierPhone, sameParcelAddress } from "@/lib/carriers";
 import type { Carrier, CarrierFilter } from "@/lib/carriers";
-import { daesinRegistrationView, findDaesinCandidate, mayRegister, registrationFromJob, validDaesinDate } from "@/lib/daesin-sync";
+import { daesinInputIssues, daesinRegistrationView, findDaesinCandidate, mayRegister, registrationFromJob, validDaesinDate } from "@/lib/daesin-sync";
 import type { DaesinVerification, DaesinRegistration, DaesinDailyRow, DaesinJob } from "@/lib/daesin-sync";
 import { shipmentRegistrationView } from '@/lib/registration-status';
 import { parseLogenPasteRows } from "@/lib/logen-paste";
@@ -2016,7 +2016,7 @@ function DaesinSyncPanel({ rows, allRows, mapRow, onImport, onReload, defaultDat
   const status = async () => {
     const response = await callLiveTestBridge('status');
     if (!response.ok) throw new Error(response.error);
-    if (response.version !== '0.6.0') throw new Error('연결 도구 0.6.0으로 업데이트하고 이 페이지를 새로고침해 주세요.');
+    if (!['0.6.0', '0.6.1'].includes(response.version || '')) throw new Error('연결 도구 0.6.1로 업데이트하고 이 페이지를 새로고침해 주세요.');
     await saveJobs(response.jobs || []); return response.jobs || [];
   };
   const refresh = async () => {
@@ -2095,8 +2095,9 @@ function DaesinSyncPanel({ rows, allRows, mapRow, onImport, onReload, defaultDat
         if (findDaesinCandidate(fresh, inspected.dataset.rows, inspected.peers).possible) {
           uncertain++; errors.push(row.receiver + ': 같은 수화주·전화의 접수건이 있어 확인 필요'); continue;
         }
-        if (!/^\d{5}$/.test(String(mapped.우편번호)) || Number(mapped.수량) < 1 || !row.receiver.trim() || !row.receiverPhone.trim() || !validDaesinDate(row.shipmentDate)) {
-          failed++; errors.push(row.receiver + ': 수화주·전화·우편번호·수량·날짜 확인 필요'); continue;
+        const inputIssues = daesinInputIssues(row, mapped.우편번호, mapped.수량);
+        if (inputIssues.length) {
+          failed++; errors.push(row.receiver + ': ' + inputIssues.join(' ')); continue;
         }
         const XLSX = await import('xlsx');
         const workbook = XLSX.utils.book_new();
@@ -7053,6 +7054,10 @@ export default function Home() {
           const shipment = savedShipments.find(row => row.id === registrationDialogId)!;
           const info = shipmentWaybillInfoById.get(shipment.id);
           const view = shipmentRegistrationView(shipment, info);
+          if (shipment.carrier === '대신' && view.label === '미등록') {
+            const mapped = toTemplateRow(shipment, resolvePostalCodeValue);
+            view.reasons = [...new Set([...view.reasons, ...daesinInputIssues(shipment, mapped.우편번호, mapped.수량)])];
+          }
           const upload = waybillHistoryRows.find(row => row.carrier === shipment.carrier && row.sessionDate === shipment.shipmentDate && (info?.uploadId ? row.id === info.uploadId : Boolean(view.waybillNo) && row.waybillNo === view.waybillNo));
           return <RegistrationDialog shipment={shipment} view={view} upload={upload} busy={shipment.carrier === '대신' && daesinBusy}
             onClose={() => setRegistrationDialogId(null)}

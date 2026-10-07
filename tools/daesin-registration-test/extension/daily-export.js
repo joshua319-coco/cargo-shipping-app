@@ -6,13 +6,16 @@
 async function fetchDaesinDailyWorkbook(shipmentDate) {
   const diagnosis = { shipmentDate, stage: 'page', checkedAt: new Date().toISOString() };
   const url = new URL(location.href);
-  const fail = message => { throw new Error(message); };
-  if (url.origin !== 'https://partner.ds3211.co.kr' || url.pathname !== '/searchSvl' || url.searchParams.get('svcSid') !== 'dailySearch') return {error:'대신 일자별조회 화면이 필요합니다.'};
+  const fail = (message, code) => { throw Object.assign(new Error(message), { code }); };
+  const loginMessage = '대신 로그인이 필요합니다. 대신 탭에서 로그인한 뒤 출고관리로 돌아와 새로고침을 다시 눌러 주세요.';
+  if (url.origin !== 'https://partner.ds3211.co.kr' || url.pathname !== '/searchSvl' || url.searchParams.get('svcSid') !== 'dailySearch') return { diagnosis, code: 'LOGIN_REQUIRED', error: loginMessage };
   const form = document.querySelector('#searchForm');
-  if (!form || !form.querySelector('#dailyStartDate') || !/^\d{4}-\d{2}-\d{2}$/.test(shipmentDate)) return {error:'대신 일자별조회에 로그인한 상태로 다시 눌러 주세요.'};
+  if (!form || !form.querySelector('#dailyStartDate')) return { diagnosis, code: 'LOGIN_REQUIRED', error: loginMessage };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(shipmentDate)) return { diagnosis, error: '조회 날짜를 확인해 주세요.' };
   const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 40000);
   const request = async (path, options = {}) => {
     const response = await fetch(path, { credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: controller.signal, ...options });
+    if (response.status === 401 || response.status === 403) fail(loginMessage, 'LOGIN_REQUIRED');
     if (!response.ok) fail('대신 발송데이터 요청 실패 (' + response.status + '). 로그인 상태를 확인해 주세요.');
     return response;
   };
@@ -71,7 +74,7 @@ async function fetchDaesinDailyWorkbook(shipmentDate) {
     return { diagnosis, shipmentDate, fileName: '대신_발송데이터_' + shipmentDate + '.xls', workbook: btoa(binary),
       rows: rows.map((row, index) => Object.fromEntries(keys.map(key => [key, key === 'waybill_no' ? numbers[index] : String(row[key] ?? '')]))) };
   } catch (error) {
-    return {diagnosis, error:error.name === 'AbortError' ? '대신 데이터 응답 시간이 초과됐습니다. 발송데이터 가져오기만 다시 시도해 주세요.' : error.message || String(error)};
+    return {diagnosis, code:error.code, error:error.name === 'AbortError' ? '대신 데이터 응답 시간이 초과됐습니다. 발송데이터 가져오기만 다시 시도해 주세요.' : error.message || String(error)};
   } finally { clearTimeout(timer); }
 }
 

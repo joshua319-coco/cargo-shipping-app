@@ -21,6 +21,15 @@ export type DaesinJob = {
 const text = (value: unknown) => String(value ?? '').normalize('NFKC').replace(/\s/g, '');
 const digits = (value: unknown) => String(value ?? '').replace(/\D/g, '');
 export const validDaesinDate = (date: string) => /^\d{4}-\d{2}-\d{2}$/.test(date) && !Number.isNaN(Date.parse(date)) && new Date(date).toISOString().slice(0, 10) === date;
+export function daesinInputIssues(source: { receiver: string; receiverPhone: string; shipmentDate: string }, postalCode: unknown, quantity: unknown) {
+  const issues: string[] = [];
+  if (!/^\d{5}$/.test(String(postalCode ?? ''))) issues.push('도착지 우편번호가 없거나 올바르지 않습니다. 출고정보 수정에서 5자리 우편번호를 확인해 주세요.');
+  if (!source.receiver.trim()) issues.push('수화주명을 입력해 주세요.');
+  if (!source.receiverPhone.trim()) issues.push('수화주 전화번호를 입력해 주세요.');
+  if (!Number.isFinite(Number(quantity)) || Number(quantity) < 1) issues.push('박스 수량을 1개 이상 입력해 주세요.');
+  if (!validDaesinDate(source.shipmentDate)) issues.push('출고일자를 확인해 주세요.');
+  return issues;
+}
 export function registrationFromJob(job: DaesinJob): DaesinRegistration {
   const registered = job.registered || job.numbers.length === 1;
   return {

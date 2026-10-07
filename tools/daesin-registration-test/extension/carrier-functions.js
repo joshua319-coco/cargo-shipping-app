@@ -67,7 +67,7 @@ async function stageCarrierWorkbook(job) {
             const destinationFields = ['arrival_agencycode', 'unregistered_post', 'unregistered_post_state', 'transit_mode'];
             const destinations = Array.isArray(data.insert) ? data.insert.slice(0, 3).map(row => Object.fromEntries(destinationFields.filter(key => row && Object.hasOwn(row, key)).map(key => [key, String(row[key] ?? '').slice(0, 160)]))) : [];
             // Give the carrier's own rendering callback time to update its destination counter.
-            setTimeout(() => emit('upload-response', { rowCount: Array.isArray(data.insert) ? data.insert.length : null, destinations }), 100);
+            setTimeout(() => emit('upload-response', { rowCount: Array.isArray(data.insert) ? data.insert.length : null, destinations, result: typeof data.result === 'string' ? data.result : null, message: typeof data.message === 'string' ? data.message.slice(0, 500) : '' }), 100);
           }
         } catch { emit('unknown', { phase: registration ? 'registration' : 'upload' }); }
       }, { once: true });
