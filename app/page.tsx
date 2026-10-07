@@ -11,6 +11,8 @@ import { supabase } from "@/lib/supabase";
 import type { Session } from "@supabase/supabase-js";
 import { CARRIERS, normalizeCarrier, isLogenQuantity, logenFare, exportCarrier, sameCarrierText, sameCarrierPhone, sameParcelAddress } from "@/lib/carriers";
 import type { Carrier, CarrierFilter } from "@/lib/carriers";
+import { findDaesinCandidate, mayRegister, registrationFromJob, validDaesinDate } from "@/lib/daesin-sync";
+import type { DaesinRegistration, DaesinDailyRow, DaesinJob } from "@/lib/daesin-sync";
 import { parseLogenPasteRows } from "@/lib/logen-paste";
 
 type Party = {
@@ -41,6 +43,7 @@ type Checklist = {
 };
 
 type SavedShipment = {
+  daesinRegistration?: DaesinRegistration;
   id: string;
   carrier: Carrier;
   receiver: string;
@@ -413,6 +416,7 @@ function normalizeShipment(raw: unknown): SavedShipment {
   return {
     id: asString(row.id) || String(Date.now()),
     carrier: normalizeCarrier(row.carrier),
+    daesinRegistration: (row.daesinRegistration ?? row.daesin_registration ?? undefined) as DaesinRegistration | undefined,
     receiver: asString(row.receiver),
     receiverPhone: asString(row.receiverPhone ?? row.receiver_phone),
     address: asString(row.address),
@@ -881,7 +885,10 @@ function buildWaybillVerificationRows(
 
   shipments.forEach((shipment, shipmentIndex) => {
     uploads.forEach((upload, uploadIndex) => {
-      const score = scoreWaybillPair(shipment, upload);
+      const bound = shipment.carrier === '대신' ? shipment.daesinRegistration?.waybillNo : '';
+      const owner = normalizeCarrier(upload.carrier) === '대신' ? shipments.find(row => row.carrier === '대신' && row.daesinRegistration?.waybillNo === upload.waybillNo) : undefined;
+      if ((bound && (normalizeCarrier(upload.carrier) !== '대신' || upload.waybillNo !== bound)) || (owner && owner.id !== shipment.id)) return;
+      const score = bound ? 100000 : scoreWaybillPair(shipment, upload);
       if (score >= 8) {
         scoredPairs.push({ shipmentIndex, uploadIndex, score });
       }
@@ -1849,7 +1856,7 @@ function isLiveDaesinTestShipment(row: Pick<SavedShipment, 'receiver' | 'shipmen
   return row.carrier === '대신' && row.shipmentDate === '2026-10-06' && /^대신자동업로드테스트[1-9]\d*$/.test(row.receiver.trim());
 }
 
-type DaesinDailyDataset = { shipmentDate: string; fileName: string; workbook: string; rows: { waybill_no: string; arrival_name: string; arrival_agencycode: string }[] };
+type DaesinDailyDataset = { shipmentDate: string; fileName: string; workbook: string; rows: DaesinDailyRow[] };
 function validateDaesinDailyImport(parsedRows: WaybillUploadRow[], dataset: DaesinDailyDataset) {
   const expected = new Map(dataset.rows.map(row => [row.waybill_no, row]));
   const actual = new Set(parsedRows.map(row => row.waybillNo));
@@ -1858,12 +1865,12 @@ function validateDaesinDailyImport(parsedRows: WaybillUploadRow[], dataset: Daes
   if (missing.some(row => row.arrival_agencycode !== '0000')) throw new Error('도착지가 지정된 건이 엑셀에서 누락되어 기존 데이터를 유지했습니다. 다시 가져와 주세요.');
   return missing;
 }
-type LiveTestJob = { id: string; shipmentId: string; shipmentDate: string; receiver: string; state: string; numbers: string[]; registered?: boolean; message: string; destinationNeedsReview?: boolean; destinationReason?: string; lookupMessage?: string };
+type LiveTestJob = DaesinJob;
 type LiveTestReply = { ok: boolean; error?: string; version?: string; jobs?: LiveTestJob[]; job?: LiveTestJob; repeated?: boolean; report?: Record<string, unknown>; dataset?: DaesinDailyDataset };
 function callLiveTestBridge(action: string, extra: Record<string, unknown> = {}): Promise<LiveTestReply> {
   return new Promise((resolve, reject) => {
     const requestId = crypto.randomUUID();
-    const timer = window.setTimeout(() => { window.removeEventListener('message', receive); reject(new Error(action === 'stage' ? '전송 결과를 받지 못했습니다. 다시 전송하지 말고 대신 화면과 확장 프로그램 상태를 확인해 주세요.' : action === 'fetch-daily' || action === 'verify' ? '발송데이터 조회 응답이 늦어지고 있습니다. 연결·결과 확인을 눌러 상태를 확인해 주세요. 다시 등록할 필요는 없습니다.' : action === 'report' ? '확인결과 응답이 10초 안에 오지 않았습니다. 연결 도구를 업데이트했다면 확장 프로그램과 이 페이지를 모두 새로고침해 주세요.' : '연결 도구에서 응답이 오지 않았습니다. 확장 프로그램이 있는 크롬인지 확인하고 이 페이지를 새로고침해 주세요.')); }, action === 'stage' || action === 'fetch-daily' ? 55000 : action === 'verify' ? 20000 : 10000);
+    const timer = window.setTimeout(() => { window.removeEventListener('message', receive); reject(new Error(action === 'stage' ? '전송 결과를 받지 못했습니다. 다시 전송하지 말고 대신 화면과 확장 프로그램 상태를 확인해 주세요.' : action === 'fetch-daily' || action === 'verify' ? '발송데이터 조회 응답이 늦어지고 있습니다. 연결·결과 확인을 눌러 상태를 확인해 주세요. 다시 등록할 필요는 없습니다.' : action === 'report' ? '확인결과 응답이 10초 안에 오지 않았습니다. 연결 도구를 업데이트했다면 확장 프로그램과 이 페이지를 모두 새로고침해 주세요.' : '연결 도구에서 응답이 오지 않았습니다. 확장 프로그램이 있는 크롬인지 확인하고 이 페이지를 새로고침해 주세요.')); }, action === 'fetch-daily' ? 85000 : action === 'stage' ? 55000 : action === 'verify' ? 20000 : 10000);
     function receive(event: MessageEvent) {
       if (event.source !== window || event.origin !== location.origin || event.data?.channel !== 'sanghwa-live-response' || event.data.requestId !== requestId) return;
       clearTimeout(timer); window.removeEventListener('message', receive); resolve(event.data.result);
@@ -1872,113 +1879,200 @@ function callLiveTestBridge(action: string, extra: Record<string, unknown> = {})
     window.postMessage({ channel: 'sanghwa-live-request', requestId, action, ...extra }, location.origin);
   });
 }
-function DaesinLiveTestPanel({ rows, mapRow, hasWaybill, onImport }: { rows: SavedShipment[]; mapRow: (row: SavedShipment) => Record<string, string | number>; hasWaybill: (id: string) => boolean; onImport: (dataset: DaesinDailyDataset) => Promise<string> }) {
-  const [enabled, setEnabled] = useState(false), [busy, setBusy] = useState(false), [connected, setConnected] = useState(false);
-  const [message, setMessage] = useState(''), [jobs, setJobs] = useState<LiveTestJob[]>([]);
-  const [verifyingId, setVerifyingId] = useState<string | null>(null);
-  const inFlight = useRef(false), reportInFlight = useRef(false);
+function DaesinSyncPanel({ rows, allRows, selectedIds, mapRow, onImport, onReload, defaultDate }: {
+  rows: SavedShipment[]; allRows: SavedShipment[]; selectedIds: string[];
+  mapRow: (row: SavedShipment) => Record<string, string | number>;
+  onImport: (dataset: DaesinDailyDataset) => Promise<string>; onReload: () => Promise<boolean>; defaultDate: string;
+}) {
+  const [enabled, setEnabled] = useState(false), [connected, setConnected] = useState(false), [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState(''), [scope, setScope] = useState('selected'), [retry, setRetry] = useState(false);
+  const [states, setStates] = useState<Record<string, DaesinRegistration>>({});
+  const [refreshDate, setRefreshDate] = useState(defaultDate);
+  const inFlight = useRef(false), stopRequested = useRef(false), mounted = useRef(true), reportInFlight = useRef(false);
   const [reportBusy, setReportBusy] = useState(false);
   const [preparedReport, setPreparedReport] = useState<{ url: string; text: string } | null>(null);
+  useEffect(() => { mounted.current = true; setEnabled(location.origin === 'http://127.0.0.1:4320'); return () => { mounted.current = false; stopRequested.current = true; }; }, []);
+  useEffect(() => { setRefreshDate(defaultDate); }, [defaultDate]);
   useEffect(() => () => { if (preparedReport) URL.revokeObjectURL(preparedReport.url); }, [preparedReport]);
-  useEffect(() => { setEnabled(process.env.NODE_ENV === 'development' && location.origin === 'http://127.0.0.1:4320' && new URLSearchParams(location.search).get('registrationTest') === '1'); }, []);
-  useEffect(() => {
-    if (!enabled || !connected || busy) return;
-    let active = true;
-    const timer = window.setInterval(() => {
-      void callLiveTestBridge('status').then(response => {
-        if (active && response.ok && response.jobs) setJobs(response.jobs);
-      }).catch(() => {});
-    }, 3000);
-    return () => { active = false; clearInterval(timer); };
-  }, [enabled, connected, busy]);
-  const refresh = async () => {
-    try { const response = await callLiveTestBridge('status'); if (!response.ok) throw new Error(response.error); if (response.version !== '0.4.2') throw new Error('새 연결 도구 0.4.2을 설치하고 이 화면을 새로고침해 주세요.'); setConnected(true); setJobs(response.jobs || []); setMessage('연결됨 · 실제 접수 테스트는 1건씩 진행합니다.'); }
-    catch (error) { setConnected(false); setMessage(error instanceof Error ? error.message : '연결 실패'); }
+  const visible = rows.filter(row => row.carrier === '대신');
+  const targets = visible.filter(row => scope === 'all' || selectedIds.includes(row.id));
+  const getState = (row: SavedShipment) => {
+    const local = states[row.id], shared = row.daesinRegistration;
+    return shared && (!local || (shared.updatedAt || '') > (local.updatedAt || '')) ? shared : local || shared;
   };
-  const stage = async () => {
+  const persist = async (row: SavedShipment, action: string, data: Record<string, unknown>) => {
+    const response = await supabase.rpc('daesin_registration_update', { p_shipment_id: row.id, p_action: action, p_data: data });
+    if (response.error) throw new Error('등록 이력 저장 실패: ' + response.error.message + ' · 다시 등록하지 말고 연결·결과 확인을 눌러 주세요.');
+    const state = response.data.registration as DaesinRegistration;
+    if (state?.state) setStates(previous => ({ ...previous, [row.id]: state }));
+    return { claimed: response.data.claimed === true, state };
+  };
+  const saveJobs = async (jobs: LiveTestJob[]) => {
+    // Old attempts remain in the extension audit log; only its latest attempt is current.
+    const latest = new Map(jobs.map(job => [job.shipmentId, job]));
+    for (const job of latest.values()) {
+      const row = allRows.find(item => item.id === job.shipmentId && item.carrier === '대신');
+      if (row) await persist(row, 'adopt', { ...registrationFromJob(job) });
+    }
+  };
+  const status = async () => {
+    const response = await callLiveTestBridge('status');
+    if (!response.ok) throw new Error(response.error);
+    if (response.version !== '0.5.0') throw new Error('연결 도구 0.5.0으로 업데이트하고 이 페이지를 새로고침해 주세요.');
+    setConnected(true); await saveJobs(response.jobs || []); return response.jobs || [];
+  };
+  const refresh = async () => {
     if (inFlight.current) return;
-    if (rows.length !== 1 || rows[0].carrier !== '대신') return setMessage('목록에서 아직 접수하지 않은 대신 출고 1건만 선택해 주세요.');
-    const row = rows[0];
-    if (!isLiveDaesinTestShipment(row)) return setMessage('2026-10-06의 대신자동업로드테스트 뒤에 번호를 붙인 새 출고건 1건을 선택해 주세요.');
-    if (hasWaybill(row.id)) return setMessage('이미 송장번호가 연결된 출고건입니다. 중복 접수하지 않습니다.');
-    const mapped = mapRow(row);
-    if (!mapped.우편번호 || !/^\d{5}$/.test(String(mapped.우편번호)) || Number(mapped.수량) < 1 || !row.receiver.trim() || !row.receiverPhone.trim()) return setMessage('수화주명·전화번호·우편번호·수량을 확인해 주세요.');
-    if (!window.confirm(`${row.receiver}\n출고일 ${row.shipmentDate}\n대신 전송 수량 ${mapped.수량}${row.pack} / 운임 ${mapped.총운임}원 / ${row.pay}\n도착지 ${row.delivery === '정기' ? row.branch : row.address}\n\n아직 대신에 접수하지 않은 1건이 맞나요? 대신 등록 화면으로 실제 데이터를 전송하고 등록(출력안함)까지 자동 진행합니다. 공동관할·미지정은 등록 후 마감관리에서 수정하세요.`)) return;
-    inFlight.current = true; setBusy(true); setMessage('대신 등록 화면을 열고 선택한 1건을 전달하고 있습니다.');
-    try {
-      const XLSX = await import('xlsx');
-      const sheet = XLSX.utils.aoa_to_sheet([[...TEMPLATE_HEADERS], TEMPLATE_HEADERS.map(header => mapped[header])]);
-      const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, sheet, TEMPLATE_SHEET_NAME);
-      const buffer = new Uint8Array(XLSX.write(workbook, { bookType: 'xlsx', type: 'array' }));
-      let binary = ''; for (let i = 0; i < buffer.length; i++) binary += String.fromCharCode(buffer[i]);
-      const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify({ id: row.id, date: row.shipmentDate, mapped })));
-      const fingerprint = Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('');
-      const response = await callLiveTestBridge('stage', { payload: { shipmentId: row.id, shipmentDate: row.shipmentDate, receiver: row.receiver, fingerprint, autoRegister: true, workbook: btoa(binary), source: { postalCode: String(mapped.우편번호), address: String(mapped.주소), branch: String(mapped.도착영업소), quantity: Number(mapped.수량), fare: Number(mapped.총운임), delivery: row.delivery, receiverPhone: row.receiverPhone, pay: row.pay } } });
-      if (!response.ok) throw new Error(response.error);
-      if (response.job) setJobs(previous => [...previous.filter(job => job.id !== response.job!.id), response.job!]);
-      setMessage(response.repeated ? '이미 전송한 출고건입니다. 새로 전송하지 않고 기존 결과를 표시합니다.' : '업로드 후 등록(출력안함)을 자동 진행합니다. 접수 결과가 아래에 표시됩니다.');
-    } catch (error) { setMessage(error instanceof Error ? error.message : '연결 결과를 확인해 주세요.'); }
+    inFlight.current = true; setBusy(true); setMessage("연결과 등록 이력을 확인 중…");
+    try { await status(); await onReload(); setMessage('연결됨 · 이미 등록된 출고건은 다시 등록하지 않습니다.'); }
+    catch (error) { setConnected(false); setMessage(getErrorMessage(error)); }
     finally { inFlight.current = false; setBusy(false); }
+  };
+  const readDaily = async (date: string) => {
+    if (!validDaesinDate(date)) throw new Error('조회 날짜를 확인해 주세요.');
+    setMessage(date + ' 대신 전산 데이터 확인 중…');
+    const response = await callLiveTestBridge('fetch-daily', { shipmentDate: date });
+    if (!response.ok || !response.dataset || response.dataset.shipmentDate !== date) throw new Error(response.error || '조회 날짜와 응답이 다릅니다.');
+    await saveJobs(response.jobs || []);
+    // Read shared state afresh: another PC may have registered or edited the shipment.
+    const loaded = await supabase.from('shipments').select('*');
+    if (loaded.error) throw new Error('출고 이력 조회 실패: ' + loaded.error.message);
+    const peers = (loaded.data || []).map(normalizeShipment);
+    for (const row of peers.filter(item => item.carrier === '대신' && item.shipmentDate === date)) {
+      const candidate = findDaesinCandidate(row, response.dataset.rows, peers);
+      if (!candidate.row) continue;
+      const existing = row.daesinRegistration;
+      const binding = { ...existing, attemptId: existing?.attemptId || crypto.randomUUID(), shipmentDate: date,
+        state: 'registered', waybillNo: candidate.row.waybill_no,
+        destinationNeedsReview: candidate.row.arrival_agencycode === '0000',
+        destinationReason: candidate.row.arrival_agencycode === '0000' ? '도착지 미지정' : '', message: '대신 전산에서 등록 확인됨' };
+      const saved = await persist(row, existing ? 'result' : 'adopt', binding);
+      row.daesinRegistration = saved.state;
+    }
+    let result = date + ' 대신 조회 0건 · 저장된 발송데이터는 유지했습니다.';
+    if (response.dataset.rows.length) result = await onImport(response.dataset);
+    await onReload();
+    return { dataset: response.dataset, peers, result };
   };
   const fetchDaily = async () => {
     if (inFlight.current) return;
-    inFlight.current = true; setBusy(true); setVerifyingId('daily');
-    setMessage('대신에서 엑셀 원본을 가져와 송장번호와 발송정보를 확인 중입니다…');
-    try {
-      const response = await callLiveTestBridge('fetch-daily', { shipmentDate: '2026-10-06' });
-      if (!response.ok || !response.dataset) throw new Error(response.error || '발송데이터를 받지 못했습니다.');
-      if (response.jobs) setJobs(response.jobs);
-      const result = await onImport(response.dataset);
-      setMessage(result);
-    } catch (error) { setMessage(error instanceof Error ? error.message : '발송데이터 가져오기 실패'); }
-    finally { inFlight.current = false; setBusy(false); setVerifyingId(null); }
+    inFlight.current = true; setBusy(true); setMessage("전산 데이터 새로고침 준비 중…");
+    try { await status(); const response = await readDaily(refreshDate); setMessage(response.result); }
+    catch (error) { setMessage(getErrorMessage(error)); }
+    finally { inFlight.current = false; setBusy(false); }
   };
-  const inspect = async (id: string) => {
-    try { const response = await callLiveTestBridge('inspect', { jobId: id }); if (!response.ok) throw new Error(response.error); if (response.job) setJobs(previous => previous.map(job => job.id === id ? response.job! : job)); setMessage(response.job?.message || '도착지를 확인했습니다.'); }
-    catch (error) { setMessage(error instanceof Error ? error.message : '대신 화면 확인 필요'); }
+  const synchronize = async () => {
+    if (inFlight.current) return;
+    if (!targets.length) return setMessage('연동할 대신 출고건을 선택해 주세요. 전체는 현재 조회목록에만 적용됩니다.');
+    inFlight.current = true; stopRequested.current = false; setBusy(true); setMessage("대신 연결과 기존 접수 이력을 확인 중…");
+    let submitted = 0, skipped = 0, failed = 0, uncertain = 0;
+    const errors: string[] = [], dates = [...new Set(targets.map(row => row.shipmentDate))];
+    try {
+      await status();
+      const preflight = new Map<string, Awaited<ReturnType<typeof readDaily>>>();
+      // Reconcile before any registration, including records previously registered manually.
+      for (const date of dates) preflight.set(date, await readDaily(date));
+      for (let index = 0; index < targets.length; index++) {
+        if (stopRequested.current || !mounted.current) break;
+        const row = targets[index], inspected = preflight.get(row.shipmentDate)!;
+        const fresh = inspected.peers.find(peer => peer.id === row.id);
+        if (!fresh) { skipped++; continue; }
+        const mapped = mapRow(row);
+        const fingerprint = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify({id:row.id,date:row.shipmentDate,mapped})))), byte => byte.toString(16).padStart(2,'0')).join('');
+        if (!mayRegister(fresh.daesinRegistration, fingerprint, retry)) {
+          if (['pending','unknown'].includes(fresh.daesinRegistration?.state || '')) {
+            uncertain++; errors.push(row.receiver + ': 이전 접수 결과 확인 필요 · 다시 등록하지 않았습니다.');
+          } else skipped++;
+          continue;
+        }
+        if (findDaesinCandidate(fresh, inspected.dataset.rows, inspected.peers).possible) {
+          uncertain++; errors.push(row.receiver + ': 같은 수화주·전화의 접수건이 있어 확인 필요'); continue;
+        }
+        if (!/^\d{5}$/.test(String(mapped.우편번호)) || Number(mapped.수량) < 1 || !row.receiver.trim() || !row.receiverPhone.trim() || !validDaesinDate(row.shipmentDate)) {
+          failed++; errors.push(row.receiver + ': 수화주·전화·우편번호·수량·날짜 확인 필요'); continue;
+        }
+        const XLSX = await import('xlsx');
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([[...TEMPLATE_HEADERS], TEMPLATE_HEADERS.map(header => mapped[header])]), TEMPLATE_SHEET_NAME);
+        const bytes = new Uint8Array(XLSX.write(workbook, { bookType: 'xlsx', type: 'array' }));
+        let binary = ''; for (const byte of bytes) binary += String.fromCharCode(byte);
+        const payload = toShipmentDbPayload(row);
+        const snapshot = Object.fromEntries(['receiver','receiver_phone','sender','sender_phone','address','branch','postal_code','item','pack','qty','fare','pay','delivery','memo','shipment_date'].map(key => [key, payload[key as keyof ShipmentDbPayload]]));
+        const attemptId = crypto.randomUUID();
+        const claim = await persist(row, 'claim', { attemptId, fingerprint, snapshot, retry });
+        if (!claim.claimed) { skipped++; continue; }
+        setMessage(`${index + 1}/${targets.length} · ${row.receiver} 등록(출력안함) 진행 중…`);
+        try {
+          const response = await callLiveTestBridge('stage', { payload: { shipmentId:row.id, shipmentDate:row.shipmentDate, receiver:row.receiver, attemptId, fingerprint, retry, autoRegister:true, workbook:btoa(binary), source:{ postalCode:String(mapped.우편번호), address:String(mapped.주소), branch:String(mapped.도착영업소), quantity:Number(mapped.수량), fare:Number(mapped.총운임), delivery:row.delivery, receiverPhone:row.receiverPhone, pay:row.pay } } });
+          if (!response.ok || !response.job) throw new Error(response.error || '접수 응답을 확인하지 못했습니다.');
+          let job = response.job;
+          const deadline = Date.now() + 80000;
+          while (registrationFromJob(job).state === 'pending' && Date.now() < deadline && mounted.current) {
+            await new Promise(resolve => setTimeout(resolve, 1500));
+            const reply = await callLiveTestBridge('status');
+            if (!reply.ok) throw new Error(reply.error);
+            job = reply.jobs?.find(item => item.id === job.id) || job;
+          }
+          const registration = registrationFromJob(job);
+          // A repeated legacy job still protects the newly claimed shipment.
+          registration.attemptId = attemptId;
+          if (registration.state === 'pending') { registration.state = 'unknown'; registration.message = '접수 결과 확인 필요 · 재등록하지 않고 새로고침으로 조회해 주세요.'; }
+          await persist(row, 'result', { ...registration });
+          if (registration.state === 'registered') submitted++;
+          else if (registration.state === 'not-registered') failed++;
+          else { uncertain++; stopRequested.current = true; }
+        } catch (error) {
+          uncertain++; stopRequested.current = true;
+          await persist(row, 'result', { attemptId, shipmentDate:row.shipmentDate, state:'unknown', waybillNo:'', message:getErrorMessage(error) });
+          errors.push(row.receiver + ': ' + getErrorMessage(error));
+        }
+      }
+      if (mounted.current) for (const date of dates) {
+        try { await readDaily(date); }
+        catch (error) { errors.push(date + ' 데이터 조회 실패: ' + getErrorMessage(error) + ' · 전산 데이터 새로고침만 다시 눌러 주세요.'); }
+      }
+      setMessage(`연동 ${stopRequested.current ? '중단' : '완료'} · 신규 등록 ${submitted}건 · 기존 이력/처리 제외 ${skipped}건 · 등록 안됨 ${failed}건 · 결과 확인 필요 ${uncertain}건` + (errors.length ? '\n' + errors.join('\n') : ' · 발송데이터 반영 완료'));
+    } catch (error) { setMessage('연동을 멈췄습니다. ' + getErrorMessage(error)); }
+    finally { await onReload(); inFlight.current = false; setBusy(false); }
   };
   const downloadReport = async () => {
     if (reportInFlight.current) return;
     reportInFlight.current = true; setReportBusy(true); setPreparedReport(null);
-    setMessage('저장된 확인결과를 파일로 준비 중입니다…');
     try {
-      const response = await callLiveTestBridge('report'); if (!response.ok || !response.report) throw new Error(response.error || '저장된 확인결과를 받지 못했습니다.');
-      const text = JSON.stringify(response.report, null, 2);
-      const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
-      setPreparedReport({ url, text });
-      const link = document.createElement('a'); link.href = url; link.download = '대신_등록테스트_확인결과.json'; document.body.append(link); link.click(); link.remove();
-      setMessage('확인결과 다운로드를 요청했습니다. 파일이 안 보이면 아래 파일 직접 다운로드를 눌러 주세요.');
-    } catch (error) { setMessage(error instanceof Error ? error.message : '확인결과 저장 실패'); }
+      const response = await callLiveTestBridge('report');
+      if (!response.ok || !response.report) throw new Error(response.error || '확인결과를 받지 못했습니다.');
+      const text = JSON.stringify({ ...response.report, sharedRegistrations:allRows.filter(row => row.carrier === '대신' && getState(row)).map(row => ({ shipmentId:row.id, ...getState(row) })) }, null, 2);
+      const url = URL.createObjectURL(new Blob([text], { type:'application/json' })); setPreparedReport({url,text});
+      const link = document.createElement('a'); link.href = url; link.download = '대신_전산연동_확인결과.json'; document.body.append(link); link.click(); link.remove();
+      setMessage('확인결과 다운로드를 요청했습니다. 파일이 안 보이면 파일 직접 다운로드를 눌러 주세요.');
+    } catch (error) { setMessage(getErrorMessage(error)); }
     finally { reportInFlight.current = false; setReportBusy(false); }
   };
-  const copyReport = async () => {
-    if (!preparedReport) return;
-    try { await navigator.clipboard.writeText(preparedReport.text); setMessage('확인결과를 복사했습니다. 채팅에 붙여넣어 주세요.'); }
-    catch { setMessage('자동 복사가 허용되지 않았습니다. 확인결과 내용 보기를 펼쳐 내용을 선택한 뒤 복사해 주세요.'); }
-  };
   if (!enabled) return null;
-  return <section aria-label="대신 실제접수 테스트" style={{ border: '1px solid #bfdbfe', background: '#f8fbff', padding: 14, borderRadius: 12, marginBottom: 14 }}>
-    <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-      <strong>대신 실제접수 테스트 · 0.4.2</strong><button type="button" onClick={() => void refresh()} disabled={busy} style={exportBtnSecondary}>연결·결과 확인</button>
-      <button type="button" onClick={() => void stage()} disabled={!connected || busy} style={{ ...exportBtnPrimary, opacity: !connected || busy ? .5 : 1 }}>{busy && !verifyingId ? '전송 중…' : '선택 1건 자동 등록(출력안함)'}</button>
-      <button type="button" onClick={() => void fetchDaily()} disabled={!connected || busy} style={exportBtnPrimary}>{verifyingId ? "발송데이터 가져오는 중…" : "대신 발송데이터 가져오기"}</button>
-      <button type="button" onClick={() => void downloadReport()} disabled={reportBusy} style={exportBtnSecondary}>{reportBusy ? "확인결과 준비 중…" : "확인결과 파일 저장"}</button>
-      <a href="/registration-test-setup/index.html" target="_blank" rel="noreferrer" style={{ fontSize: 13 }}>연결 도구 설치</a>
+  const registered = visible.filter(row => getState(row)?.state === 'registered');
+  const reviews = registered.filter(row => getState(row)?.destinationNeedsReview);
+  return <section aria-label="대신 전산 연동" style={{border:'1px solid #bfdbfe',background:'#f8fbff',padding:16,borderRadius:12,marginBottom:14}}>
+    <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
+      <strong>대신 전산 연동 · 0.5.0</strong>
+      <button type="button" style={exportBtnSecondary} disabled={busy} onClick={() => void refresh()}>연결·결과 확인</button>
+      <label>대상 <select aria-label="전산 연동 대상" value={scope} disabled={busy} onChange={event => setScope(event.target.value)} style={{padding:10,border:'1px solid #cbd5e1',borderRadius:8}}><option value="selected">선택한 대신 출고건</option><option value="all">현재목록 대신 전체</option></select></label>
+      <button type="button" style={exportBtnPrimary} disabled={!connected || busy || !targets.length} onClick={() => void synchronize()}>대신 전산 연동 ({targets.length}건)</button>
+      {busy && <button type="button" style={exportBtnSecondary} onClick={() => { stopRequested.current = true; setMessage('현재 건의 결과 확인 후 나머지 등록을 멈춥니다.'); }}>나머지 등록 중지</button>}
     </div>
-    <p role="status" style={{ fontSize: 13, color: '#475569', margin: '10px 0 0' }}>{message || '2026-10-06 · 아직 접수하지 않은 새 테스트 건을 한 건씩 자동 등록합니다. 이미 접수한 건은 다시 선택하지 마세요.'}</p>
-    {preparedReport && <div style={{ marginTop: 10 }}>
-      <a href={preparedReport.url} download="대신_등록테스트_확인결과.json" style={{ marginRight: 12 }}>파일 직접 다운로드</a>
-      <button type="button" style={exportBtnSecondary} onClick={() => void copyReport()}>확인결과 복사</button>
-      <details style={{ marginTop: 8 }}><summary>확인결과 내용 보기</summary><textarea aria-label="확인결과 내용" readOnly value={preparedReport.text} onFocus={event => event.currentTarget.select()} style={{ width: '100%', height: 180, marginTop: 8, fontFamily: 'monospace' }} /></details>
-    </div>}
-    {jobs.length > 0 && <p style={{ fontSize: 13, fontWeight: 700 }}>등록 완료 {jobs.filter(job => job.registered || job.numbers.length === 1).length}건 · 도착지 수정 필요 {jobs.filter(job => (job.registered || job.numbers.length === 1) && job.destinationNeedsReview).length}건 · 등록 안됨 {jobs.filter(job => job.state === 'not-registered').length}건 · 결과 확인 필요 {jobs.filter(job => ['unknown', 'needs-review'].includes(job.state)).length}건</p>}
-    {jobs.map(job => <div key={job.id} style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', borderTop: '1px solid #dbe5f3', marginTop: 10, paddingTop: 10, fontSize: 13 }}>
-      <strong>{job.receiver}</strong><span>{job.shipmentDate}</span><span>{job.numbers.join(', ')}</span>
-      <span style={{ color: job.state === 'verified' ? '#15803d' : '#475569' }}>{job.state === 'verified' ? '대신 목록에서 접수 확인됨' : job.message || '처리상태 확인 필요'}</span>
-      {['carrier-ready', 'destination-pending', 'needs-review', 'not-registered'].includes(job.state) && <button type="button" style={exportBtnSecondary} onClick={() => void inspect(job.id)} disabled={busy}>도착지 다시 확인</button>}
-      {job.destinationNeedsReview && (job.registered || job.numbers.length === 1) && <strong style={{ color: '#b45309' }}>마감관리에서 도착지 수정 필요</strong>}
-      {job.lookupMessage && <span style={{color:"#b91c1c",flexBasis:"100%"}}>{job.lookupMessage}</span>}
-    </div>)}
+    <p style={{fontSize:13,margin:'10px 0'}}>미등록 건만 등록(출력안함) → 발송데이터 자동 반영. 전체는 현재 조회목록에만 적용합니다.</p>
+    <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
+      <label>조회일 <input aria-label="전산 데이터 조회일" type="date" value={refreshDate} disabled={busy} onChange={event => setRefreshDate(event.target.value)} /></label>
+      <button type="button" style={exportBtnSecondary} disabled={!connected || busy} onClick={() => void fetchDaily()}>전산 데이터 새로고침</button>
+      <label style={{fontSize:13}}><input type="checkbox" checked={retry} disabled={busy} onChange={event => setRetry(event.target.checked)} /> 수정한 등록 실패 건도 재시도</label>
+    </div>
+    <p role="status" style={{fontSize:13,whiteSpace:'pre-line',color:'#334155'}}>{message || '연결·결과 확인을 누른 뒤 연동할 출고건을 선택해 주세요.'}</p>
+    <p style={{fontSize:13,fontWeight:700}}>현재목록 등록 완료 {registered.length}건 · 도착지 수정 필요 {reviews.length}건 · 등록 안됨 {visible.filter(row => getState(row)?.state === 'not-registered').length}건 · 결과 확인 필요 {visible.filter(row => ['pending','unknown'].includes(getState(row)?.state || '')).length}건</p>
+    {visible.filter(row => getState(row)).map(row => { const state = getState(row)!; return <div key={row.id} style={{borderTop:'1px solid #dbe5f3',padding:'10px 0',fontSize:13,display:'flex',gap:10,flexWrap:'wrap'}}><strong>{row.receiver}</strong><span>{state.shipmentDate}</span><span>{state.waybillNo}</span><span>{state.message}</span>{state.destinationNeedsReview && <strong style={{color:'#b45309'}}>마감관리에서 도착지 수정 필요</strong>}</div>; })}
+    <details style={{marginTop:12,fontSize:13}}><summary>연결 도구·확인결과</summary>
+      <a href="/registration-test-setup/index.html" target="_blank" rel="noreferrer">연결 도구 0.5.0 업데이트</a>{' '}
+      <button type="button" style={exportBtnSecondary} disabled={reportBusy} onClick={() => void downloadReport()}>{reportBusy ? '확인결과 준비 중…' : '확인결과 파일 저장'}</button>
+      {preparedReport && <div><a href={preparedReport.url} download="대신_전산연동_확인결과.json">파일 직접 다운로드</a><details><summary>확인결과 내용 보기</summary><textarea aria-label="확인결과 내용" value={preparedReport.text} readOnly style={{width:'100%',height:160}} /></details></div>}
+    </details>
   </section>;
 }
 
@@ -3143,6 +3237,7 @@ export default function Home() {
   useEffect(() => {
     if (process.env.NODE_ENV !== 'development' || location.origin !== 'http://127.0.0.1:4320') return;
     const target = new URLSearchParams(location.search);
+    if (target.get('daesinSync') === '1') { setTab('출고목록'); setCarrierFilter('대신'); setSelectedIds([]); setFilterKeyword(''); return; }
     if (target.get('registrationTest') !== '1') return;
     const date = '2026-10-06';
     setTab('출고목록'); setCarrierFilter('대신'); setSelectedIds([]); setFilterKeyword('대신자동업로드테스트');
@@ -3209,6 +3304,15 @@ export default function Home() {
       });
     });
 
+    savedShipments.forEach(shipment => {
+      const number = shipment.carrier === '대신' ? shipment.daesinRegistration?.waybillNo : '';
+      if (!number || result.has(shipment.id) || !isDateKeyInRange(shipment.shipmentDate, listDateFrom, listDateTo)) return;
+      result.set(shipment.id, {
+        id: 'registered-waybill-' + shipment.id, waybillNo: number,
+        message: buildWaybillMessageText({carrier:'대신',receiver:shipment.receiver,delivery:shipment.delivery,pay:shipment.pay,branch:shipment.branch,waybillNo:number}),
+        status:'확인필요', reasons:['최신 발송데이터 확인 필요'],
+      });
+    });
     return result;
   }, [
     savedShipments,
@@ -4497,7 +4601,7 @@ export default function Home() {
 
       let missing: DaesinDailyDataset['rows'] = [];
       if (automatic) {
-        if (automatic.shipmentDate !== '2026-10-06') throw new Error('테스트 조회 날짜와 다른 발송데이터는 저장하지 않습니다.');
+        if (!validDaesinDate(automatic.shipmentDate)) throw new Error('조회 날짜를 확인해 주세요.');
         const headers = rawRows[headerIndex].map(normalizeHeaderKey);
         for (const group of [['발화주명','송하인명','송하인'],['수화주주소','수하인주소','주소'],['운송장번호','송장번호']]) {
           if (!group.some(header => headers.includes(header))) throw new Error('발화주·주소·송장번호가 포함된 원본 엑셀이 아닙니다. 기존 데이터는 유지합니다.');
@@ -4528,7 +4632,7 @@ export default function Home() {
   };
 
   const handleDailyWorkbook = async (dataset: DaesinDailyDataset) => {
-    if (dataset.shipmentDate !== '2026-10-06' || !Array.isArray(dataset.rows) || !dataset.rows.length || dataset.rows.length > 1000 || typeof dataset.workbook !== 'string' || dataset.workbook.length > 14000000) throw new Error('가져온 발송데이터의 날짜·크기를 확인해 주세요.');
+    if (!validDaesinDate(dataset.shipmentDate) || !Array.isArray(dataset.rows) || !dataset.rows.length || dataset.rows.length > 1000 || typeof dataset.workbook !== 'string' || dataset.workbook.length > 14000000) throw new Error('가져온 발송데이터의 날짜·크기를 확인해 주세요.');
     const bytes = Uint8Array.from(atob(dataset.workbook), character => character.charCodeAt(0));
     const result = await handleWaybillUpload(new File([bytes], dataset.fileName, {type:'application/vnd.ms-excel'}), dataset);
     if (!result) throw new Error('발송데이터 저장 결과를 확인하지 못했습니다.');
@@ -4926,7 +5030,7 @@ export default function Home() {
           </div>}
           <div style={isAllList ? { ...waybillUploadRow, gap: 6 } : waybillUploadRow}>
             <button type="button" style={uploadButtonStyle} disabled={uploadBusy} onClick={() => waybillUploadRef.current?.click()}>
-              대신 발송데이터 업로드
+              대신 엑셀 직접 가져오기
             </button>
             <button type="button" style={resetButtonStyle} aria-label="대신 업로드 초기화" disabled={uploadBusy || waybillUploadRows.length === 0} onClick={() => void resetWaybillUpload("대신")}>
               초기화
@@ -5627,7 +5731,7 @@ export default function Home() {
               </button>
             </div>
 
-            <DaesinLiveTestPanel rows={sortedShipments.filter(row => selectedIds.includes(row.id))} mapRow={row => toTemplateRow(row, resolvePostalCodeValue)} hasWaybill={id => shipmentWaybillInfoById.has(id)} onImport={handleDailyWorkbook} />
+            {carrierFilter !== '로젠' && <DaesinSyncPanel rows={sortedShipments} allRows={savedShipments} selectedIds={selectedIds} mapRow={row => toTemplateRow(row, resolvePostalCodeValue)} onImport={handleDailyWorkbook} onReload={loadShipmentsFromDb} defaultDate={listDateTo || getVerifySessionDate()} />}
 
             <div style={carrierFilter === "전체" ? { ...exportBar, flexDirection: "column", alignItems: "stretch", gap: 6, marginBottom: 8 } : exportBar} role="group" aria-label="출고목록 도구">
               {renderWaybillUploadControls(true)}
@@ -5641,14 +5745,14 @@ export default function Home() {
                   style={exportBtnSecondary}
                   onClick={exportSelected}
                 >
-                  선택 엑셀 다운로드
+                  {carrierFilter === '대신' ? '선택 엑셀 (수동 등록용)' : '선택 엑셀 다운로드'}
                 </button>
                 <button
                   type="button"
-                  style={{ ...exportBtnPrimary, background: carrierAccent(carrierFilter) }}
+                  style={carrierFilter === '대신' ? exportBtnSecondary : { ...exportBtnPrimary, background: carrierAccent(carrierFilter) }}
                   onClick={exportFilteredAll}
                 >
-                  현재목록 전체 엑셀 다운로드
+                  {carrierFilter === '대신' ? '현재목록 엑셀 (수동 등록용)' : '현재목록 전체 엑셀 다운로드'}
                 </button>
               </div>}
             </div>

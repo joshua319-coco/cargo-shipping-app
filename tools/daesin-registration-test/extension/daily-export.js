@@ -9,7 +9,7 @@ async function fetchDaesinDailyWorkbook(shipmentDate) {
   const fail = message => { throw new Error(message); };
   if (url.origin !== 'https://partner.ds3211.co.kr' || url.pathname !== '/searchSvl' || url.searchParams.get('svcSid') !== 'dailySearch') return {error:'대신 일자별조회 화면이 필요합니다.'};
   const form = document.querySelector('#searchForm');
-  if (!form || form.querySelector('#selectSearchType')?.value !== '1' || form.querySelector('#dailyStartDate')?.value !== shipmentDate) return {error:'일자별조회에서 ' + shipmentDate + '를 선택해 주세요.'};
+  if (!form || !form.querySelector('#dailyStartDate') || !/^\d{4}-\d{2}-\d{2}$/.test(shipmentDate)) return {error:'대신 일자별조회에 로그인한 상태로 다시 눌러 주세요.'};
   const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 40000);
   const request = async (path, options = {}) => {
     const response = await fetch(path, { credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: controller.signal, ...options });
@@ -28,6 +28,7 @@ async function fetchDaesinDailyWorkbook(shipmentDate) {
     const rows = listing.resultList?.rows;
     diagnosis.stage = 'numbers';
     diagnosis.rowCount = Array.isArray(rows) ? rows.length : null;
+    if (Array.isArray(rows) && rows.length === 0) return { diagnosis, shipmentDate, rows: [], workbook: '', fileName: '' };
     diagnosis.responseKeys = Object.keys(listing || {}).slice(0, 30);
     diagnosis.resultKeys = Object.keys(listing.resultList || {}).slice(0, 30);
     if (!Array.isArray(rows) || !rows.length) fail('해당 날짜의 대신 발송데이터가 없습니다. 기존 데이터는 유지합니다.');
@@ -79,14 +80,15 @@ function reconcileDaesinDailyJobs(jobs, rows, shipmentDate) {
   const digits = value => String(value || '').replace(/\D/g, '');
   for (const job of jobs) {
     if (job.shipmentDate !== shipmentDate || !hasDaesinRegistrationSuccess(job)) continue;
+    const known = job.numbers?.length === 1 ? rows.filter(row => row.waybill_no === job.numbers[0]) : [];
     const source = job.diagnosis?.source || {};
     const candidates = rows.filter(row => text(row.arrival_name) === text(job.receiver));
-    const row = candidates.length === 1 ? candidates[0] : null;
+    const row = known.length === 1 ? known[0] : candidates.length === 1 ? candidates[0] : null;
     const delivery = row?.transit_mode === '1' ? '정기' : row?.transit_mode === '2' ? '택배' : '';
     const pay = row?.payment_mode === '1' ? '선불' : row?.payment_mode === '2' ? '착불' : '';
-    const matches = row && /^\d{12,13}$/.test(row.waybill_no) && Number(row.quantity) === Number(source.quantity) &&
+    const matches = known.length === 1 || (row && /^\d{12,13}$/.test(row.waybill_no) && Number(row.quantity) === Number(source.quantity) &&
       Number(row.supply_price) + Number(row.tax_amount) === Number(source.fare) && delivery === (source.delivery === '화물' ? '정기' : source.delivery) &&
-      (!source.pay || pay === source.pay) && (!source.receiverPhone || digits(row.arrival_phone_number1) === digits(source.receiverPhone));
+      (!source.pay || pay === source.pay) && (!source.receiverPhone || digits(row.arrival_phone_number1) === digits(source.receiverPhone)));
     if (!matches || (job.numbers?.length && !job.numbers.includes(row.waybill_no))) {
       job.lookupMessage = candidates.length > 1 ? '같은 수화주가 여러 건입니다. 송장검증에서 확인해 주세요.' : '조회 정보가 등록 당시 정보와 일치하지 않습니다. 송장검증에서 확인해 주세요.';
       continue;

@@ -1,13 +1,14 @@
-<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>대신 발송데이터 자동 가져오기 · 0.4.2</title>
-<style>body{font:15px Arial,'Malgun Gothic',sans-serif;background:#f3f4f6;color:#172033;line-height:1.75;margin:0}main{max-width:800px;margin:30px auto;padding:28px;background:#fff;border-radius:16px}h1{font-size:25px}h2{font-size:18px;margin-top:24px}a{color:#1d4ed8}.button{display:inline-block;border-radius:9px;padding:11px 17px;background:#2563eb;color:white;text-decoration:none;font-weight:bold}code{background:#eef2f7;padding:3px 7px;border-radius:5px}.note{background:#eff6ff;padding:14px;border-radius:10px}li{margin:8px 0}.muted{font-size:13px;color:#64748b}</style>
-<main><h1>대신 발송데이터 자동 가져오기 · 0.4.2</h1>
-<p>대신의 <strong>엑셀저장 원본</strong>을 자동으로 가져와 기존 출고목록의 송장번호 연결과 송장검증에 반영합니다. 발화주 정보, 택배 수화주 주소, 화물 도착영업소도 함께 가져옵니다.</p>
-<p class="note"><strong>기존 확장 프로그램을 삭제하지 마세요.</strong> 파일을 덮어쓰고 같은 확장 프로그램을 새로고침하면 기존 접수 기록이 유지됩니다. 이미 등록한 테스트 건은 다시 등록하지 않습니다.</p>
-<a class="button" href="daesin-live-registration-test-0.4.2.zip" download>연결 도구 0.4.2 다운로드</a>
-<h2>1. 기존 연결 도구 업데이트</h2><ol><li>ZIP 압축을 풀고 <strong>실제접수테스트-0.4.2</strong> 폴더 안의 파일들을 기존 확장 프로그램 폴더 안에 덮어씁니다.</li><li><code>chrome://extensions</code>에서 ‘상화 대신 실제접수 테스트’의 <strong>새로고침 ↻</strong>을 누릅니다.</li><li>우리 테스트 화면도 새로고침하고 <strong>연결·결과 확인</strong>을 누릅니다. 버전 0.4.2이 표시됩니다.</li></ol>
-<p><a class="button" href="/?registrationTest=1&amp;shipmentDate=2026-10-06">테스트 화면 열기</a></p>
-<p class="note"><strong>확인결과 저장 오류 수정:</strong> 대신 화면을 다시 읽지 않고 이미 기록된 결과를 바로 저장합니다. <strong>정상 13자리 송장번호가 형식 오류로 막히던 문제도 수정했습니다.</strong> 업데이트 후 10월 6일을 조회하고 <strong>대신 발송데이터 가져오기</strong>를 눌러 주세요. 파일이 안 보이면 새로 나타나는 <strong>파일 직접 다운로드</strong> 또는 <strong>확인결과 복사</strong>를 사용할 수 있습니다.</p><h2>2. 한 번에 발송데이터 가져오기</h2><ol><li>같은 크롬에서 대신 <strong>일자별조회</strong>를 열고 <strong>2026-10-06</strong>을 선택합니다. 조회 탭이 여러 개면 사용할 탭을 마지막으로 열어두세요.</li><li>우리 테스트 화면에서 <strong>대신 발송데이터 가져오기</strong>를 한 번 누릅니다. 출고건을 선택할 필요 없이 해당 날짜의 전체 발송데이터를 가져옵니다.</li><li>완료 후 <strong>출고목록의 운송장번호</strong>와 <strong>송장검증 탭</strong>에서 일치 여부를 확인합니다.</li></ol>
-<p>엑셀을 PC에 따로 저장하거나 다시 업로드할 필요가 없습니다. 가져오기 과정에서 재접수·인쇄는 실행하지 않습니다. 기존 수동 엑셀 업로드도 그대로 사용할 수 있습니다.</p>
-<p class="note">도착지 미지정 건도 등록과 송장번호 확인은 가능합니다. 다만 대신이 엑셀에서 제외한 건은 별도로 알려드립니다. 마감관리에서 도착지를 수정하고 다시 가져오면 전체 정보를 검증할 수 있습니다.</p>
-<p class="note">10월 7일 이후에도 기존 10월 6일 건으로 계속 확인합니다. 새로 등록할 필요 없이 대신 조회 날짜를 2026-10-06으로 맞춰주세요. 가져온 데이터는 6일에 저장하며 오늘 데이터는 유지합니다. 빈 번호·형식 오류·중복 오류가 뜨면 <strong>확인결과 파일 저장</strong>으로 문제 행이 기록된 파일을 전달해 주세요.</p><h2>확인할 내용</h2><ul><li>화물=정기, 선불=현불로 대조하며 택배(착불)처럼 합쳐진 값도 분리합니다.</li><li>수량·운임·지불·운송상품·발화주·택배 주소·화물 도착영업소는 기존 송장검증에서 대조합니다.</li><li>엑셀 데이터가 비어 있거나 다른 송장번호가 섞인 경우 기존 검증 데이터를 유지하고 안내합니다.</li></ul>
-<p class="muted">로컬 테스트판입니다. 발송데이터 가져오기는 하루 최대 1,000건이며 현재 테스트 날짜는 2026-10-06입니다. 등록 테스트는 여전히 1건씩이고 초록색 등록(출력안함)만 사용합니다. 운영용 여러 건 등록과 PDA 인쇄 자동화는 별도 작업입니다.</p></main></html>
+<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>대신 전산 연동 · 0.5.0</title>
+<style>body{font:15px Arial,'Malgun Gothic',sans-serif;background:#f3f4f6;color:#172033;line-height:1.8;margin:0}main{max-width:800px;margin:30px auto;padding:28px;background:white;border-radius:16px}h1{font-size:26px}h2{font-size:18px;margin-top:26px}a{color:#1d4ed8}.button{display:inline-block;border-radius:9px;padding:11px 17px;background:#2563eb;color:white;text-decoration:none;font-weight:bold}code{background:#eef2f7;padding:3px 7px;border-radius:5px}.note{background:#eff6ff;padding:14px;border-radius:10px}li{margin:8px 0}.muted{font-size:13px;color:#64748b}</style>
+<main><h1>대신 전산 연동 · 0.5.0</h1>
+<p><strong>미등록 건 등록(출력안함) → 발송데이터 자동 반영</strong>까지 한 번에 진행합니다. 선택한 출고건 또는 현재 조회목록의 대신 전체를 대상으로 할 수 있습니다.</p>
+<p class="note">기존 확장 프로그램을 삭제하지 마세요. 기존 폴더에 새 파일을 덮어쓰고 새로고침하면 접수 기록이 유지됩니다.</p>
+<a class="button" href="daesin-live-registration-test-0.5.0.zip" download>연결 도구 0.5.0 다운로드</a>
+<h2>연결 도구 업데이트</h2><ol><li>ZIP 압축을 풀고 <strong>대신전산연동-0.5.0</strong> 폴더 안의 파일들을 기존 확장 프로그램 폴더 안에 덮어씁니다.</li><li><code>chrome://extensions</code>에서 기존 ‘상화 대신 실제접수 테스트’의 새로고침 ↻을 누릅니다. 이름이 ‘상화 대신 전산 연동’으로 바뀝니다.</li><li>출고사이트도 새로고침하고 <strong>연결·결과 확인</strong>을 누릅니다. 같은 크롬에서 대신 전산에 로그인해 두세요.</li></ol>
+<p><a class="button" href="/?daesinSync=1">대신 출고목록 열기</a></p>
+<h2>대신 전산 연동</h2><ol><li>출고일·검색 조건으로 목록을 확인합니다. 선택 연동은 목록 앞 체크박스로 대상 출고건을 고릅니다.</li><li>대상을 <strong>선택한 대신 출고건</strong> 또는 <strong>현재목록 대신 전체</strong>로 고르고 <strong>대신 전산 연동</strong>을 누릅니다.</li><li>기존 접수 여부를 먼저 조회한 뒤 미등록 건을 차례로 등록합니다. 초록색 <strong>등록(출력안함)</strong>만 사용합니다.</li><li>마지막으로 발송데이터를 가져와 송장번호와 송장검증을 갱신합니다. 공동관할·미지정은 등록 후 마감관리에서 수정할 건수로 안내합니다.</li></ol>
+<p>‘전체’는 현재 조회목록의 대신 건에만 적용합니다. 로젠 건은 포함하지 않습니다. 진행 중 <strong>나머지 등록 중지</strong>를 누르면 현재 건의 결과를 확인하고 남은 등록을 멈춥니다.</p>
+<h2>전산 데이터 새로고침</h2><p>대신 전산에서 수량·운임·도착지를 직접 수정했다면 조회일을 고르고 <strong>전산 데이터 새로고침</strong>만 누르세요. 등록 없이 최신 엑셀 원본을 읽어 다시 대조합니다. 이미 연결된 송장번호는 출고정보를 수정해도 유지됩니다.</p>
+<p class="note">택배·정기불가로 <strong>등록 안됨</strong>이 확인된 건은 출고정보를 수정하고 <strong>수정한 등록 실패 건도 재시도</strong>를 체크한 뒤 연동하세요. 접수 결과가 불확실한 건은 재등록하지 않고 먼저 조회합니다. 이미 등록된 건은 데이터 조회에 실패해도 재등록하지 않습니다.</p>
+<h2>확인 및 수동 처리</h2><ul><li>발화주 정보, 택배 주소, 화물 도착영업소를 포함한 원본 엑셀로 대조합니다.</li><li>대신이 도착지 미지정 건을 엑셀에서 제외하면 해당 건을 안내합니다. 수정 후 새로고침하세요.</li><li>기존 엑셀 직접 가져오기와 수동 등록용 엑셀 다운로드도 사용할 수 있습니다.</li><li>문제 발생 시 출고목록의 <strong>연결 도구·확인결과</strong>를 펼쳐 확인결과 파일을 저장하세요.</li></ul>
+<p class="muted">로컬 확인판입니다. 하루 발송데이터 조회는 최대 1,000건입니다. 운영 사이트 배포와 별개이며 로젠 동작은 변경하지 않습니다.</p></main></html>

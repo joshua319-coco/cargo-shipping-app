@@ -16,7 +16,7 @@ function loadTs(file, extra = '') {
   }}).outputText;
   const compiledModule = { exports: {} };
   const localRequire = (name) => name === '@/lib/supabase' ? { supabase: {} }
-    : name === '@/lib/carriers' ? loadTs('lib/carriers.ts') : name === '@/lib/logen-paste' ? loadTs('lib/logen-paste.ts') : require(name);
+    : name === '@/lib/carriers' ? loadTs('lib/carriers.ts') : name === '@/lib/logen-paste' ? loadTs('lib/logen-paste.ts') : name === '@/lib/daesin-sync' ? loadTs('lib/daesin-sync.ts') : require(name);
   vm.runInThisContext('(function(require,module,exports){' + output + '\n})', { filename: file })(localRequire, compiledModule, compiledModule.exports);
   return compiledModule.exports;
 }
@@ -307,4 +307,17 @@ test('automatic daily import preserves existing data on missing assigned/foreign
 test('full 13-digit number survives Excel parsing and automatic import validation',()=>{
  const [parsed]=helpers.parseWaybillUploadRows([{수화주명:'테스트',운송장번호:'2140649004964'}],'대신');
  assert.equal(parsed.waybillNo,'2140649004964');assert.deepEqual(helpers.validateDaesinDailyImport([parsed],{rows:[{waybill_no:'2140649004964',arrival_agencycode:'2401'}]}),[]);
+});
+
+
+test('Daesin bound invoice survives quantity, fare and recipient edits while discrepancies stay visible',()=>{
+ const source=shipment({carrier:'대신',receiver:'수정한 업체명',qty:3,fare:19800,daesin_registration:{state:'registered',waybillNo:'9999999999991'}});
+ const other=shipment({id:'2',carrier:'대신',receiver:'기존업체',qty:1,fare:6600});
+ const uploads=helpers.parseWaybillUploadRows([{운송장번호:'9999999999991',수화주명:'기존업체',발화주명:'상화시스템',수화주전화:'01012345678',수화주주소:source.address,수량:1,총운임:6600,운송구분:'택배(착불)'}],'대신');
+ const matched=helpers.buildWaybillVerificationRows([other,source],uploads);
+ const bound=matched.find(row=>row.shipmentId===source.id);
+ assert.equal(bound.waybillNo,'9999999999991');assert.equal(bound.status,'확인필요');
+ assert.ok(bound.reasons.includes('수량 확인'));assert.ok(bound.reasons.includes('총운임 확인'));
+ assert.equal(matched.find(row=>row.shipmentId==='2').status,'출고목록만');
+ const payload=helpers.toShipmentDbPayload(source);assert.equal(Object.hasOwn(payload,'daesin_registration'),false,'normal edits do not erase carrier state');
 });

@@ -26,6 +26,11 @@ async function stageCarrierWorkbook(job) {
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   if (!ready) throw new Error('대신의 우편번호·엑셀 양식 설정 로딩을 확인하지 못해 파일을 전송하지 않았습니다. 대신 화면 설정을 확인해 주세요.');
+  const dates = [...document.querySelectorAll('input[type=date]')].filter(input => input.getClientRects().length && !input.disabled);
+  if (dates.length !== 1 || !/^\d{4}-\d{2}-\d{2}$/.test(job.shipmentDate || '')) throw new Error('접수일자 입력란을 확인하지 못해 등록을 멈췄습니다.');
+  dates[0].value = job.shipmentDate;
+  dates[0].dispatchEvent(new Event('input', {bubbles:true})); dates[0].dispatchEvent(new Event('change', {bubbles:true}));
+  if (dates[0].value !== job.shipmentDate) throw new Error('대신 접수일자가 출고일과 다릅니다.');
   const input = document.querySelector('form#waybillFrm input#input-file[type=file]');
   if (!input || input.name !== 'inputRealFile') throw new Error('확인했던 대신 파일 입력란을 찾지 못했습니다. 전송하지 않았습니다.');
   if (input.files?.length) throw new Error('이미 파일이 있는 등록 화면에는 덮어쓰지 않습니다.');
@@ -71,7 +76,7 @@ async function stageCarrierWorkbook(job) {
   };
   const bytes = Uint8Array.from(atob(job.workbook), character => character.charCodeAt(0));
   const transfer = new DataTransfer();
-  transfer.items.add(new File([bytes], '상화_실제접수테스트_1건.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+  transfer.items.add(new File([bytes], '상화_대신등록_1건.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
   input.files = transfer.files;
   input.dispatchEvent(new Event('change', { bubbles: true }));
   // The background worker may click only the explicitly authorized no-print button after this upload response.
@@ -102,6 +107,8 @@ function inspectCarrierDestination() {
 async function clickCarrierRegisterNoPrint(expected) {
   const url = new URL(location.href);
   if (url.origin !== 'https://partner.ds3211.co.kr' || url.pathname !== '/issueSvl' || url.searchParams.get('svcSid') !== 'excelIssuWay') throw new Error('대신 등록 화면이 아닙니다.');
+  const dates = [...document.querySelectorAll('input[type=date]')].filter(input => input.getClientRects().length && !input.disabled);
+  if (dates.length !== 1 || dates[0].value !== expected.shipmentDate) throw new Error('등록 직전 접수일자가 바뀌어 등록하지 않았습니다.');
   const form = document.querySelector('#waybillFrm');
   const rows = document.querySelectorAll('#tbody_excelList tr');
   if (!form || rows.length !== 1) throw new Error('대신 화면에 선택한 1건만 있는지 확인하지 못해 자동 등록을 멈췄습니다.');
