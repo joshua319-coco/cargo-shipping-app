@@ -1,5 +1,5 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
-async function fetchRows(rows){
+async function fetchRows(rows, listing = {result:'SUCCESS', resultList:{rows}}){
  const calls=[];
  const context=vm.createContext({URL,URLSearchParams,AbortController,setTimeout,clearTimeout,Uint8Array,btoa,
   location:{href:'https://partner.ds3211.co.kr/searchSvl?svcGid=customer.search&svcSid=dailySearch'},
@@ -7,7 +7,7 @@ async function fetchRows(rows){
   FormData:class { *[Symbol.iterator](){yield ['dailyStartDate','2026-10-06'];} },
   fetch:async(url,options)=>{
    calls.push({url,options});
-   const data=calls.length===1?{result:'SUCCESS',resultList:{rows}}:{result:'SUCCESS',resultList:{filePath:'/test.xls'}};
+   const data=calls.length===1?listing:{result:'SUCCESS',resultList:{filePath:'/test.xls'}};
    return {ok:true,json:async()=>data,headers:new Map(),arrayBuffer:async()=>Uint8Array.from([1,2,3]).buffer};
   }
  });
@@ -42,4 +42,26 @@ test('observed 13-digit Daesin numbers pass query and export unchanged',async()=
  assert.equal(result.error,undefined);assert.deepEqual(result.rows.map(r=>r.waybill_no),numbers);
  assert.equal(new URLSearchParams(calls[1].options.body).get('waybillNos'),numbers.join(','));
  for(const invalid of ['21406490049','21406490049640','2.140649004964e12','214064900496x'])assert.match((await fetchRows([{waybill_no:invalid}])).result.error,/번호 형식 오류/);
+});
+
+test('first daily registration accepts the carrier empty-string response without attempting an export',async()=>{
+ for (const resultList of ['', {rows:[]}]) {
+  const {result,calls}=await fetchRows(undefined,{result:'SUCCESS',message:'',resultList});
+  assert.equal(result.error,undefined);assert.deepEqual(result.rows,[]);assert.equal(result.workbook,'');
+  assert.equal(result.diagnosis.rowCount,0);assert.equal(calls.length,1);
+ }
+});
+
+test('failed and unrecognized queries never masquerade as no previous registrations',async()=>{
+ for (const listing of [
+  {result:'ERROR',message:'로그인이 필요합니다.',resultList:''},
+  {result:'ERROR',message:'대신 조회 실패',resultList:{rows:[]}},
+  {result:'UNKNOWN',resultList:''}, {resultList:''},
+  {result:'SUCCESS'}, {result:'SUCCESS',resultList:null}, {result:'SUCCESS',resultList:{}},
+  {result:'SUCCESS',resultList:[]}, {result:'SUCCESS',resultList:false}, {result:'SUCCESS',resultList:0},
+  {result:'SUCCESS',resultList:{rows:null}}, {result:'SUCCESS',resultList:{rows:''}},
+ ]) {
+  const {result,calls}=await fetchRows(undefined,listing);
+  assert.ok(result.error,JSON.stringify(listing));assert.equal(result.rows,undefined);assert.equal(result.workbook,undefined);assert.equal(calls.length,1);
+ }
 });

@@ -27,14 +27,25 @@ async function fetchDaesinDailyWorkbook(shipmentDate) {
     const headers = { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest' };
     diagnosis.stage = 'query';
     const listing = await (await request('/searchSvl', { method: 'POST', headers, body: query.toString() })).json();
-    if (listing.result === 'ERROR') fail(String(listing.message || '대신 조회가 거절되었습니다.'));
-    const rows = listing.resultList?.rows;
+    diagnosis.responseKeys = Object.keys(listing || {}).slice(0, 30);
+    diagnosis.responseResult = typeof listing?.result === 'string' ? listing.result.slice(0, 40) : null;
+    diagnosis.responseMessage = typeof listing?.message === 'string' ? listing.message.slice(0, 300) : '';
+    const resultList = listing?.resultList;
+    diagnosis.resultListType = resultList === null ? 'null' : Array.isArray(resultList) ? 'array' : typeof resultList;
+    diagnosis.resultKeys = resultList && typeof resultList === 'object' ? Object.keys(resultList).slice(0, 30) : [];
+    if (listing?.result === 'ERROR') fail(String(listing.message || '대신 조회가 거절되었습니다.'));
+    if (listing?.result !== 'SUCCESS') fail('대신 조회가 정상 완료됐는지 확인하지 못해 연동을 멈췄습니다. 기존 데이터는 유지합니다.');
+    // Daesin search_ctrl.js renders totalCount=0 when resultList is an empty string.
+    // Recognize that exact successful response, never missing/malformed lists or failed queries.
+    const rows = resultList === '' ? [] : resultList?.rows;
     diagnosis.stage = 'numbers';
     diagnosis.rowCount = Array.isArray(rows) ? rows.length : null;
-    if (Array.isArray(rows) && rows.length === 0) return { diagnosis, shipmentDate, rows: [], workbook: '', fileName: '' };
-    diagnosis.responseKeys = Object.keys(listing || {}).slice(0, 30);
-    diagnosis.resultKeys = Object.keys(listing.resultList || {}).slice(0, 30);
-    if (!Array.isArray(rows) || !rows.length) fail('해당 날짜의 대신 발송데이터가 없습니다. 기존 데이터는 유지합니다.');
+    if (Array.isArray(rows) && rows.length === 0) {
+      diagnosis.stage = 'complete';
+      diagnosis.emptyRepresentation = resultList === '' ? 'empty-string' : 'rows';
+      return { diagnosis, shipmentDate, rows: [], workbook: '', fileName: '' };
+    }
+    if (!Array.isArray(rows)) fail('대신 조회 응답의 목록 형식을 확인하지 못해 연동을 멈췄습니다. 기존 데이터는 유지합니다.');
     if (rows.length > 1000) fail('대신 엑셀저장은 한 번에 최대 1,000건입니다.');
     const numbers = rows.map(row => String(row?.waybill_no ?? '').replace(/[\s-]/g, ''));
     const invalid = [], grouped = new Map();

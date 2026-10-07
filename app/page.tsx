@@ -2016,7 +2016,7 @@ function DaesinSyncPanel({ rows, allRows, mapRow, onImport, onReload, defaultDat
   const status = async () => {
     const response = await callLiveTestBridge('status');
     if (!response.ok) throw new Error(response.error);
-    if (!['0.6.0', '0.6.1'].includes(response.version || '')) throw new Error('연결 도구 0.6.1로 업데이트하고 이 페이지를 새로고침해 주세요.');
+    if (!['0.6.0', '0.6.1', '0.6.2'].includes(response.version || '')) throw new Error('연결 도구 0.6.2로 업데이트하고 이 페이지를 새로고침해 주세요.');
     await saveJobs(response.jobs || []); return response.jobs || [];
   };
   const refresh = async () => {
