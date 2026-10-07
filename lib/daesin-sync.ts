@@ -53,3 +53,16 @@ export function findDaesinCandidate(source: DaesinSource, rows: DaesinDailyRow[]
     (row.payment_mode === '1' ? '선불' : row.payment_mode === '2' ? '착불' : '') === source.pay;
   return { row: exact ? row : undefined, possible: true };
 }
+
+export type DaesinVerification = { waybillNo: string; status: string; reasons: string[] };
+export function daesinRegistrationView(state?: DaesinRegistration, verification?: DaesinVerification) {
+  const reasons: string[] = [];
+  const registered = state?.state === 'registered' || Boolean(state?.waybillNo) || Boolean(verification?.waybillNo);
+  if (state?.destinationNeedsReview) reasons.push((state.destinationReason || '도착지 미지정') + ' · 대신 마감관리에서 도착영업소 수정 필요');
+  if (verification?.status === '확인필요') reasons.push(...verification.reasons);
+  if (state?.state === 'pending' || state?.state === 'unknown') reasons.push(state.message || '접수 결과를 확인해야 합니다. 전산 데이터 새로고침으로 확인해 주세요.');
+  if (registered && !verification) reasons.push('등록은 완료됐습니다. 전산 데이터 새로고침으로 송장번호와 상세정보를 확인해 주세요.');
+  const label = reasons.length ? '정보확인' : registered ? '등록완료' : '미등록';
+  if (label === '미등록' && state?.state === 'not-registered') reasons.push(state.message || '등록되지 않았습니다. 출고정보를 수정한 뒤 다시 등록해 주세요.');
+  return { label, registered, reasons: [...new Set(reasons)], waybillNo: state?.waybillNo || verification?.waybillNo || '' };
+}

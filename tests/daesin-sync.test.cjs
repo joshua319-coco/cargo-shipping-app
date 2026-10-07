@@ -2,7 +2,7 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 const moduleValue={exports:{}};
 const source=fs.readFileSync(path.join(__dirname,'../lib/daesin-sync.ts'),'utf8');
 new Function('exports','module',ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText)(moduleValue.exports,moduleValue);
-const {mayRegister,findDaesinCandidate,registrationFromJob,validDaesinDate}=moduleValue.exports;
+const {daesinRegistrationView,mayRegister,findDaesinCandidate,registrationFromJob,validDaesinDate}=moduleValue.exports;
 const shipment=(patch={})=>({id:'1',carrier:'대신',shipmentDate:'2026-10-07',receiver:'예시업체',receiverPhone:'01011112222',qty:'1',fare:'6600',delivery:'택배',pay:'착불',...patch});
 const row=(patch={})=>({waybill_no:'9999999999991',arrival_name:'예시업체',arrival_phone_number1:'010-1111-2222',arrival_agencycode:'2401',quantity:'1',supply_price:'6000',tax_amount:'600',transit_mode:'2',payment_mode:'2',...patch});
 test('only new shipments or explicitly corrected definite failures can register',()=>{
@@ -37,4 +37,24 @@ test('success without number stays registered, uncertain and prohibited remain d
 test('registration and refresh accept real calendar dates beyond the old test day',()=>{
  for(const date of ['2026-10-07','2026-10-08','2028-02-29'])assert.equal(validDaesinDate(date),true);
  for(const date of ['2026-02-29','2026-13-01','2026-2-1',''])assert.equal(validDaesinDate(date),false);
+});
+
+test('registration badges distinguish unregistered, verified, destination review and uncertainty',()=>{
+ const verified={waybillNo:row().waybill_no,status:'일치',reasons:[]};
+ const state={state:'registered',waybillNo:row().waybill_no};
+ assert.equal(daesinRegistrationView().label,'미등록');
+ assert.equal(daesinRegistrationView(undefined,verified).label,'등록완료','manual Excel confirmation counts');
+ assert.equal(daesinRegistrationView(state,verified).label,'등록완료');
+ assert.equal(daesinRegistrationView(state).label,'정보확인','registration without the latest data must not imply verification');
+ const destination=daesinRegistrationView({...state,destinationNeedsReview:true,destinationReason:'공동관할구역'},verified);
+ assert.equal(destination.label,'정보확인');assert.equal(destination.registered,true);assert.match(destination.reasons[0],/공동관할구역.*마감관리/);
+ for(const pending of ['unknown','pending']) {const v=daesinRegistrationView({state:pending,message:'접수 응답 확인 필요'});assert.equal(v.label,'정보확인');assert.equal(v.registered,false);}
+ const rejected=daesinRegistrationView({state:'not-registered',message:'택배,정기불가'});assert.equal(rejected.label,'미등록');assert.deepEqual(rejected.reasons,['택배,정기불가']);
+});
+test('registered discrepancy details survive source edits and clear after matching refresh',()=>{
+ const state={state:'registered',waybillNo:row().waybill_no};
+ const info={waybillNo:row().waybill_no,status:'확인필요',reasons:['수량 확인','총운임 확인']};
+ const v=daesinRegistrationView(state,info);assert.equal(v.label,'정보확인');assert.equal(v.registered,true);assert.deepEqual(v.reasons,info.reasons);assert.equal(v.waybillNo,state.waybillNo);
+ assert.equal(mayRegister(state,'changed',true),false);
+ assert.equal(daesinRegistrationView(state,{...info,status:'일치',reasons:[]}).label,'등록완료');
 });
