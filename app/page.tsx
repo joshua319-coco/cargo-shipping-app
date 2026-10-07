@@ -2193,7 +2193,7 @@ function DaesinSyncPanel({ rows, allRows, mapRow, onImport, onReload, defaultDat
     <div style={{display:'flex',justifyContent:'flex-end',gap:16,fontSize:12,color:'#64748b',marginTop:8}}>
       <span id="daesin-sync-description" style={{textAlign:'right'}}>현재 조회목록의 대신 미등록 건을 등록하고 발송데이터를 가져옵니다.</span>
     </div>
-    <details style={{marginTop:8,fontSize:12,color:'#64748b'}}><summary style={{cursor:'pointer'}}>수동으로 등록(엑셀)</summary>
+    <details style={{marginTop:-16,fontSize:12,color:'#64748b'}}><summary style={{cursor:'pointer',width:'fit-content',padding:'4px 8px',lineHeight:'18px',background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:6}}>수동으로 등록(엑셀)</summary>
       <div style={{padding:'10px 0',display:'flex',alignItems:'center',gap:10,flexWrap:'nowrap',overflowX:'auto'}}>{manualTools}</div>
     </details>
     {message && <p role="status" style={{fontSize:13,color:'#334155',margin:'8px 0'}}>{headline.length > 180 ? headline.slice(0,180) + '…' : headline}</p>}
