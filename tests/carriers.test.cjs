@@ -16,12 +16,12 @@ function loadTs(file, extra = '') {
   }}).outputText;
   const compiledModule = { exports: {} };
   const localRequire = (name) => name === '@/lib/supabase' ? { supabase: {} }
-    : name === '@/lib/carriers' ? loadTs('lib/carriers.ts') : name === '@/lib/logen-paste' ? loadTs('lib/logen-paste.ts') : require(name);
+    : name === '@/lib/carriers' ? loadTs('lib/carriers.ts') : name === '@/lib/logen-paste' ? loadTs('lib/logen-paste.ts') : name === './daesin-sync' || name === '@/lib/daesin-sync' ? loadTs('lib/daesin-sync.ts') : name === '@/lib/registration-status' ? loadTs('lib/registration-status.ts') : require(name);
   vm.runInThisContext('(function(require,module,exports){' + output + '\n})', { filename: file })(localRequire, compiledModule, compiledModule.exports);
   return compiledModule.exports;
 }
 const carrier = loadTs('lib/carriers.ts');
-const { __test: helpers } = loadTs('app/page.tsx', '\nexports.__test = { normalizeShipment, suggestFareByQty, jejuShipmentNotice, toTemplateRow, toShipmentDbPayload, parseWaybillUploadRows, buildWaybillVerificationRows, normalizeSharedVerifyState, buildWaybillMessageText, TEMPLATE_HEADERS, toLogenTemplateRow, LOGEN_TEMPLATE_HEADERS, isValidShipmentDate };');
+const { __test: helpers } = loadTs('app/page.tsx', '\nexports.__test = { normalizeShipment, suggestFareByQty, jejuShipmentNotice, shipmentRegistrationView, toTemplateRow, toShipmentDbPayload, parseWaybillUploadRows, buildWaybillVerificationRows, normalizeSharedVerifyState, buildWaybillMessageText, TEMPLATE_HEADERS, toLogenTemplateRow, LOGEN_TEMPLATE_HEADERS, isValidShipmentDate, validateDaesinDailyImport };');
 const shipment = (patch = {}) => helpers.normalizeShipment({
   id: '1', carrier: '로젠', receiver: '테스트수하인', receiver_phone: '01012345678',
   address: '경기도 수원시 테스트로 10 101호', postal_code: '12345', sender: '상화시스템',
@@ -235,6 +235,83 @@ test('shipment dates reject empty and invalid dates while allowing leap dates', 
   }
 });
 
+test('Daesin half-box exports as one physical box without changing its fare or internal quantity', () => {
+  const input=shipment({carrier:'대신',qty:0.5,fare:6600,pay:'착불'});
+  const mapped=helpers.toTemplateRow(input,()=> '18624');
+  assert.equal(mapped.수량,1); assert.equal(mapped.총운임,6600); assert.equal(Number(input.qty),0.5);
+  const workbook=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook,XLSX.utils.json_to_sheet([mapped]),'Sheet1');
+  const parsed=XLSX.read(XLSX.write(workbook,{type:'buffer',bookType:'xlsx'}),{type:'buffer'});
+  assert.equal(XLSX.utils.sheet_to_json(parsed.Sheets.Sheet1)[0].수량,1);
+});
+
+test('Logen verification accepts the observed Gwangju aliases without suppressing other errors',()=>{
+  const s=shipment({qty:1,fare:3300,address:'전남광주통합특별시 순천시 남산로 43 (남정동)'});
+  const u=parse({박스수량:1,택배운임:3300,수하인주소:'광주 순천시 남산로 43 (남정동 559-5)',상세주소:'(남정동)'});
+  const matched=helpers.buildWaybillVerificationRows([s],[u])[0];
+  assert.equal(matched.status,'일치');assert.deepEqual(matched.reasons,[]);
+  for(const [patch,reason] of [[{address:'광주 순천시 남산로 44'},'주소 확인'],[{fare:3500},'택배운임 확인']]){
+    const mismatch=helpers.buildWaybillVerificationRows([s],[{...u,...patch}])[0];
+    assert.equal(mismatch.status,'확인필요');assert.ok(mismatch.reasons.includes(reason));
+  }
+});
+
+test('Daesin combined transport/payment fields retain full verification data', () => {
+  for (const [label, delivery, pay] of [
+    ['택배(착불)', '택배', '착불'], ['택배(현불)', '택배', '선불'],
+    ['정기(착불)', '정기', '착불'], ['정기(현불)', '정기', '선불'],
+    ['화물(선불)', '정기', '선불'], [' 정기 （ 현불 ） ', '정기', '선불'],
+  ]) {
+    const raw = {수화주명:'테스트수하인',수화주전화:'010-1234-5678',발화주명:'별도발화주',발화주전화:'031-000-0000',
+      주소:'경기도 수원시 테스트로 10 101호',도착영업소:'테스트영업소',운송장번호:'214064900999',
+      수량:1,총운임:5500,운송구분:label};
+    const [parsed] = helpers.parseWaybillUploadRows([raw], '대신');
+    assert.equal(parsed.delivery, delivery, label); assert.equal(parsed.pay, pay, label);
+    assert.equal(parsed.sender, '별도발화주'); assert.equal(parsed.address, raw.주소);
+    assert.equal(parsed.senderPhone, raw.발화주전화); assert.equal(parsed.waybillNo, raw.운송장번호);
+    assert.equal(parsed.raw.운송구분, label);
+    const s=shipment({carrier:'대신',qty:1,fare:5500,delivery,pay,sender:'별도발화주',branch:'테스트영업소'});
+    const [matched]=helpers.buildWaybillVerificationRows([s],[parsed]);
+    assert.equal(matched.status,'일치',label);
+    const [mismatch]=helpers.buildWaybillVerificationRows([s],[{...parsed,sender:'다른발화주',address:'경기도 수원시 테스트로 11',branch:'다른영업소',fare:6600}]);
+    assert(mismatch.reasons.includes('발화주명 확인'));
+    assert(mismatch.reasons.includes(delivery==='택배'?'주소 확인':'도착영업소 확인'));
+    assert(mismatch.reasons.includes('총운임 확인'));
+  }
+});
+
+test('Daesin separate columns take precedence over combined display labels', () => {
+  const [parsed]=helpers.parseWaybillUploadRows([{수화주명:'테스트',운송상품:'화물',지불방법:'현불',운송구분:'택배(착불)'}],'대신');
+  assert.equal(parsed.delivery,'정기'); assert.equal(parsed.pay,'선불');
+});
+
+test('automatic daily import preserves existing data on missing assigned/foreign/duplicate rows',()=>{
+  const rows=[{waybill_no:'999999999991',arrival_name:'A',arrival_agencycode:'2401'},{waybill_no:'999999999992',arrival_name:'B',arrival_agencycode:'0000'}];
+  const parsed=[{waybillNo:rows[0].waybill_no}];
+  assert.deepEqual(helpers.validateDaesinDailyImport(parsed,{rows}),[rows[1]]);
+  assert.throws(()=>helpers.validateDaesinDailyImport([],{rows}));
+  assert.throws(()=>helpers.validateDaesinDailyImport([...parsed,...parsed],{rows}));
+  assert.throws(()=>helpers.validateDaesinDailyImport([{waybillNo:'999999999999'}],{rows}));
+  assert.throws(()=>helpers.validateDaesinDailyImport(parsed,{rows:rows.map(r=>({...r,arrival_agencycode:'2401'}))}));
+});
+
+test('full 13-digit number survives Excel parsing and automatic import validation',()=>{
+ const [parsed]=helpers.parseWaybillUploadRows([{수화주명:'테스트',운송장번호:'2140649004964'}],'대신');
+ assert.equal(parsed.waybillNo,'2140649004964');assert.deepEqual(helpers.validateDaesinDailyImport([parsed],{rows:[{waybill_no:'2140649004964',arrival_agencycode:'2401'}]}),[]);
+});
+
+
+test('Daesin bound invoice survives quantity, fare and recipient edits while discrepancies stay visible',()=>{
+ const source=shipment({carrier:'대신',receiver:'수정한 업체명',qty:3,fare:19800,daesin_registration:{state:'registered',waybillNo:'9999999999991'}});
+ const other=shipment({id:'2',carrier:'대신',receiver:'기존업체',qty:1,fare:6600});
+ const uploads=helpers.parseWaybillUploadRows([{운송장번호:'9999999999991',수화주명:'기존업체',발화주명:'상화시스템',수화주전화:'01012345678',수화주주소:source.address,수량:1,총운임:6600,운송구분:'택배(착불)'}],'대신');
+ const matched=helpers.buildWaybillVerificationRows([other,source],uploads);
+ const bound=matched.find(row=>row.shipmentId===source.id);
+ assert.equal(bound.waybillNo,'9999999999991');assert.equal(bound.status,'확인필요');
+ assert.ok(bound.reasons.includes('수량 확인'));assert.ok(bound.reasons.includes('총운임 확인'));
+ assert.equal(matched.find(row=>row.shipmentId==='2').status,'출고목록만');
+ const payload=helpers.toShipmentDbPayload(source);assert.equal(Object.hasOwn(payload,'daesin_registration'),false,'normal edits do not erase carrier state');
+});
+
 
 test('Jeju list notices use carrier-specific wording and destination source',()=>{
  assert.equal(helpers.jejuShipmentNotice(shipment({carrier:'로젠',address:'제주특별자치도 서귀포시 예시로 10'})),'제주 | +3천원');
@@ -242,4 +319,34 @@ test('Jeju list notices use carrier-specific wording and destination source',()=
  assert.equal(helpers.jejuShipmentNotice(shipment({carrier:'대신',delivery:'정기',address:'서울특별시',branch:'서귀포영업소'})),'제주 | 운임X2');
  assert.equal(helpers.jejuShipmentNotice(shipment({carrier:'로젠',address:'서울특별시',branch:'제주'})),'');
  assert.equal(helpers.jejuShipmentNotice(shipment({carrier:'대신',address:'서울특별시'})),'');
+});
+
+test('Logen registration status follows Excel export even before a carrier waybill exists',()=>{
+ const source=shipment({waybill:false});
+ assert.equal(helpers.shipmentRegistrationView(source).label,'미등록');
+ source.checklist.waybill=true;
+ assert.equal(helpers.shipmentRegistrationView(source).label,'등록완료');
+ const upload=helpers.parseWaybillUploadRows([logenRaw({운송장번호:''})],'로젠')[0];
+ const verified=helpers.buildWaybillVerificationRows([source],[upload])[0];
+ assert.deepEqual(Array.from(verified.reasons),['운송장번호 없음']);
+ assert.equal(verified.uploadId,upload.id);
+ assert.equal(helpers.shipmentRegistrationView(source,verified).label,'등록완료');
+});
+test('Logen discrepancies override downloaded state and retain detail without an invoice',()=>{
+ const source=shipment({waybill:true});
+ const upload=helpers.parseWaybillUploadRows([logenRaw({운송장번호:'',택배운임:'9900',박스수량:'3'})],'로젠')[0];
+ const verified=helpers.buildWaybillVerificationRows([source],[upload])[0];
+ const status=helpers.shipmentRegistrationView(source,verified);
+ assert.equal(status.label,'정보확인');assert.equal(status.registered,true);
+ assert.deepEqual(Array.from(status.reasons).sort(),['박스수량 확인','택배운임 확인']);
+ assert.equal(status.waybillNo,'');
+ const fixed=helpers.buildWaybillVerificationRows([source],helpers.parseWaybillUploadRows([logenRaw({운송장번호:''})],'로젠'))[0];
+ assert.equal(helpers.shipmentRegistrationView(source,fixed).label,'등록완료');
+});
+test('Daesin registration is not inferred from a manual Excel download or checklist marker',()=>{
+ const source=shipment({carrier:'대신',waybill:true});
+ assert.equal(helpers.shipmentRegistrationView(source).label,'미등록');
+ source.daesinRegistration={state:'registered',waybillNo:'2140649004960',destinationNeedsReview:true,destinationReason:'공동관할구역'};
+ const status=helpers.shipmentRegistrationView(source,{waybillNo:'2140649004960',status:'일치',reasons:[]});
+ assert.equal(status.label,'정보확인');assert.equal(status.registered,true);assert.match(status.reasons[0],/공동관할구역/);
 });

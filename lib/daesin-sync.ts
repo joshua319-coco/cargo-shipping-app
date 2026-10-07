@@ -1,0 +1,68 @@
+export type DaesinRegistration = {
+  state: 'pending' | 'unknown' | 'registered' | 'not-registered';
+  attemptId: string; fingerprint?: string; shipmentDate: string;
+  waybillNo: string; message: string; destinationNeedsReview?: boolean;
+  destinationReason?: string; updatedAt?: string;
+};
+export type DaesinSource = {
+  id: string; carrier: string; shipmentDate: string; receiver: string; receiverPhone: string;
+  qty: string; fare: string; delivery: string; pay: string; daesinRegistration?: DaesinRegistration;
+};
+export type DaesinDailyRow = {
+  waybill_no: string; arrival_name: string; arrival_agencycode: string;
+  arrival_phone_number1?: string; quantity?: string; supply_price?: string; tax_amount?: string;
+  transit_mode?: string; payment_mode?: string;
+};
+export type DaesinJob = {
+  id: string; attemptId?: string; fingerprint?: string; shipmentId: string; shipmentDate: string;
+  receiver: string; state: string; numbers: string[]; registered?: boolean;
+  message: string; destinationNeedsReview?: boolean; destinationReason?: string; lookupMessage?: string;
+};
+const text = (value: unknown) => String(value ?? '').normalize('NFKC').replace(/\s/g, '');
+const digits = (value: unknown) => String(value ?? '').replace(/\D/g, '');
+export const validDaesinDate = (date: string) => /^\d{4}-\d{2}-\d{2}$/.test(date) && !Number.isNaN(Date.parse(date)) && new Date(date).toISOString().slice(0, 10) === date;
+export function registrationFromJob(job: DaesinJob): DaesinRegistration {
+  const registered = job.registered || job.numbers.length === 1;
+  return {
+    attemptId: job.attemptId || job.id, fingerprint: job.fingerprint, shipmentDate: job.shipmentDate,
+    state: registered ? 'registered' : job.state === 'not-registered' ? 'not-registered' :
+      ['unknown','needs-review'].includes(job.state) ? 'unknown' : 'pending',
+    waybillNo: job.numbers.length === 1 ? job.numbers[0] : '', message: job.message,
+    destinationNeedsReview: job.destinationNeedsReview, destinationReason: job.destinationReason,
+  };
+}
+export function mayRegister(state: DaesinRegistration | undefined, fingerprint: string, retry: boolean) {
+  return !state || (state.state === 'not-registered' && retry && state.fingerprint !== fingerprint);
+}
+// For initial linkage only. An established waybill is the identity after any edits.
+export function findDaesinCandidate(source: DaesinSource, rows: DaesinDailyRow[], peers: DaesinSource[]) {
+  const known = source.daesinRegistration?.waybillNo;
+  if (known) return { row: rows.find(row => row.waybill_no === known), possible: true };
+  const identity = (row: DaesinDailyRow, peer: DaesinSource) =>
+    text(row.arrival_name) === text(peer.receiver) && Boolean(digits(peer.receiverPhone)) &&
+    digits(row.arrival_phone_number1) === digits(peer.receiverPhone);
+  const candidates = rows.filter(row => identity(row, source));
+  if (candidates.length !== 1) return { row: undefined, possible: candidates.length > 0 };
+  const row = candidates[0];
+  const owners = peers.filter(peer => peer.carrier === '대신' && peer.shipmentDate === source.shipmentDate && identity(row, peer));
+  const reserved = peers.some(peer => peer.id !== source.id && peer.daesinRegistration?.waybillNo === row.waybill_no);
+  const exact = owners.length === 1 && !reserved && /^\d{12,13}$/.test(row.waybill_no) &&
+    Number(row.quantity) === Math.ceil(Number(source.qty)) &&
+    Number(row.supply_price) + Number(row.tax_amount) === Number(source.fare.replace(/,/g,'')) &&
+    (row.transit_mode === '1' ? '정기' : row.transit_mode === '2' ? '택배' : '') === source.delivery &&
+    (row.payment_mode === '1' ? '선불' : row.payment_mode === '2' ? '착불' : '') === source.pay;
+  return { row: exact ? row : undefined, possible: true };
+}
+
+export type DaesinVerification = { waybillNo: string; status: string; reasons: string[] };
+export function daesinRegistrationView(state?: DaesinRegistration, verification?: DaesinVerification) {
+  const reasons: string[] = [];
+  const registered = state?.state === 'registered' || Boolean(state?.waybillNo) || Boolean(verification?.waybillNo);
+  if (state?.destinationNeedsReview) reasons.push((state.destinationReason || '도착지 미지정') + ' · 대신 마감관리에서 도착영업소 수정 필요');
+  if (verification?.status === '확인필요') reasons.push(...verification.reasons);
+  if (state?.state === 'pending' || state?.state === 'unknown') reasons.push(state.message || '접수 결과를 확인해야 합니다. 전산 데이터 새로고침으로 확인해 주세요.');
+  if (registered && !verification) reasons.push('등록은 완료됐습니다. 전산 데이터 새로고침으로 송장번호와 상세정보를 확인해 주세요.');
+  const label = reasons.length ? '정보확인' : registered ? '등록완료' : '미등록';
+  if (label === '미등록' && state?.state === 'not-registered') reasons.push(state.message || '등록되지 않았습니다. 출고정보를 수정한 뒤 다시 등록해 주세요.');
+  return { label, registered, reasons: [...new Set(reasons)], waybillNo: state?.waybillNo || verification?.waybillNo || '' };
+}
