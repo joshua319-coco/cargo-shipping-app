@@ -1895,7 +1895,7 @@ function RegistrationDialog({ shipment, view, upload, busy, onClose, onEdit, onR
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => { dialog.current?.showModal(); }, []);
   const isLogen = shipment.carrier === '로젠';
-  const comparisons = upload ? [
+  const comparisons: Array<[string, string | undefined, string | undefined]> = upload ? [
     ['수화주', shipment.receiver, upload.receiver],
     ['수화주 전화', shipment.receiverPhone, upload.receiverPhone],
     ['발화주', shipment.sender, upload.sender],
@@ -1905,8 +1905,22 @@ function RegistrationDialog({ shipment, view, upload, busy, onClose, onEdit, onR
     ['운송', displayDelivery(shipment.delivery), displayDelivery(upload.delivery)],
     ['지불', shipment.pay, upload.pay],
     [shipment.delivery === '택배' ? '주소' : '도착영업소', shipment.delivery === '택배' ? shipment.address : shipment.branch, shipment.delivery === '택배' ? upload.address : upload.branch],
-    ...(isLogen ? [['배송메세지', shipment.memo, upload.memo]] : []),
+    ...(isLogen ? [['배송메세지', shipment.memo, upload.memo] as [string, string, string | undefined]] : []),
   ] : [];
+  // Reuse verification reasons so equivalent addresses, phone formats and carrier labels stay unmarked.
+  const comparisonReasons: Record<string, string[]> = {
+    '수화주': ['수화주명 확인', '수하인 이름 확인'],
+    '수화주 전화': ['수하인 전화번호 확인'],
+    '발화주': ['발화주명 확인', '송하인 이름 확인'],
+    '발화주 전화': ['송하인 전화번호 확인'],
+    '수량': ['수량 확인', '박스수량 확인'],
+    '운임': ['총운임 확인', '택배운임 확인'],
+    '운송': ['운송상품 확인'],
+    '지불': ['지불방법 확인', '운임구분 확인'],
+    '주소': ['주소 확인'],
+    '도착영업소': ['도착영업소 확인'],
+    '배송메세지': ['배송메세지 확인'],
+  };
   const closeAnd = (action: () => void) => { dialog.current?.close(); action(); };
   return <dialog ref={dialog} onClose={onClose} aria-labelledby="registration-dialog-title"
     style={{margin:'auto',border:0,borderRadius:16,padding:24,width:'min(700px, calc(100vw - 48px))',maxHeight:'85vh',overflowY:'auto',color:'#0f172a',boxShadow:'0 18px 60px #0004'}}>
@@ -1933,11 +1947,17 @@ function RegistrationDialog({ shipment, view, upload, busy, onClose, onEdit, onR
     {comparisons.length > 0 ? (
       <table style={{width:'100%',borderCollapse:'collapse',fontSize:13,margin:'16px 0'}}>
         <thead><tr>{['항목','우리 출고목록',shipment.carrier + ' 발송데이터'].map(label => <th key={label} style={{textAlign:'left',padding:8,background:'#f1f5f9'}}>{label}</th>)}</tr></thead>
-        <tbody>{comparisons.map(([label,source,remote]) => <tr key={label}>
-          <th style={{textAlign:'left',padding:8,borderBottom:'1px solid #e2e8f0',whiteSpace:'nowrap'}}>{label}</th>
-          <td style={{padding:8,borderBottom:'1px solid #e2e8f0'}}>{source || '—'}</td>
-          <td style={{padding:8,borderBottom:'1px solid #e2e8f0'}}>{remote || '—'}</td>
-        </tr>)}</tbody>
+        <tbody>{comparisons.map(([label,source,remote]) => {
+          const mismatch = (comparisonReasons[label] || []).some(reason => view.reasons.includes(reason));
+          return <tr key={label} style={mismatch ? {background:'#fff7fa'} : undefined}>
+            <th scope="row" style={{textAlign:'left',padding:8,borderBottom:'1px solid #e2e8f0',whiteSpace:'nowrap'}}>
+              {label}{mismatch && <span style={{marginLeft:8,fontSize:11,fontWeight:700,color:'#9d174d'}}>불일치</span>}
+            </th>
+            {[source,remote].map((value,index) => <td key={index} style={{padding:8,borderBottom:'1px solid #e2e8f0'}}>
+              {mismatch ? <mark style={{background:'#fce7f3',color:'#9d174d',fontWeight:700,padding:'2px 5px',borderRadius:4}}>{value || '—'}</mark> : value || '—'}
+            </td>)}
+          </tr>;
+        })}</tbody>
       </table>
     ) : <p style={{fontSize:13,color:'#64748b'}}>{displayDelivery(shipment.delivery)} · {shipment.pay} · {ceilQuantityDisplay(shipment.qty,shipment.pack)} · {formatFare(shipment.fare)}</p>}
     {view.label === '정보확인' && <p style={{fontSize:13,color:'#64748b'}}>
@@ -1957,9 +1977,9 @@ function RegistrationDialog({ shipment, view, upload, busy, onClose, onEdit, onR
 
 
 type DaesinSyncActions = { registerOne: (row: SavedShipment) => Promise<void>; refresh: () => Promise<void> };
-function DaesinSyncPanel({ rows, allRows, mapRow, onImport, onReload, defaultDate, manualTools, actionRef, onBusyChange, verifications }: {
+function DaesinSyncPanel({ rows, allRows, mapRow, onImport, onReload, defaultDate, manualTools, actionRef, onBusyChange, verifications, compact = false }: {
   actionRef: RefObject<DaesinSyncActions | null>; onBusyChange: (busy: boolean) => void;
-  verifications: Map<string, DaesinVerification>;
+  verifications: Map<string, DaesinVerification>; compact?: boolean;
   rows: SavedShipment[]; allRows: SavedShipment[]; manualTools: ReactNode;
   mapRow: (row: SavedShipment) => Record<string, string | number>;
   onImport: (dataset: DaesinDailyDataset) => Promise<string>; onReload: () => Promise<boolean>; defaultDate: string;
@@ -2049,7 +2069,7 @@ function DaesinSyncPanel({ rows, allRows, mapRow, onImport, onReload, defaultDat
     finally { inFlight.current = false; setBusy(false); }
   };
   const synchronize = async (requestedRows: SavedShipment[] = targets) => {
-    const targets = requestedRows;
+    const targets = requestedRows.filter(row => row.carrier === '대신');
     if (inFlight.current) return;
     if (!targets.length) return setMessage('현재 조회목록에 미등록 건이 없습니다. 최신 정보는 대신 전산데이터 새로고침으로 확인할 수 있습니다.');
     inFlight.current = true; stopRequested.current = false; setBusy(true); setMessage("대신 연결과 기존 접수 이력을 확인 중…");
@@ -2064,7 +2084,7 @@ function DaesinSyncPanel({ rows, allRows, mapRow, onImport, onReload, defaultDat
         if (stopRequested.current || !mounted.current) break;
         const row = targets[index], inspected = preflight.get(row.shipmentDate)!;
         const fresh = inspected.peers.find(peer => peer.id === row.id);
-        if (!fresh) { skipped++; continue; }
+        if (!fresh || fresh.carrier !== '대신') { skipped++; continue; }
         const mapped = mapRow(row);
         const fingerprint = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify({id:row.id,date:row.shipmentDate,mapped})))), byte => byte.toString(16).padStart(2,'0')).join('');
         if (!mayRegister(fresh.daesinRegistration, fingerprint, retry)) {
@@ -2139,17 +2159,24 @@ function DaesinSyncPanel({ rows, allRows, mapRow, onImport, onReload, defaultDat
     } catch (error) { setMessage(getErrorMessage(error)); }
     finally { reportInFlight.current = false; setReportBusy(false); }
   };
-  if (!enabled) return <>{manualTools}</>;
+  if (!enabled) return compact ? null : <>{manualTools}</>;
   const registered = visible.filter(row => getState(row)?.state === 'registered');
   const reviews = registered.filter(row => getState(row)?.destinationNeedsReview);
   const failed = visible.filter(row => getState(row)?.state === 'not-registered');
   const uncertain = visible.filter(row => ['pending','unknown'].includes(getState(row)?.state || ''));
   const headline = message.split('\n')[0];
+  if (compact) return <section aria-label="대신 전산 연동" style={{marginBottom:8}}>
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12}}>
+      <button type="button" style={allListUploadButtonStyle} disabled={busy} onClick={() => void fetchDaily()}>대신 전산데이터 새로고침</button>
+      <button type="button" style={allListUploadButtonStyle} title="현재 조회목록의 대신 미등록 건만 등록합니다." disabled={busy || !visible.length} onClick={() => void synchronize()}>대신 전산 연동</button>
+    </div>
+    {message && <p role="status" style={{fontSize:12,color:'#64748b',margin:'6px 0'}}>{headline.length > 180 ? headline.slice(0,180) + '…' : headline}</p>}
+  </section>;
   return <section aria-label="대신 전산 연동" style={{marginBottom:16}}>
     <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:12}}>
       <div style={{display:'flex',alignItems:'flex-start',gap:12,flex:'1 1 auto',minWidth:0}}>
-        <button type="button" style={{...exportBtnPrimary,flexShrink:0}} disabled={busy} onClick={() => void fetchDaily()}>대신 전산데이터 새로고침</button>
-      <details style={{flex:'1 1 260px',minWidth:0,fontSize:12,color:'#64748b'}}><summary style={{cursor:'pointer',padding:'13px 0'}}>상세 결과·연결 설정</summary>
+        <button type="button" style={{...exportBtnPrimary,flexShrink:0,fontSize:16,lineHeight:'24px',whiteSpace:'nowrap'}} disabled={busy} onClick={() => void fetchDaily()}>대신 전산데이터 새로고침</button>
+      <details style={{flex:'1 1 260px',minWidth:0,fontSize:12,color:'#64748b',marginTop:26}}><summary style={{cursor:'pointer',lineHeight:'18px'}}>상세 결과·연결 설정</summary>
         <div style={{padding:'10px 0'}}>
           <div>등록 완료 {registered.length}건 · 도착지 수정 필요 {reviews.length}건 · 등록 안됨 {failed.length}건 · 접수 확인 필요 {uncertain.length}건</div>
           {message && <p style={{whiteSpace:'pre-line'}}>{message}</p>}
@@ -2161,12 +2188,14 @@ function DaesinSyncPanel({ rows, allRows, mapRow, onImport, onReload, defaultDat
         </div>
       </details>
       </div>
-      <button type="button" style={{...exportBtnPrimary,flexShrink:0}} disabled={busy || !visible.length} onClick={() => void synchronize()}>대신 전산 연동</button>
+      <button type="button" style={{...exportBtnPrimary,flexShrink:0}} aria-describedby="daesin-sync-description" disabled={busy || !visible.length} onClick={() => void synchronize()}>대신 전산 연동</button>
+    </div>
+    <div style={{display:'flex',justifyContent:'flex-end',gap:16,fontSize:12,color:'#64748b',marginTop:8}}>
+      <span id="daesin-sync-description" style={{textAlign:'right'}}>현재 조회목록의 대신 미등록 건을 등록하고 발송데이터를 가져옵니다.</span>
     </div>
     <details style={{marginTop:8,fontSize:12,color:'#64748b'}}><summary style={{cursor:'pointer'}}>수동으로 등록(엑셀)</summary>
       <div style={{padding:'10px 0',display:'flex',alignItems:'center',gap:10,flexWrap:'nowrap',overflowX:'auto'}}>{manualTools}</div>
     </details>
-    <div style={{fontSize:12,color:'#64748b',marginTop:8}}>현재 조회목록의 미등록 건을 등록하고 발송데이터까지 가져옵니다.</div>
     {message && <p role="status" style={{fontSize:13,color:'#334155',margin:'8px 0'}}>{headline.length > 180 ? headline.slice(0,180) + '…' : headline}</p>}
     {(reviews.length > 0 || failed.length > 0 || uncertain.length > 0) && <div style={{fontSize:12,color:'#b45309',marginTop:6}}>도착지 수정 필요 {reviews.length}건 · 등록 안됨 {failed.length}건 · 접수 확인 필요 {uncertain.length}건 — 목록의 상태 버튼을 눌러 확인해 주세요.</div>}
     {busy && <button type="button" style={{...smallGrayBtn,marginTop:8}} onClick={() => { stopRequested.current = true; setMessage('현재 건의 결과 확인 후 나머지 등록을 멈춥니다.'); }}>나머지 등록 중지</button>}
@@ -5067,11 +5096,10 @@ export default function Home() {
   const renderWaybillUploadControls = (compact = false, onlyCarrier?: Carrier) => {
     const isAllList = compact && carrierFilter === "전체";
     const manualDaesin = compact && onlyCarrier === "대신";
-    const uploadButtonStyle: CSSProperties = {
+    const uploadButtonStyle: CSSProperties = isAllList ? allListUploadButtonStyle : {
       ...smallBlueBtn,
       flexShrink: 0,
       whiteSpace: "nowrap",
-      ...(isAllList ? { fontSize: 13, lineHeight: "20px", padding: "6px 10px", borderRadius: 8 } : {}),
     };
     const resetButtonStyle: CSSProperties = isAllList
       ? { ...uploadResetBtn, padding: "4px 8px", lineHeight: "18px" }
@@ -5823,8 +5851,7 @@ export default function Home() {
 
 
             </>) : (<>
-              <div hidden={carrierFilter !== '대신'}>
-              <DaesinSyncPanel actionRef={daesinActions} onBusyChange={setDaesinBusy} verifications={shipmentWaybillInfoById} rows={sortedShipments} allRows={savedShipments} mapRow={row => toTemplateRow(row, resolvePostalCodeValue)} onImport={handleDailyWorkbook} onReload={loadShipmentsFromDb} defaultDate={listDateTo || getVerifySessionDate()} manualTools={<>
+              <DaesinSyncPanel compact={carrierFilter === '전체'} actionRef={daesinActions} onBusyChange={setDaesinBusy} verifications={shipmentWaybillInfoById} rows={sortedShipments} allRows={savedShipments} mapRow={row => toTemplateRow(row, resolvePostalCodeValue)} onImport={handleDailyWorkbook} onReload={loadShipmentsFromDb} defaultDate={listDateTo || getVerifySessionDate()} manualTools={<>
                 {renderWaybillUploadControls(true, '대신')}
               {carrierFilter === "대신" && <div style={{...exportRight,flexWrap:"nowrap",flexShrink:0,marginLeft:"auto",whiteSpace:"nowrap"}}>
                 <span style={selectedCountText}>
@@ -5846,7 +5873,6 @@ export default function Home() {
                 </button>
               </div>}
               </>} />
-              </div>
               {carrierFilter === '전체' && renderWaybillUploadControls(true, '로젠')}
             </>)}
 
@@ -5928,7 +5954,7 @@ export default function Home() {
                               borderRadius: 0,
                               background: "transparent",
                               position: "relative",
-                              paddingTop: waybillInfo?.waybillNo ? 8 : 16,
+                              paddingTop: waybillInfo?.waybillNo ? 14 : 20,
                               paddingBottom: waybillInfo?.waybillNo ? 24 : 16,
                             }}
                           >
@@ -5969,8 +5995,8 @@ export default function Home() {
                             </div>
 
                             <div style={ovPay}>{shipment.pay}</div>
-                            <div style={ovDelivery}>
-                              <div style={{ fontSize: 12, fontWeight: 700, color: carrierAccent(shipment.carrier) }}>{shipment.carrier}</div>
+                            <div style={{ ...ovDelivery, position: 'relative' }}>
+                              <div style={{ position: 'absolute', bottom: '100%', left: 0, right: 0, fontSize: 12, lineHeight: '14px', fontWeight: 700, color: carrierAccent(shipment.carrier) }}>{shipment.carrier}</div>
                               {displayDelivery(shipment.delivery)}
                             </div>
                             <div style={ovQty}>
@@ -8748,6 +8774,16 @@ const smallBlueBtn: CSSProperties = {
   padding: "10px 14px",
   cursor: "pointer",
   fontWeight: 800,
+};
+
+const allListUploadButtonStyle: CSSProperties = {
+  ...smallBlueBtn,
+  flexShrink: 0,
+  whiteSpace: "nowrap",
+  fontSize: 13,
+  lineHeight: "20px",
+  padding: "6px 10px",
+  borderRadius: 8,
 };
 
 const quickMasterRow: CSSProperties = {

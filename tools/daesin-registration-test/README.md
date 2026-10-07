@@ -4,7 +4,7 @@ Local entry: `http://127.0.0.1:4320/?daesinSync=1`. Install/upgrade instructions
 
 ## User flow
 
-The Daesin toolbar is visible only in the Daesin list. The blue **대신 전산데이터 새로고침** button is on the left, with **상세 결과·연결 설정** beside it and **수동으로 등록(엑셀)** underneath. Manual import and both downloads share one row when expanded.
+The full Daesin toolbar is visible in the Daesin list. The blue **대신 전산데이터 새로고침** button is on the left, with **상세 결과·연결 설정** aligned to its bottom edge. Only the sync action has an explanation, placed directly beneath the right-hand sync button. **수동으로 등록(엑셀)** follows that explanation; manual import and both downloads share one row when expanded. In the All list, a compact Daesin refresh control is shown above the Logen paste button, using the same dimensions and typography with a blue background. The Daesin sync button remains on the right; both the target selection and registration entry point filter out Logen, and the database claim rejects non-Daesin shipments. Manual tools and diagnostics remain exclusive to the Daesin list.
 
 Both carriers show **전산등록 → PDA → 종결완료**. Logen uses the existing persisted Excel-download marker for 등록완료; undownloaded rows remain 미등록. Field discrepancies override this with 정보확인, even before a waybill is assigned. A missing waybill alone is expected before Logen printing and does not trigger the status warning. Row dialogs expose the comparison and single-row Excel download. PDA/closure actions no longer set the registration marker.
 
@@ -13,7 +13,7 @@ Both carriers show **전산등록 → PDA → 종결완료**. Logen uses the exi
 - An empty daily response preserves previously saved data. Invalid, duplicated or foreign waybill IDs, incomplete exports and unavailable carrier responses also preserve it.
 - Prohibited service is a definite failure. Retry requires an edited exported payload; no separate retry checkbox is required. Pending/unknown submissions are held for reconciliation. Missing or ambiguous results are never blindly replayed.
 - Shared/unassigned destinations can register. The native no-print button is used only after selecting the exact row and checking recipient, quantity, fare and receipt date. The UI retains destination correction warnings; missing-destination records omitted by the carrier export are reported separately.
-- The existing manual Excel import and download remain under the closed manual-tools disclosure. Long results and connection diagnostics also stay collapsed after refresh. The list shows 미등록 / 등록완료 / 정보확인 from durable registration state and field verification, independently of legacy waybill checkboxes. Information dialogs show discrepancy reasons, side-by-side values, destination review and uncertain receipt status.
+- The existing manual Excel import and download remain under the closed manual-tools disclosure. Long results and connection diagnostics also stay collapsed after refresh. The list shows 미등록 / 등록완료 / 정보확인 from durable registration state and field verification, independently of legacy waybill checkboxes. Information dialogs show discrepancy reasons, side-by-side values, destination review and uncertain receipt status. Fields flagged by the existing comparison are marked 불일치, with pink highlighting on both values; equivalent normalized values stay unmarked.
 
 ## Durable identity and concurrency
 
