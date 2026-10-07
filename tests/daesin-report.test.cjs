@@ -24,3 +24,24 @@ test('registration response keeps an entire 13-digit number and does not truncat
   const job=w.store.sanghwaLiveRegistrationJobs[0];assert.deepEqual(job.numbers,numbers[0].length===13?numbers:[]);
  }
 });
+
+test('production extension accepts only exact app origins and top-level app frames',async()=>{
+ const w=worker();
+ for(const url of ['https://cargo-shipping-app.vercel.app/','https://cargo-shipping-app.vercel.app/?daesinSync=1','http://127.0.0.1:4320/']){
+  const result=await w.send({action:'ping'},{url,frameId:0});assert.equal(result.ok,true);assert.equal(result.version,'0.6.0');
+ }
+ for(const url of ['http://cargo-shipping-app.vercel.app/','https://cargo-shipping-app.vercel.app.evil.invalid/','https://cargo-shipping-app-preview.vercel.app/','http://127.0.0.1:4321/','https://other.invalid/'])assert.equal((await w.send({action:'ping'},{url,frameId:0})).ok,false,url);
+ assert.equal((await w.send({action:'status'},{url:'https://cargo-shipping-app.vercel.app/',frameId:1})).ok,false);
+ const status=await w.send({action:'status'},{url:'https://cargo-shipping-app.vercel.app/',frameId:0});assert.equal(status.jobs[0].id,'fixture');assert.equal(status.jobs.length,1);assert.equal(w.scriptCalls,0);
+});
+test('production page bridge ignores foreign frames, origins and unapproved actions',async()=>{
+ const source=fs.readFileSync(path.join(__dirname,'../tools/daesin-registration-test/extension/app-bridge.js'),'utf8');
+ for(const origin of ['https://cargo-shipping-app.vercel.app','http://127.0.0.1:4320','http://127.0.0.1:9999','https://other.invalid']){
+  let listener;const sent=[],replies=[];const window={addEventListener:(type,fn)=>listener=fn,postMessage:(data,target)=>replies.push({data,target})};
+  vm.runInNewContext(source,{window,location:{origin},chrome:{runtime:{sendMessage:async message=>{sent.push(message);return {ok:true,version:'0.6.0'};}}}});
+  if(origin.endsWith('9999')||origin.includes('other.invalid')){assert.equal(listener,undefined);continue;}
+  const event={source:window,origin,data:{channel:'sanghwa-live-request',requestId:'fixture',action:'ping'}};
+  await listener({...event,source:{}});await listener({...event,origin:'https://other.invalid'});await listener({...event,data:{...event.data,action:'print'}});assert.equal(sent.length,0);
+  await listener(event);assert.equal(sent.length,1);assert.equal(sent[0].type,'app-request');assert.equal(replies[0].target,origin);assert.equal(replies[0].data.result.version,'0.6.0');
+ }
+});

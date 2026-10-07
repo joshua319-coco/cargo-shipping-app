@@ -1,5 +1,5 @@
 'use strict';
-if (location.origin === 'http://127.0.0.1:4320') {
+if (['http://127.0.0.1:4320', 'https://cargo-shipping-app.vercel.app'].includes(location.origin)) {
   window.addEventListener('message', async event => {
     if (event.source !== window || event.origin !== location.origin || event.data?.channel !== 'sanghwa-live-request') return;
     const request = event.data;

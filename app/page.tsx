@@ -1861,9 +1861,6 @@ function toTemplateRow(
   return row;
 }
 
-function isLiveDaesinTestShipment(row: Pick<SavedShipment, 'receiver' | 'shipmentDate' | 'carrier'>) {
-  return row.carrier === '대신' && row.shipmentDate === '2026-10-06' && /^대신자동업로드테스트[1-9]\d*$/.test(row.receiver.trim());
-}
 
 type DaesinDailyDataset = { shipmentDate: string; fileName: string; workbook: string; rows: DaesinDailyRow[] };
 function validateDaesinDailyImport(parsedRows: WaybillUploadRow[], dataset: DaesinDailyDataset) {
@@ -1991,7 +1988,7 @@ function DaesinSyncPanel({ rows, allRows, mapRow, onImport, onReload, defaultDat
   const inFlight = useRef(false), stopRequested = useRef(false), mounted = useRef(true), reportInFlight = useRef(false);
   const [reportBusy, setReportBusy] = useState(false);
   const [preparedReport, setPreparedReport] = useState<{ url: string; text: string } | null>(null);
-  useEffect(() => { mounted.current = true; setEnabled(location.origin === 'http://127.0.0.1:4320'); return () => { mounted.current = false; stopRequested.current = true; }; }, []);
+  useEffect(() => { mounted.current = true; setEnabled(['http://127.0.0.1:4320', 'https://cargo-shipping-app.vercel.app'].includes(location.origin)); return () => { mounted.current = false; stopRequested.current = true; }; }, []);
   useEffect(() => () => { if (preparedReport) URL.revokeObjectURL(preparedReport.url); }, [preparedReport]);
   const visible = rows.filter(row => row.carrier === '대신');
 
@@ -2019,7 +2016,7 @@ function DaesinSyncPanel({ rows, allRows, mapRow, onImport, onReload, defaultDat
   const status = async () => {
     const response = await callLiveTestBridge('status');
     if (!response.ok) throw new Error(response.error);
-    if (response.version !== '0.5.0') throw new Error('연결 도구 0.5.0으로 업데이트하고 이 페이지를 새로고침해 주세요.');
+    if (response.version !== '0.6.0') throw new Error('연결 도구 0.6.0으로 업데이트하고 이 페이지를 새로고침해 주세요.');
     await saveJobs(response.jobs || []); return response.jobs || [];
   };
   const refresh = async () => {
@@ -3364,14 +3361,10 @@ export default function Home() {
   };
 
   useEffect(() => {
-    if (process.env.NODE_ENV !== 'development' || location.origin !== 'http://127.0.0.1:4320') return;
     const target = new URLSearchParams(location.search);
-    if (target.get('daesinSync') === '1') { setTab('출고목록'); setCarrierFilter('대신'); setSelectedIds([]); setFilterKeyword(''); return; }
-    if (target.get('registrationTest') !== '1') return;
-    const date = '2026-10-06';
-    setTab('출고목록'); setCarrierFilter('대신'); setSelectedIds([]); setFilterKeyword('대신자동업로드테스트');
-    setListDateFrom(date); setListDateTo(date); setListDateFromDraft(date); setListDateToDraft(date);
-    setTestVerificationDate(date);
+    // Older test bookmarks still open the list, without preset dates or customer searches.
+    if (target.get('daesinSync') !== '1' && target.get('registrationTest') !== '1') return;
+    setTab('출고목록'); setCarrierFilter('대신'); setSelectedIds([]); setFilterKeyword('');
   }, []);
 
   useEffect(() => {

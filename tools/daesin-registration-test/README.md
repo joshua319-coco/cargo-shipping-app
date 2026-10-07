@@ -1,6 +1,6 @@
-# Daesin integration 0.5.0
+# Daesin integration 0.6.0
 
-Local entry: `http://127.0.0.1:4320/?daesinSync=1`. Install/upgrade instructions and ZIP are served at `/registration-test-setup/index.html`. Upgrade the existing extension in place; do not uninstall it. The extension remains restricted to the localhost app and the Daesin partner origin. This version has not been deployed to the production website. Logen registration is not included. The separate Jeju fare-notice change is deployed independently.
+Production entry: `https://cargo-shipping-app.vercel.app/?daesinSync=1`. Local development at `http://127.0.0.1:4320` remains supported. Extension 0.6.0 allows only these exact app origins plus the Daesin partner origin; arbitrary Vercel previews and other local ports are not allowed. Update the existing extension folder in place to retain its job journal. Each PC/browser profile needs its own installation and carrier login. Shared registration identity remains in the app database. The website starts with today's Seoul date and an empty search, including old registration-test bookmarks.
 
 ## User flow
 
@@ -27,10 +27,10 @@ Migration `20261007055028_daesin_registration_state.sql` was applied and verifie
 
 ## Verification and remaining live check
 
-- `node --test tests/*.test.cjs`: 61 passing tests, including existing Logen regressions, eligibility/ambiguity rules, durable invoice matching and full 13-digit numbers.
+- `node --test tests/*.test.cjs`: Production origin checks and the existing regression tests, including existing Logen regressions, eligibility/ambiguity rules, durable invoice matching and full 13-digit numbers.
 - `node node_modules/typescript/bin/tsc --noEmit --incremental false`: passed.
 - PostgreSQL execution in an isolated PGlite database: auth/RLS, competing claims, stale snapshots/callbacks, unknown-result protection, corrected retries, immutable/unique numbers and exclusion of Logen passed.
 - Actual Next UI + unpacked MV3 extension + mocked native carrier + original XLS parser + isolated PostgreSQL RPC passed: single-row confirmation, automatic filtered-list registration regardless of selection, pre-existing manual registration, prohibited/shared destinations, unknown-result exclusion, second-click duplicate prevention, source-edit discrepancies, manual carrier correction and refresh, corrected retry, export failure preservation, historical empty refresh, and downloadable reports. Zero live external requests and zero print clicks.
 - Isolated browser checks for the unified checklist passed: selected/all/single-row Logen Excel downloads persist their status; PDA/closure never mark registration; numberless mismatches show compared values; corrected data clears warnings; Daesin-only toolbar visibility, blue refresh naming and one-line manual controls match the requested layout.
 - Separate MV3 native registration fixture passed ten normal/failure scenarios, preserving row checkbox handlers and avoiding the blue print button.
-- The user confirmed 0.5.0 data refresh against real shipments. The simplified controls and status dialogs have isolated end-to-end evidence; the updated UI still needs the user’s normal live acceptance. This Daesin UI is local, not production-deployed. Existing extension 0.5.0 is sufficient; refresh the app only.
+- The user confirmed 0.5.0 data refresh against real shipments. The simplified controls and status dialogs have isolated end-to-end evidence; the updated UI still needs the user’s normal live acceptance. Production requires extension 0.6.0. Older versions show an update instruction. No new database migration is required for this release.

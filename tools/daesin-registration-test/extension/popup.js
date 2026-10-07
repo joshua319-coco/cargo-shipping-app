@@ -12,7 +12,7 @@ async function render() {
     const info = document.createElement('p'); info.textContent = job.message || '등록 화면 준비 중';
     const number = document.createElement('code'); number.textContent = job.numbers.join(', ');
     const button = document.createElement('button'); button.textContent = job.state === 'verified' ? '대신 목록 확인 완료' : job.numbers.length === 1 ? '실제 등록 확인' : '송장번호 가져오기'; button.disabled = (!job.registered && job.numbers.length !== 1) || job.state === 'verified';
-    button.addEventListener('click', () => chrome.tabs.create({url:'http://127.0.0.1:4320/?daesinSync=1',active:true}));
+    button.addEventListener('click', () => chrome.tabs.create({url:'https://cargo-shipping-app.vercel.app/?daesinSync=1',active:true}));
     button.textContent = '출고사이트에서 발송데이터 가져오기'; button.disabled = false;
     const inspect = document.createElement('button'); inspect.textContent = '도착지 다시 확인';
     inspect.addEventListener('click', async () => { inspect.disabled = true; const result = await chrome.runtime.sendMessage({ action: 'inspect', jobId: job.id }); message.textContent = result.ok ? result.job.message : result.error; await render(); });

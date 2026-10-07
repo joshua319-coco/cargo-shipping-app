@@ -21,7 +21,7 @@ function loadTs(file, extra = '') {
   return compiledModule.exports;
 }
 const carrier = loadTs('lib/carriers.ts');
-const { __test: helpers } = loadTs('app/page.tsx', '\nexports.__test = { normalizeShipment, suggestFareByQty, jejuShipmentNotice, shipmentRegistrationView, toTemplateRow, toShipmentDbPayload, parseWaybillUploadRows, buildWaybillVerificationRows, normalizeSharedVerifyState, buildWaybillMessageText, TEMPLATE_HEADERS, toLogenTemplateRow, LOGEN_TEMPLATE_HEADERS, isValidShipmentDate, isLiveDaesinTestShipment, validateDaesinDailyImport };');
+const { __test: helpers } = loadTs('app/page.tsx', '\nexports.__test = { normalizeShipment, suggestFareByQty, jejuShipmentNotice, shipmentRegistrationView, toTemplateRow, toShipmentDbPayload, parseWaybillUploadRows, buildWaybillVerificationRows, normalizeSharedVerifyState, buildWaybillMessageText, TEMPLATE_HEADERS, toLogenTemplateRow, LOGEN_TEMPLATE_HEADERS, isValidShipmentDate, validateDaesinDailyImport };');
 const shipment = (patch = {}) => helpers.normalizeShipment({
   id: '1', carrier: '로젠', receiver: '테스트수하인', receiver_phone: '01012345678',
   address: '경기도 수원시 테스트로 10 101호', postal_code: '12345', sender: '상화시스템',
@@ -242,16 +242,6 @@ test('Daesin half-box exports as one physical box without changing its fare or i
   const workbook=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook,XLSX.utils.json_to_sheet([mapped]),'Sheet1');
   const parsed=XLSX.read(XLSX.write(workbook,{type:'buffer',bookType:'xlsx'}),{type:'buffer'});
   assert.equal(XLSX.utils.sheet_to_json(parsed.Sheets.Sheet1)[0].수량,1);
-});
-
-test('live registration accepts numbered named tests after recreation, without fixed IDs', () => {
-  for (const id of ['2760', '990001', '990002']) for (const index of [1,2,3,4,10]) {
-    assert.equal(helpers.isLiveDaesinTestShipment({id, receiver:'대신자동업로드테스트'+index, shipmentDate:'2026-10-06', carrier:'대신'}), true);
-  }
-  const allowed = {receiver:'대신자동업로드테스트1', shipmentDate:'2026-10-06', carrier:'대신'};
-  for (const patch of [{receiver:'대신자동업로드테스트'}, {receiver:'일반 거래처'}, {receiver:'대신자동업로드테스트0'}, {carrier:'로젠'}, {shipmentDate:'2026-10-07'}]) {
-    assert.equal(helpers.isLiveDaesinTestShipment({...allowed,...patch}), false);
-  }
 });
 
 test('Logen verification accepts the observed Gwangju aliases without suppressing other errors',()=>{
