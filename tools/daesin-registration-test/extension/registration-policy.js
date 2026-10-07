@@ -1,9 +1,11 @@
 'use strict';
 function isDaesinRegistrationBlocked(text) {
-  return /(?:택배|정기|화물|배송|접수|등록)[^\n]{0,15}(?:불가|불가능|거절)|(?:등록|접수)\s*(?:실패|할 수 없)/.test(String(text || ''));
+  return /(?:택배|정기|화물|배송|접수|등록)[^\n]{0,15}(?:불가|불가능|거절)|(?:등록|접수)\s*(?:실패|할 수 없)|우편번호[^\n]{0,20}(?:없|누락|미입력|잘못|찾을 수 없)/.test(String(text || ''));
 }
 function classifyDaesinDestination(diagnosis) {
   const upload = diagnosis?.upload;
+  // An explicit rejected upload has not reached final registration.
+  if (upload?.result === 'ERROR' && upload.message) return { kind: 'blocked', reason: String(upload.message).slice(0, 500) };
   if (upload?.rowCount !== 1 || upload.destinations?.length !== 1) return { kind: 'unknown', reason: '대신 변환 결과가 선택한 1건인지 확인하지 못했습니다.' };
   const destination = diagnosis.destination;
   const row = destination?.row || upload.destinations[0];

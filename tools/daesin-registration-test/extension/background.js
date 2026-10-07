@@ -13,7 +13,7 @@ async function waitForTab(tabId) {
   for (let i = 0; i < 40; i++) { const tab = await chrome.tabs.get(tabId); if (tab.status === 'complete' && tab.url?.startsWith(CARRIER + '/')) return tab; await new Promise(resolve => setTimeout(resolve, 500)); }
   throw new Error('대신 화면을 여는 시간이 초과됐습니다. 접수 결과를 자동으로 재시도하지 않습니다.');
 }
-async function stage(request) {
+async function stage(request, sourceTab) {
   if (staging) throw new Error('다른 전송이 진행 중입니다.');
   staging = true;
   try {
@@ -23,15 +23,19 @@ async function stage(request) {
     if (p.autoRegister !== true) throw new Error('업로드 후 등록(출력안함)까지 진행하는 출고사이트를 새로고침해 주세요.');
     let jobs = await readJobs();
     const previous = [...jobs].reverse().find(job => job.shipmentId === p.shipmentId);
-    if (previous && !(previous.state === 'not-registered' && p.retry === true && previous.fingerprint !== p.fingerprint && previous.attemptId !== p.attemptId)) { if (previous.tabId) await chrome.tabs.update(previous.tabId, { active: true }).catch(() => {}); return { ok: true, job: publicJob(previous), repeated: true }; }
+    if (previous && !(previous.state === 'not-registered' && p.retry === true && previous.fingerprint !== p.fingerprint && previous.attemptId !== p.attemptId)) { return { ok: true, job: publicJob(previous), repeated: true }; }
     const job = { id: crypto.randomUUID(), attemptId: p.attemptId, nonce: crypto.randomUUID(), shipmentId: p.shipmentId, shipmentDate: p.shipmentDate, fingerprint: p.fingerprint, receiver: p.receiver, autoRegister: true, state: 'opening', updatedAt: new Date().toISOString() };
     const source = p.source || {};
     job.diagnosis = { source: Object.fromEntries(['postalCode', 'address', 'branch', 'quantity', 'fare', 'delivery', 'receiverPhone', 'pay'].filter(key => ['string', 'number'].includes(typeof source[key])).map(key => [key, String(source[key]).slice(0, 500)])) };
     jobs.push(job); await saveJobs(jobs);
     try {
-      const tab = await chrome.tabs.create({ url: REGISTER, active: true });
+      const tab = await chrome.tabs.create({ url: REGISTER, active: false, ...(Number.isInteger(sourceTab?.windowId) ? { windowId: sourceTab.windowId } : {}) });
       job.tabId = tab.id; job.state = 'opening'; await saveJobs(jobs);
-      await waitForTab(tab.id);
+      const loaded = await waitForTab(tab.id);
+      if (new URL(loaded.url).pathname !== '/issueSvl') {
+        await chrome.tabs.update(tab.id, { active: true }).catch(() => {});
+        throw new Error('대신 로그인이 필요합니다. 로그인 후 출고관리에서 접수 상태를 확인해 주세요.');
+      }
       await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'ISOLATED', func: installCarrierRelay, args: [job.id, job.nonce] });
       job.state = 'staged'; job.message = '업로드 확인 후 등록(출력안함)까지 진행합니다.'; job.deadlineAt = Date.now() + 60000; await saveJobs(jobs);
       await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', func: stageCarrierWorkbook, args: [{ workbook: p.workbook, nonce: job.nonce, shipmentDate: p.shipmentDate }] });
@@ -51,7 +55,7 @@ async function carrierEvent(message, sender) {
   if (d.kind === 'submitting') { job.submissionStarted = true; job.state = 'submitting'; job.message = '대신 최종 접수 응답을 기다리고 있습니다.'; }
   if (d.kind === 'upload-response') {
     job.diagnosis ||= {};
-    job.diagnosis.upload = { rowCount: d.rowCount, destinations: d.destinations };
+    job.diagnosis.upload = { rowCount: d.rowCount, destinations: d.destinations, result: d.result, message: d.message };
     await readDestination(job);
     // Only a NEW explicit automatic request may proceed; old 0.2 jobs remain observational.
     if (job.autoRegister && !job.autoAttempted && ['carrier-ready', 'destination-pending'].includes(job.state)) {
@@ -99,27 +103,31 @@ async function inspect(jobId) {
   await readDestination(job); job.updatedAt = new Date().toISOString(); await saveJobs(jobs);
   return { ok: true, job: publicJob(job) };
 }
-async function fetchDaily(shipmentDate) {
+async function fetchDaily(shipmentDate, sourceTab) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(shipmentDate) || new Date(shipmentDate).toISOString().slice(0,10) !== shipmentDate) throw new Error('조회 날짜를 확인해 주세요.');
-  const tabs = (await chrome.tabs.query({ url: CARRIER + '/searchSvl*' })).filter(tab => new URL(tab.url).searchParams.get('svcSid') === 'dailySearch');
+  const tabs = (await chrome.tabs.query({ url: CARRIER + '/searchSvl*', ...(Number.isInteger(sourceTab?.windowId) ? { windowId: sourceTab.windowId } : {}) })).filter(tab => new URL(tab.url).searchParams.get('svcSid') === 'dailySearch');
   tabs.sort((a,b) => Number(b.active)-Number(a.active) || (b.lastAccessed||0)-(a.lastAccessed||0) || b.id-a.id);
-  if (!tabs.length) { const tab = await chrome.tabs.create({url:DAILY,active:true}); await waitForTab(tab.id); tabs.push(tab); }
+  if (!tabs.length) { const tab = await chrome.tabs.create({ url: DAILY, active: false, ...(Number.isInteger(sourceTab?.windowId) ? { windowId: sourceTab.windowId } : {}) }); await waitForTab(tab.id); tabs.push(tab); }
   const [result] = await chrome.scripting.executeScript({target:{tabId:tabs[0].id},world:'ISOLATED',func:fetchDaesinDailyWorkbook,args:[shipmentDate]});
-  const attempt = { ...(result?.result?.diagnosis || { shipmentDate, stage: 'page' }), error: result?.result?.error || result?.error?.message || '', version: '0.6.0' };
+  const attempt = { ...(result?.result?.diagnosis || { shipmentDate, stage: 'page' }), error: result?.result?.error || result?.error?.message || '', version: '0.6.1' };
   const history = (await chrome.storage.local.get('sanghwaDailyFetchHistory')).sanghwaDailyFetchHistory || [];
   await chrome.storage.local.set({ sanghwaDailyFetchHistory: [...history, attempt].slice(-5) });
-  if (result?.result?.error) throw new Error(result.result.error);
+  if (result?.result?.error) {
+    // Reading data must not steal focus. Only an expired login needs the user in the carrier tab.
+    if (result.result.code === 'LOGIN_REQUIRED') await chrome.tabs.update(tabs[0].id, { active: true }).catch(() => {});
+    throw new Error(result.result.error);
+  }
   if ((!result?.result?.workbook && result?.result?.rows?.length !== 0) || !Array.isArray(result?.result?.rows)) throw new Error(result?.error?.message || '대신 엑셀 응답을 받지 못했습니다. 로그인 상태와 조회 날짜를 확인해 주세요.');
   const dataset = result.result;
   const jobs = reconcileDaesinDailyJobs(await readJobs(), dataset.rows, shipmentDate);
   await saveJobs(jobs);
-  return {ok:true,version:'0.6.0',jobs:jobs.map(publicJob),dataset};
+  return {ok:true,version:'0.6.1',jobs:jobs.map(publicJob),dataset};
 }
 async function handle(message, sender) {
   if (message.type === 'carrier-event') return carrierEvent(message, sender);
   const fromPopup = sender.url === chrome.runtime.getURL('popup.html');
   if (!isApp(sender) && !fromPopup) throw new Error('허용된 출고사이트에서만 실행할 수 있습니다.');
-  if (message.action === 'ping') return { ok: true, version: '0.6.0' };
+  if (message.action === 'ping') return { ok: true, version: '0.6.1' };
   if (message.action === 'status') {
     const jobs = await readJobs(); let changed = false;
     for (const job of jobs) if (['staged', 'registering', 'submitting'].includes(job.state) && job.deadlineAt && Date.now() > job.deadlineAt) {
@@ -127,20 +135,20 @@ async function handle(message, sender) {
     }
     for (const job of jobs) changed = updateDaesinAcceptedState(job) || changed;
     if (changed) await saveJobs(jobs);
-    return { ok: true, version: '0.6.0', jobs: jobs.map(publicJob) };
+    return { ok: true, version: '0.6.1', jobs: jobs.map(publicJob) };
   }
   if (message.action === 'inspect') return inspect(message.jobId);
   if (message.action === 'report') {
     // Reports must work even if a carrier tab is suspended or a mutation is waiting.
     // Read one saved snapshot; no tab inspection, carrier request or state mutation.
     const saved = await chrome.storage.local.get([KEY, 'sanghwaDailyFetchHistory']);
-    return { ok: true, report: { format: 'sanghwa-live-registration/3', version: '0.6.0', generatedAt: new Date().toISOString(), collection: 'saved-extension-state', activeOperation,
+    return { ok: true, report: { format: 'sanghwa-live-registration/3', version: '0.6.1', generatedAt: new Date().toISOString(), collection: 'saved-extension-state', activeOperation,
       jobs: (saved[KEY] || []).map(job => ({ ...publicJob(job), diagnosis: job.diagnosis || {} })),
       fetchHistory: saved.sanghwaDailyFetchHistory || [] } };
   }
-  if (message.action === 'fetch-daily' && isApp(sender)) return fetchDaily(message.shipmentDate);
+  if (message.action === 'fetch-daily' && isApp(sender)) return fetchDaily(message.shipmentDate, sender.tab);
   if (message.action === 'verify') throw new Error('출고사이트의 대신 전산데이터 새로고침을 사용해 주세요.');
-  if (message.action === 'stage' && isApp(sender)) return stage(message);
+  if (message.action === 'stage' && isApp(sender)) return stage(message, sender.tab);
   throw new Error('지원하지 않는 요청입니다.');
 }
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
