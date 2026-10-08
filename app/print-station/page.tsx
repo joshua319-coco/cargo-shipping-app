@@ -15,7 +15,7 @@ export default function PrintStation(){
   const diagnosticSummary=useCallback(async()=>{const result=await printBridge('print-diagnostics');setDiagnostic(result.diagnostic||null);},[]);
   const checkConnection=useCallback(async()=>{
     const ping=await printBridge('ping');setVersion(ping.version||'');
-    if(!ping.printStation||ping.printProtocol!==3)throw new Error('프린터 PC의 연결 도구를 0.7.2로 업데이트하고 이 화면을 새로고침해 주세요.');
+    if(!ping.printStation||ping.printProtocol!==4)throw new Error('프린터 PC의 연결 도구를 0.7.3로 업데이트하고 이 화면을 새로고침해 주세요.');
     const result=await printBridge('print-diagnose');setDiagnostic(result.diagnostic||null);
     if(!result.diagnostic?.passed)throw new Error(result.diagnostic?.message||'완료 응답을 확인하지 못했습니다.');
     return result.diagnostic.message||'연결 점검 완료';

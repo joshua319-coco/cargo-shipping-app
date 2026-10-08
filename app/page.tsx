@@ -2046,7 +2046,7 @@ function DaesinSyncPanel({ rows, allRows, mapRow, onImport, onReload, defaultDat
   const status = async () => {
     const response = await callLiveTestBridge('status');
     if (!response.ok) throw new Error(response.error);
-    if (!['0.6.3','0.7.0','0.7.1','0.7.2'].includes(response.version || '')) throw new Error('연결 도구 0.7.0으로 업데이트하고 이 페이지를 새로고침해 주세요.');
+    if (!['0.6.3','0.7.0','0.7.1','0.7.2','0.7.3'].includes(response.version || '')) throw new Error('연결 도구 0.7.0으로 업데이트하고 이 페이지를 새로고침해 주세요.');
     await saveJobs(response.jobs || []); return response.jobs || [];
   };
   const refresh = async () => {

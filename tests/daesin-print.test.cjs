@@ -84,7 +84,7 @@ test('preflight checks native completion without print, feed, clear or label dat
  assert.deepEqual(JSON.parse(requests[0].body).functions,{func0:{checkLabelStatus:[]}});
  assert.equal(w.calls.filter(c=>c.url.endsWith('/checkStatus')).length,2);
  const saved=await w.send('print-diagnostics');assert.equal(saved.diagnostic.kind,'status-only');
- assert.equal(saved.diagnostic.version,'0.7.2');
+ assert.equal(saved.diagnostic.version,'0.7.3');
  assert(saved.diagnostic.steps.some(s=>s.path==='/checkStatus'&&s.response.Result==='success'));
 });
 test('failed response preflight is reported honestly and never dispatches a label',async()=>{
@@ -99,4 +99,40 @@ test('diagnostic actions are rejected from shipment pages and cannot accept cust
  assert.equal(w.calls.length,0);
  await w.send('print-diagnose',{functions:{func0:{printBuffer:[]}},url:'http://other.invalid'});
  assert(!w.calls.some(c=>c.body.includes('printBuffer')));
+});
+
+test('blank freight text is omitted but visible commands, exact box barcodes and copies are unchanged',async()=>{
+ const w=worker('progress');
+ const font=text=>({drawTrueTypeFont:[text,120,305,'Arial',25,0,false,false,false,true]});
+ const labels=[1,2,3].map(index=>{
+  const base=label(index),commands=[base.functions.func0,base.functions.func1,{setDensity:[18]},{setOrientation:['T']}];
+  for(const text of ['배송지','', '수화주', '0', ' ', '제주', '주소수정'])commands.push(font(text));
+  commands.push({drawDeviceFont:['',500,405,'e',2,2,0,false,true,0]},base.functions.func2,base.functions.func3);
+  return {id:base.id,functions:Object.fromEntries(commands.map((c,i)=>['func'+i,c]).sort(([a],[b])=>a.localeCompare(b)))};
+ });
+ const original=structuredClone(labels),job={id:'00000000-0000-4000-8000-000000000031',waybill_no:bill,labels};
+ const result=await w.send('print-send',{job});assert.equal(result.state,'sent');assert.equal(result.completed,3);
+ const emitted=w.calls.filter(c=>c.body&&!c.url.endsWith('/checkStatus')).map(c=>JSON.parse(c.body));
+ assert.equal(emitted.length,3);assert.deepEqual(labels,original,'source job must remain immutable');
+ emitted.forEach((actual,index)=>{
+  const originalCommands=Object.entries(original[index].functions).sort(([a],[b])=>Number(a.slice(4))-Number(b.slice(4))).map(([,c])=>c);
+  const emptyCommands=originalCommands.filter(c=>c.drawTrueTypeFont?.[0]===''||c.drawDeviceFont?.[0]==='');
+  const expectedCommands=originalCommands.filter(c=>!emptyCommands.includes(c));
+  assert.deepEqual(Object.values(actual.functions),expectedCommands,'preserve every other argument and command');
+  assert.deepEqual(Object.keys(actual.functions),expectedCommands.map((_,i)=>'func'+i),'no numbering gaps');
+  assert.equal(actual.id,original[index].id);
+  assert.equal(expectedCommands.filter(c=>c.printBuffer).length,1);
+  assert(expectedCommands.some(c=>c.draw1DBarcode?.[0]===bill+String(index+1).padStart(3,'0')));
+ });
+ const diagnostic=await w.send('print-diagnostics');assert.equal(diagnostic.diagnostic.omittedEmptyText,6);
+ await w.send('print-send',{job});assert.equal(w.calls.filter(c=>c.body&&!c.url.endsWith('/checkStatus')).length,3);
+});
+test('unsupported blank commands are rejected before normalization; actual errors still halt and cannot replay',async()=>{
+ const w=worker(),invalid=label();invalid.functions.func1={directDrawHex:['']};
+ const job={id:'00000000-0000-4000-8000-000000000032',waybill_no:bill,labels:[invalid]};
+ assert.equal((await w.send('print-send',{job})).ok,false);assert.equal(w.calls.length,0);
+ const rejected=worker('error json data');job.labels=[label()];
+ assert.equal((await rejected.send('print-send',{job})).state,'unknown');
+ assert.equal((await rejected.send('print-send',{job})).state,'unknown');
+ assert.equal(rejected.calls.filter(c=>c.body).length,1,'error response must never be interpreted as success or retry');
 });
