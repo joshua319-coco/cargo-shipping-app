@@ -10,19 +10,20 @@ test('only bounded single-copy native label commands and exact per-box barcodes 
  }
 });
 function worker(mode='success'){
+ const response=data=>({ok:true,status:200,text:async()=>JSON.stringify(data)});
  const saved={},calls=[];let listener;
  const chrome={storage:{local:{get:async k=>({[k]:saved[k]}),set:async v=>Object.assign(saved,structuredClone(v))}},runtime:{getURL:p=>'chrome-extension://test/'+p,onMessage:{addListener:f=>listener=f}}};
- const sandbox=vm.createContext({URL,AbortSignal,console,chrome,structuredClone,setTimeout,clearTimeout,
+ const sandbox=vm.createContext({URL,AbortSignal,console,chrome,crypto:require("node:crypto").webcrypto,structuredClone,setTimeout,clearTimeout,
   fetch:async(url,options)=>{calls.push({url,body:options.body});if(options.body==='')return{ok:true};if(mode==='lost')throw Error('connection lost after dispatch');
    if(mode==='progress'){
     const body=JSON.parse(options.body);
-    if(!url.endsWith('/checkStatus'))return{ok:true,json:async()=>({Result:'ready',RequestID:String(body.id),ResponseID:7321})};
-    if(typeof body.RequestID!=='number'||typeof body.ResponseID!=='string')return{ok:true,json:async()=>({Result:'error json data'})};
+    if(!url.endsWith('/checkStatus'))return response({Result:'ready',RequestID:String(body.id),ResponseID:7321});
+    if(typeof body.RequestID!=='number'||typeof body.ResponseID!=='string')return response({Result:'error json data'});
     // Native checkResult retains the initial identifiers even when a progress reply omits them.
     const polls=calls.filter(c=>c.url.endsWith('/checkStatus')).length;
-    return{ok:true,json:async()=>({Result:polls%2?'progress':'success'})};
+    return response({Result:polls%2?'progress':'success'});
    }
-   return{ok:true,json:async()=>({Result:mode})};}});
+   return response({Result:mode});}});
  sandbox.importScripts=(...files)=>files.forEach(file=>vm.runInContext(fs.readFileSync(path.join(dir,file),'utf8'),sandbox));
  vm.runInContext(fs.readFileSync(path.join(dir,'background.js'),'utf8'),sandbox);
  const send=(action,patch={},pathname='/print-station')=>new Promise(resolve=>listener({action,...patch},{url:'https://cargo-shipping-app.vercel.app'+pathname,frameId:0,tab:{id:1,windowId:1}},resolve));
@@ -73,4 +74,29 @@ test('native ready/progress protocol completes consecutive jobs and all three bo
  assert.equal(polls.length,8);
  assert.deepEqual(polls.map(c=>JSON.parse(c.body).RequestID),[101,101,101,101,102,102,103,103]);
  assert(polls.every(c=>JSON.parse(c.body).ResponseID==='7321'));
+});
+
+test('preflight checks native completion without print, feed, clear or label data',async()=>{
+ const w=worker('progress');
+ const checked=await w.send('print-diagnose');assert.equal(checked.diagnostic.passed,true);
+ const requests=w.calls.filter(c=>c.body!==''&&!c.url.endsWith('/checkStatus'));
+ assert.equal(requests.length,1);
+ assert.deepEqual(JSON.parse(requests[0].body).functions,{func0:{checkLabelStatus:[]}});
+ assert.equal(w.calls.filter(c=>c.url.endsWith('/checkStatus')).length,2);
+ const saved=await w.send('print-diagnostics');assert.equal(saved.diagnostic.kind,'status-only');
+ assert.equal(saved.diagnostic.version,'0.7.2');
+ assert(saved.diagnostic.steps.some(s=>s.path==='/checkStatus'&&s.response.Result==='success'));
+});
+test('failed response preflight is reported honestly and never dispatches a label',async()=>{
+ const w=worker('error json data');const result=await w.send('print-diagnose');
+ assert.equal(result.diagnostic.passed,false);assert.match(result.diagnostic.message,/송장은 보내지 않았습니다/);
+ assert.equal(w.calls.filter(c=>c.body!=='').length,1);
+ assert(!w.calls.some(c=>c.body.includes('printBuffer')));
+ assert.equal(result.diagnostic.steps[0].response.Result,'error json data');
+});
+test('diagnostic actions are rejected from shipment pages and cannot accept custom commands',async()=>{
+ const w=worker();for(const action of ['print-diagnose','print-diagnostics'])assert.equal((await w.send(action,{},'/')).ok,false);
+ assert.equal(w.calls.length,0);
+ await w.send('print-diagnose',{functions:{func0:{printBuffer:[]}},url:'http://other.invalid'});
+ assert(!w.calls.some(c=>c.body.includes('printBuffer')));
 });

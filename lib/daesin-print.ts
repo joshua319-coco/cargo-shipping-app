@@ -2,11 +2,12 @@ import { supabase } from './supabase';
 
 export type PrintSummary = { id: string; waybillNo: string; state: string; message: string; updatedAt: string };
 export type PrintJob = { id: string; token: string; waybill_no: string; labels: unknown[]; snapshot: {receiver: string}; state: string; message: string };
-type BridgeReply = {ok: boolean; error?: string; labels?: unknown[]; printStation?: boolean; printProtocol?: number; state?: string; message?: string};
+export type PrintDiagnostic = {version:string;generatedAt:string;kind:string;passed?:boolean;message?:string;steps:unknown[]};
+type BridgeReply = {ok: boolean; error?: string; version?: string; diagnostic?:PrintDiagnostic|null; labels?: unknown[]; printStation?: boolean; printProtocol?: number; state?: string; message?: string};
 export function printBridge(action: string, extra: Record<string, unknown> = {}): Promise<BridgeReply> {
   return new Promise((resolve, reject) => {
     const requestId=crypto.randomUUID();
-    const timeout=setTimeout(() => {window.removeEventListener('message',receive);reject(new Error(action==='print-send'?'출력 응답을 확인하지 못했습니다. 실제 송장을 확인해 주세요. 자동 재출력하지 않습니다.':'연결 도구 0.7.0 이상이 필요합니다. 확장 프로그램과 출고사이트를 새로고침해 주세요.'));},action==='print-send'?300000:action==='print-prepare'?100000:8000);
+    const timeout=setTimeout(() => {window.removeEventListener('message',receive);reject(new Error(action==='print-send'?'출력 응답을 확인하지 못했습니다. 실제 송장을 확인해 주세요. 자동 재출력하지 않습니다.':'연결 도구 0.7.0 이상이 필요합니다. 확장 프로그램과 출고사이트를 새로고침해 주세요.'));},action==='print-send'?300000:action==='print-prepare'||action==='print-diagnose'?100000:8000);
     function receive(event: MessageEvent){
       if(event.source!==window||event.origin!==location.origin||event.data?.channel!=='sanghwa-live-response'||event.data.requestId!==requestId)return;
       clearTimeout(timeout);window.removeEventListener('message',receive);

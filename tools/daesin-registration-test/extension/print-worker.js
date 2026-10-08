@@ -15,6 +15,50 @@ function daesinPrintInquiry(response){
     throw new Error('출력 응답 번호를 확인하지 못했습니다.');
   return {RequestID:Number(id),ResponseID:String(token),Timeout:30};
 }
+const DAESIN_PRINT_DIAGNOSTIC='sanghwa-print-diagnostic';
+function printDiagnostic(kind){return {version:'0.7.2',generatedAt:new Date().toISOString(),kind,steps:[]};}
+function responseFields(response){
+  return Object.fromEntries(['Result','RequestID','ResponseID'].filter(key=>response[key]!==undefined).map(key=>[key,response[key]]));
+}
+async function printerPost(path,body,diagnostic){
+  const entry={path,request:path==='/checkStatus'?body:{id:body.id,commandCount:Object.keys(body.functions).length}};
+  diagnostic.steps.push(entry);if(diagnostic.steps.length>24)diagnostic.steps.shift();
+  try{
+    const response=await fetch(DAESIN_PRINTER+path,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:JSON.stringify(body),signal:AbortSignal.timeout(35000)});
+    entry.httpStatus=response.status;
+    const raw=await response.text();
+    if(!response.ok)throw new Error('출력 프로그램 응답 '+response.status);
+    let data;
+    try{data=JSON.parse(raw);}catch{entry.responsePreview=raw.slice(0,200);throw new Error('출력 프로그램 응답을 읽지 못했습니다.');}
+    entry.response=responseFields(data);
+    return data;
+  }catch(error){entry.error=error.message;throw error;}
+  finally{await chrome.storage.local.set({[DAESIN_PRINT_DIAGNOSTIC]:diagnostic});}
+}
+async function waitDaesinPrintResult(initial,diagnostic){
+  let response=initial;
+  const inquiry=/ready|progress/i.test(String(response.Result))?daesinPrintInquiry(response):null;
+  const deadline=Date.now()+60000;
+  while(/ready|progress/i.test(String(response.Result))){
+    if(Date.now()>deadline)throw new Error('출력 결과 응답 시간이 초과됐습니다.');
+    response=await printerPost('/checkStatus',inquiry,diagnostic);
+  }
+  if(!/^(success|complete|completed|ok)$/i.test(String(response.Result)))throw new Error('출력 프로그램: '+String(response.Result).slice(0,120));
+}
+async function diagnoseDaesinPrinter(){
+  const diagnostic=printDiagnostic('status-only');
+  try{
+    await probeDaesinPrinter();
+    // Fixed status command only: no clearing, drawing, feeding or printBuffer.
+    // Never accept diagnostic commands from a caller.
+    const id=crypto.getRandomValues(new Uint32Array(1))[0]%2000000000+1;
+    const response=await printerPost('',{id,functions:{func0:{checkLabelStatus:[]}}},diagnostic);
+    await waitDaesinPrintResult(response,diagnostic);
+    diagnostic.passed=true;diagnostic.message='종이 출력 없이 연결·완료 응답 확인을 통과했습니다.';
+  }catch(error){diagnostic.passed=false;diagnostic.message='완료 응답 점검 실패 · '+error.message+' · 송장은 보내지 않았습니다.';}
+  await chrome.storage.local.set({[DAESIN_PRINT_DIAGNOSTIC]:diagnostic});
+  return {ok:true,diagnostic};
+}
 async function dispatchDaesinLabels(job){
   if(!/^[a-f0-9-]{36}$/.test(job?.id||'')||!/^\d{12,13}$/.test(job.waybill_no||''))throw new Error('출력 요청을 확인하지 못했습니다.');
   validateDaesinPrintLabels(job.labels,job.waybill_no);
@@ -22,29 +66,18 @@ async function dispatchDaesinLabels(job){
   if(prior)return {ok:true,...(prior.state==='sending'?{state:'unknown',message:'이 PC에서 이미 전송을 시도했습니다. 실제 송장을 확인해 주세요.'}:prior)};
   await probeDaesinPrinter();
   let completed=0,stage='송장 전송';
+  const diagnostic=printDiagnostic('label-result');
   const save=async state=>{await chrome.storage.local.set({[key]:state});return {ok:true,...state};};
   // Persist BEFORE the first irreversible local request. No automatic resending.
   await save({state:'sending',message:'프린터로 전송 중',completed:0});
   try{
     for(const label of job.labels){
-      const post=async(url,body)=>{
-        const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:JSON.stringify(body),signal:AbortSignal.timeout(35000)});
-        if(!r.ok)throw new Error('출력 프로그램 응답 '+r.status);
-        return r.json();
-      };
       // Chrome IPC and Postgres JSONB reorder object keys. Restore native func order.
       const ordered={id:label.id,functions:Object.fromEntries(Object.entries(label.functions).sort(([a],[b])=>Number(a.slice(4))-Number(b.slice(4))))};
       stage='송장 전송';
-      let response=await post(DAESIN_PRINTER,ordered);
-      // Poll the ORIGINAL handles. Progress replies need not repeat the identifiers.
-      const inquiry=/ready|progress/i.test(String(response.Result))?daesinPrintInquiry(response):null;
-      const deadline=Date.now()+60000;
-      while(/ready|progress/i.test(String(response.Result))){
-        if(Date.now()>deadline)throw new Error('출력 결과 응답 시간이 초과됐습니다.');
-        stage='출력 완료 확인';
-        response=await post(DAESIN_PRINTER+'/checkStatus',inquiry);
-      }
-      if(!/^(success|complete|completed|ok)$/i.test(String(response.Result)))throw new Error('출력 프로그램: '+String(response.Result).slice(0,120));
+      const response=await printerPost('',ordered,diagnostic);
+      stage='출력 완료 확인';
+      await waitDaesinPrintResult(response,diagnostic);
       completed++;
       await save({state:'sending',message:'프린터 처리 중',completed});
     }
