@@ -7,8 +7,8 @@ import type {
   KeyboardEvent as ReactKeyboardEvent,
   RefObject,
 } from "react";
-import { requestDaesinPrint, printStatusLabel } from '@/lib/daesin-print';
-import type { PrintSummary } from '@/lib/daesin-print';
+import { requestDaesinPrint, printStatusLabel, prepareDaesinReprint, confirmDaesinReprint } from '@/lib/daesin-print';
+import type { PrintSummary, ReprintPreview } from '@/lib/daesin-print';
 import { supabase } from "@/lib/supabase";
 import type { Session } from "@supabase/supabase-js";
 import { CARRIERS, normalizeCarrier, isLogenQuantity, logenFare, exportCarrier, sameCarrierText, sameCarrierPhone, sameParcelAddress } from "@/lib/carriers";
@@ -1890,6 +1890,25 @@ function callLiveTestBridge(action: string, extra: Record<string, unknown> = {})
     window.postMessage({ channel: 'sanghwa-live-request', requestId, action, ...extra }, location.origin);
   });
 }
+function ReprintDialog({preview,busy,error,onClose,onConfirm}:{preview:ReprintPreview;busy:boolean;error:string;onClose:()=>void;onConfirm:()=>void}) {
+  const dialog=useRef<HTMLDialogElement>(null);
+  useEffect(()=>{dialog.current?.showModal();},[]);
+  const current=preview.snapshot,previous=preview.previousSnapshot;
+  const rows=[['수화주',previous.receiver,current.receiver],['박스 수',previous.qty+'박스',current.qty+'박스'],['운임',formatFare(String(previous.fare)),formatFare(String(current.fare))]];
+  return <dialog ref={dialog} aria-labelledby="reprint-title" onCancel={event=>{event.preventDefault();if(!busy)onClose();}}
+    style={{border:0,borderRadius:18,padding:24,width:'min(560px,90vw)',margin:'auto',maxHeight:'90vh',overflowY:'auto',color:'#172033'}}>
+    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:16}}><h2 id="reprint-title" style={{fontSize:21}}>운송장 재출력</h2><button type="button" style={smallGrayBtn} disabled={busy} onClick={onClose}>닫기</button></div>
+    <p style={{color:'#64748b',fontSize:13}}>송장번호 {preview.waybillNo}</p>
+    <table style={{width:'100%',borderCollapse:'collapse',fontSize:14}}><thead><tr style={{background:'#f1f5f9'}}><th style={{padding:10,textAlign:'left'}}>항목</th><th>이전 출력</th><th>이번 재출력</th></tr></thead>
+      <tbody>{rows.map(([name,oldValue,newValue])=><tr key={name} style={{borderBottom:'1px solid #e2e8f0',background:oldValue!==newValue?'#fff1f2':undefined}}><th style={{padding:10,textAlign:'left'}}>{name}</th><td style={{textAlign:'center'}}>{oldValue}</td><td style={{textAlign:'center',fontWeight:700}}>{newValue}</td></tr>)}</tbody>
+    </table>
+    <p><strong>현재 {current.qty}박스의 송장 {current.qty}장을 모두 다시 출력합니다.</strong></p>
+    <p style={{fontSize:13,color:'#64748b'}}>출고정보를 바꿨다면 대신 전산도 수정하고 ‘대신 전산데이터 새로고침’으로 일치 여부를 확인해 주세요. 이전 송장은 새 송장으로 교체해 주세요.</p>
+    {preview.previousState==='unknown'&&<p style={{fontSize:13,color:'#c2410c'}}>이전 송장이 이미 나왔을 수 있습니다. 실제 송장을 확인한 뒤 재출력해 주세요.</p>}
+    {error&&<p role="alert" style={{color:'#c2410c'}}>{error}</p>}
+    <div style={{display:'flex',justifyContent:'flex-end',gap:10,marginTop:20}}><button type="button" style={smallGrayBtn} disabled={busy} onClick={onClose}>취소</button><button type="button" style={smallBlueBtn} disabled={busy} onClick={onConfirm}>{busy?'송장 확인 중…':'현재 '+current.qty+'장 재출력'}</button></div>
+  </dialog>;
+}
 function RegistrationDialog({ shipment, view, upload, busy, onClose, onEdit, onRegister, onRefresh, onConfirmDeleted }: {
   shipment: SavedShipment; view: ReturnType<typeof shipmentRegistrationView>; upload?: WaybillUploadRow;
   busy: boolean; onClose: () => void; onEdit: () => void; onRegister: () => void; onRefresh: () => void; onConfirmDeleted: () => void;
@@ -2278,6 +2297,9 @@ export default function Home() {
 
   const [pdaPrintingIds,setPdaPrintingIds]=useState<string[]>([]);
   const pdaPrintingRef=useRef(new Set<string>());
+  const [reprintPreview,setReprintPreview]=useState<ReprintPreview|null>(null);
+  const [reprintBusy,setReprintBusy]=useState(false),[reprintError,setReprintError]=useState('');
+  const reprintConfirmRef=useRef(false);
   const [session, setSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authBusy, setAuthBusy] = useState(false);
@@ -4001,6 +4023,28 @@ export default function Home() {
     } finally {
       numericIds.forEach((id) => checklistLockedIdsRef.current.delete(id));
     }
+  };
+
+  const openPrintStatus = async (shipment:SavedShipment) => {
+    if(pdaPrintingRef.current.has(shipment.id))return;
+    if(!['sent','unknown'].includes(shipment.daesinPrint?.state||'')){alert(shipment.daesinPrint?.message||'송장 데이터를 준비하고 있습니다.');return;}
+    if(shipmentRegistrationView(shipment,shipmentWaybillInfoById.get(shipment.id)).label!=='등록완료'){setRegistrationDialogId(shipment.id);return;}
+    pdaPrintingRef.current.add(shipment.id);setPdaPrintingIds([...pdaPrintingRef.current]);
+    try{
+      const preview=await prepareDaesinReprint(shipment.id,shipment.daesinRegistration?.waybillNo||'',shipment.daesinPrint!.id,shipment.daesinRegistration?.shipmentDate||shipment.shipmentDate);
+      setReprintError('');setReprintPreview(preview);
+    }catch(error){alert('운송장 재출력: '+getErrorMessage(error));await loadShipmentsFromDb();}
+    finally{pdaPrintingRef.current.delete(shipment.id);setPdaPrintingIds([...pdaPrintingRef.current]);}
+  };
+  const handleReprint = async () => {
+    if(!reprintPreview||reprintConfirmRef.current)return;
+    const current=savedShipments.find(row=>row.id===reprintPreview.shipmentId);
+    if(!current||shipmentRegistrationView(current,shipmentWaybillInfoById.get(current.id)).label!=='등록완료'){setReprintError('출고정보와 대신 전산데이터를 먼저 확인해 주세요.');return;}
+    reprintConfirmRef.current=true;setReprintBusy(true);setReprintError('');
+    pdaPrintingRef.current.add(reprintPreview.shipmentId);setPdaPrintingIds([...pdaPrintingRef.current]);
+    try{await confirmDaesinReprint(reprintPreview);await loadShipmentsFromDb();setReprintPreview(null);}
+    catch(error){setReprintError(getErrorMessage(error));}
+    finally{reprintConfirmRef.current=false;setReprintBusy(false);pdaPrintingRef.current.delete(reprintPreview.shipmentId);setPdaPrintingIds([...pdaPrintingRef.current]);}
   };
 
   const handleChecklistToggle = async (
@@ -6072,9 +6116,10 @@ export default function Home() {
                                 disabled={pdaPrintingIds.includes(shipment.id)} title={shipment.carrier==='대신'?'직접 체크하면 공용 프린터로 송장을 보냅니다.':''}
                                 onChange={() => void handleChecklistToggle(shipment.id, 'pda')} />
                               {shipment.carrier==='대신' && (pdaPrintingIds.includes(shipment.id)||shipment.daesinPrint) && <button type="button"
-                                onClick={()=>alert(shipment.daesinPrint?.message||'송장 데이터를 준비하고 있습니다.')}
-                                style={{position:'absolute',top:'100%',left:0,right:0,border:0,background:'transparent',fontSize:10,color:['blocked','unknown'].includes(shipment.daesinPrint?.state||'')?'#c2410c':'#64748b',whiteSpace:'nowrap',cursor:'pointer'}}>
-                                {pdaPrintingIds.includes(shipment.id)?'출력 준비':printStatusLabel(shipment.daesinPrint)}
+                                onClick={()=>void openPrintStatus(shipment)}
+                                aria-label={shipment.receiver+' 출력 내역·재출력'} title={['sent','unknown'].includes(shipment.daesinPrint?.state||'')?'출력 내역 확인 및 운송장 재출력':shipment.daesinPrint?.message}
+                                style={{position:'absolute',zIndex:3,top:'100%',left:0,right:0,border:0,background:'transparent',fontSize:10,color:['blocked','unknown'].includes(shipment.daesinPrint?.state||'')?'#c2410c':'#64748b',whiteSpace:'nowrap',cursor:'pointer'}}>
+                                {pdaPrintingIds.includes(shipment.id)?'출력 준비':printStatusLabel(shipment.daesinPrint)+(['sent','unknown'].includes(shipment.daesinPrint?.state||'')?' ↻':'')}
                               </button>}
                             </div>
                             <div style={ovCheck}>
@@ -7120,6 +7165,7 @@ export default function Home() {
           </div>
         )}
 
+        {reprintPreview&&<ReprintDialog preview={reprintPreview} busy={reprintBusy} error={reprintError} onClose={()=>{if(!reprintConfirmRef.current)setReprintPreview(null);}} onConfirm={()=>void handleReprint()} />}
         {registrationDialogId && savedShipments.find(row => row.id === registrationDialogId) && (() => {
           const shipment = savedShipments.find(row => row.id === registrationDialogId)!;
           const info = shipmentWaybillInfoById.get(shipment.id);

@@ -38,3 +38,37 @@ export async function printWorker(stationId:string,action:string,job?:PrintJob,r
 export function printStatusLabel(summary?:PrintSummary){
   return summary?({queued:'출력 대기',claimed:'출력 준비',sending:'출력 중',sent:'전송 완료',blocked:'출력 확인',unknown:'출력 확인',cancelled:'출력 취소'}[summary.state]||''):'';
 }
+
+export type PrintSnapshot = {
+  receiver:string; receiverPhone:string; sender:string; senderPhone:string; qty:number; fare:number;
+  delivery:string; pay:string; address:string; branch:string; shipmentDate:string; item:string; pack:string; memo:string;
+};
+export type ReprintPreview = {
+  shipmentId:string; waybillNo:string; previousJobId:string; requestId:string; receiptDate:string;
+  snapshot:PrintSnapshot; previousSnapshot:PrintSnapshot; previousState:string;
+};
+const reprintParams=(preview:Pick<ReprintPreview,'shipmentId'|'waybillNo'|'previousJobId'|'requestId'>)=>({
+  p_shipment_id:Number(preview.shipmentId),p_waybill_no:preview.waybillNo,
+  p_previous_job_id:preview.previousJobId,p_request_id:preview.requestId,
+});
+export async function prepareDaesinReprint(shipmentId:string,waybillNo:string,previousJobId:string,receiptDate:string):Promise<ReprintPreview>{
+  const identity={shipmentId,waybillNo,previousJobId,receiptDate,requestId:crypto.randomUUID()};
+  const result=await supabase.rpc('daesin_print_reprint',reprintParams(identity));
+  if(result.error)throw result.error;
+  if(!result.data?.needsPreparation)throw new Error('출력 상태가 변경되었습니다. 목록을 새로고침해 주세요.');
+  return {...identity,...result.data};
+}
+export async function confirmDaesinReprint(preview:ReprintPreview){
+  const params={...reprintParams(preview),p_snapshot:preview.snapshot};
+  const check=await supabase.rpc('daesin_print_reprint',params);
+  if(check.error)throw check.error;
+  if(!check.data?.needsPreparation)return check.data;
+  const connection=await printBridge('ping');
+  if(!connection.printStation)throw new Error('연결 도구 0.7.0 이상이 필요합니다.');
+  const prepared=await printBridge('print-prepare',{payload:{waybillNo:preview.waybillNo,receiptDate:preview.receiptDate,snapshot:preview.snapshot}});
+  if(!prepared.labels?.length)throw new Error('송장 데이터가 없습니다.');
+  // Keep the confirmation's ID across retries; a lost response must never print twice.
+  const queued=await supabase.rpc('daesin_print_reprint',{...params,p_labels:prepared.labels});
+  if(queued.error)throw queued.error;
+  return queued.data;
+}
