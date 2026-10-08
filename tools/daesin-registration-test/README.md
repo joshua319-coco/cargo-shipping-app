@@ -1,4 +1,4 @@
-# Daesin integration 0.7.1
+# Daesin integration 0.7.3
 
 ## Shared printer: PDA checkbox
 
@@ -74,3 +74,9 @@ Click the print status under PDA to preview the current recipient, quantity and 
 ## 0.7.2 completion diagnostics and no-paper preflight
 
 0.7.1 still returned error json data on the actual printer PC after one of three labels. Do not claim the protocol issue is resolved from mock tests. Version 0.7.2 requires a status-only checkLabelStatus request and successful completion inquiry before claiming any shared job. No printBuffer, feed, clear or label commands are included in that preflight. The station also offers a manual no-paper check and JSON report with version, request/response identifiers, result, HTTP status and timestamps. This evidence is required to diagnose that installation; staff PCs may keep 0.7.0 or 0.7.1. Unknown jobs remain unknown and cancelled jobs remain cancelled. Diagnostic routes are only accepted from the dedicated station and never accept caller-supplied commands or endpoints.
+
+## 0.7.3 omit no-op text commands at the printer boundary
+
+Evidence from the actual 0.7.2 station: status-only check completed successfully; an actual 32-command freight label returned ready then error json data with matching request/response IDs. All retained failing freight labels contained an empty drawTrueTypeFont street-address command; the initially successful parcel had a populated address. This points to label execution rather than the inquiry handle format. Hardware acceptance of the normalization is still required; errors are never treated as success.
+
+Validate original labels first, then omit exactly empty-string drawTrueTypeFont/drawDeviceFont calls and reindex func keys in numeric order. Validate the result again. Preserve all nonempty text (including whitespace), coordinates, settings, IDs, exact box barcodes and printBuffer. Apply on the printer PC so earlier requesting extensions remain compatible. No receipt/source data, previous jobs or label count is changed. Diagnostics record the number of omitted empty calls. Tests cover native parcel/freight rendering, three box labels, preservation of visible content, error/replay protection and older requesting PCs.

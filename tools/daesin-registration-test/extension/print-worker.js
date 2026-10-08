@@ -16,7 +16,7 @@ function daesinPrintInquiry(response){
   return {RequestID:Number(id),ResponseID:String(token),Timeout:30};
 }
 const DAESIN_PRINT_DIAGNOSTIC='sanghwa-print-diagnostic';
-function printDiagnostic(kind){return {version:'0.7.2',generatedAt:new Date().toISOString(),kind,steps:[]};}
+function printDiagnostic(kind){return {version:'0.7.3',generatedAt:new Date().toISOString(),kind,steps:[]};}
 function responseFields(response){
   return Object.fromEntries(['Result','RequestID','ResponseID'].filter(key=>response[key]!==undefined).map(key=>[key,response[key]]));
 }
@@ -59,21 +59,33 @@ async function diagnoseDaesinPrinter(){
   await chrome.storage.local.set({[DAESIN_PRINT_DIAGNOSTIC]:diagnostic});
   return {ok:true,diagnostic};
 }
+function normalizeDaesinPrintLabel(label){
+  // Carrier freight templates unconditionally draw the absent street address.
+  // Empty text has no visible output; omit only those font calls. Preserve all
+  // nonempty text, barcodes, coordinates, settings and the final print command.
+  const ordered=Object.entries(label.functions).sort(([a],[b])=>Number(a.slice(4))-Number(b.slice(4)));
+  const commands=ordered.map(([,command])=>command).filter(command=>{
+    const [name,args]=Object.entries(command)[0];
+    return !(['drawTrueTypeFont','drawDeviceFont'].includes(name)&&args[0]==='');
+  });
+  return {id:label.id,functions:Object.fromEntries(commands.map((command,index)=>['func'+index,command]))};
+}
 async function dispatchDaesinLabels(job){
   if(!/^[a-f0-9-]{36}$/.test(job?.id||'')||!/^\d{12,13}$/.test(job.waybill_no||''))throw new Error('출력 요청을 확인하지 못했습니다.');
   validateDaesinPrintLabels(job.labels,job.waybill_no);
+  const labels=job.labels.map(normalizeDaesinPrintLabel);
+  validateDaesinPrintLabels(labels,job.waybill_no);
   const key='sanghwaPrint:'+job.id, prior=(await chrome.storage.local.get(key))[key];
   if(prior)return {ok:true,...(prior.state==='sending'?{state:'unknown',message:'이 PC에서 이미 전송을 시도했습니다. 실제 송장을 확인해 주세요.'}:prior)};
   await probeDaesinPrinter();
   let completed=0,stage='송장 전송';
   const diagnostic=printDiagnostic('label-result');
+  diagnostic.omittedEmptyText=job.labels.reduce((count,label,index)=>count+Object.keys(label.functions).length-Object.keys(labels[index].functions).length,0);
   const save=async state=>{await chrome.storage.local.set({[key]:state});return {ok:true,...state};};
   // Persist BEFORE the first irreversible local request. No automatic resending.
   await save({state:'sending',message:'프린터로 전송 중',completed:0});
   try{
-    for(const label of job.labels){
-      // Chrome IPC and Postgres JSONB reorder object keys. Restore native func order.
-      const ordered={id:label.id,functions:Object.fromEntries(Object.entries(label.functions).sort(([a],[b])=>Number(a.slice(4))-Number(b.slice(4))))};
+    for(const ordered of labels){
       stage='송장 전송';
       const response=await printerPost('',ordered,diagnostic);
       stage='출력 완료 확인';
