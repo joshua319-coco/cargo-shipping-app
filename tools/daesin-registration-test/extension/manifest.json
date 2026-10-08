@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "상화 대신 전산 연동",
-  "version": "0.6.3",
-  "description": "대신 미등록 출고건 등록(출력안함)과 발송데이터 조회를 연결합니다.",
+  "version": "0.7.0",
+  "description": "대신 미등록 출고건 연동과 PDA 체크 시 공용 프린터 자동 출력을 연결합니다.",
   "permissions": [
     "scripting",
     "storage"

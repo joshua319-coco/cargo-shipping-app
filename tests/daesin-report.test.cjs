@@ -28,7 +28,7 @@ test('registration response keeps an entire 13-digit number and does not truncat
 test('production extension accepts only exact app origins and top-level app frames',async()=>{
  const w=worker();
  for(const url of ['https://cargo-shipping-app.vercel.app/','https://cargo-shipping-app.vercel.app/?daesinSync=1','http://127.0.0.1:4320/']){
-  const result=await w.send({action:'ping'},{url,frameId:0});assert.equal(result.ok,true);assert.equal(result.version,'0.6.3');
+  const result=await w.send({action:'ping'},{url,frameId:0});assert.equal(result.ok,true);assert.equal(result.version,'0.7.0');
  }
  for(const url of ['http://cargo-shipping-app.vercel.app/','https://cargo-shipping-app.vercel.app.evil.invalid/','https://cargo-shipping-app-preview.vercel.app/','http://127.0.0.1:4321/','https://other.invalid/'])assert.equal((await w.send({action:'ping'},{url,frameId:0})).ok,false,url);
  assert.equal((await w.send({action:'status'},{url:'https://cargo-shipping-app.vercel.app/',frameId:1})).ok,false);
