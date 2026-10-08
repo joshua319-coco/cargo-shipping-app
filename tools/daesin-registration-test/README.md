@@ -1,4 +1,4 @@
-# Daesin integration 0.7.0
+# Daesin integration 0.7.1
 
 ## Shared printer: PDA checkbox
 
@@ -60,3 +60,9 @@ Migration `20261007055028_daesin_registration_state.sql` was applied and verifie
 - The user confirmed 0.5.0 data refresh against real shipments. The simplified controls and status dialogs have isolated end-to-end evidence; the updated UI still needs the user’s normal live acceptance. Production requires extension 0.6.3; earlier versions show an update instruction. Apply migration 20261008002201_daesin_deleted_registration_retry.sql before deployment.
 
 Apply the state-only deletion-confirmation migration before releasing this UI. Cached old claim-deleted requests are rejected and ask the user to reload.
+
+## 0.7.1 printer result protocol
+
+The printer PC now normalizes checkStatus RequestID to a JSON number and ResponseID to a JSON string, matching the carrier's bxlcommon.makeResultInquiryData. It keeps the original identifiers through progress replies that omit them. Previously, an already printed label could be marked unknown and pause the station because a status inquiry was rejected as error json data. Printer stations require printProtocol 2 (extension 0.7.1); requesting PCs may keep 0.7.0. Failed outcomes distinguish dispatch from result inquiry and are still never automatically reprinted.
+
+Regression coverage includes two consecutive jobs from independent requesters, a three-label parcel, intermediate replies without identifiers, lost replies and replay prevention. Live hardware acceptance remains necessary after updating the printer PC.

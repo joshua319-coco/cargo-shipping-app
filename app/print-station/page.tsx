@@ -31,7 +31,7 @@ export default function PrintStation(){
       await navigator.locks.request('sanghwa-daesin-printer',{ifAvailable:true},async lock=>{
         if(!lock){setMessage('이 PC의 다른 출력 화면이 이미 실행 중입니다.');setEnabled(false);return;}
         try{
-          const ping=await printBridge('ping');if(!ping.printStation)throw new Error('연결 도구 0.7.0 이상을 설치하고 이 화면을 새로고침해 주세요.');
+          const ping=await printBridge('ping');if(!ping.printStation||ping.printProtocol!==2)throw new Error('프린터 PC의 연결 도구를 0.7.1로 업데이트하고 이 화면을 새로고침해 주세요.');
           await printBridge('print-probe');
           await printWorker(stationId.current,'heartbeat');
           heartbeat=setInterval(()=>{void printWorker(stationId.current,'heartbeat').catch(error=>{setMessage(messageOf(error));alive=false;setEnabled(false);});},20000);
@@ -55,7 +55,7 @@ export default function PrintStation(){
             }else setMessage(claimed.error||'연결됨 · 각 자리에서 PDA를 체크하면 여기서 자동으로 출력합니다.');
             await new Promise(resolve=>setTimeout(resolve,2500));
           }
-        }catch(error){setMessage(messageOf(error));setEnabled(false);localStorage.removeItem(enabledKey);}
+        }catch(error){setMessage('자동 출력 일시정지 · '+messageOf(error));setCurrent('');setEnabled(false);localStorage.removeItem(enabledKey);}
         finally{running.current=false;if(heartbeat)clearInterval(heartbeat);void printWorker(stationId.current,'stop').catch(()=>{});}
       });
     };

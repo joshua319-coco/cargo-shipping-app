@@ -2,7 +2,7 @@ import { supabase } from './supabase';
 
 export type PrintSummary = { id: string; waybillNo: string; state: string; message: string; updatedAt: string };
 export type PrintJob = { id: string; token: string; waybill_no: string; labels: unknown[]; snapshot: {receiver: string}; state: string; message: string };
-type BridgeReply = {ok: boolean; error?: string; labels?: unknown[]; printStation?: boolean; state?: string; message?: string};
+type BridgeReply = {ok: boolean; error?: string; labels?: unknown[]; printStation?: boolean; printProtocol?: number; state?: string; message?: string};
 export function printBridge(action: string, extra: Record<string, unknown> = {}): Promise<BridgeReply> {
   return new Promise((resolve, reject) => {
     const requestId=crypto.randomUUID();
