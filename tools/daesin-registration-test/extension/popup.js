@@ -9,8 +9,8 @@ async function render() {
   for (const job of (response.jobs || []).slice().reverse()) {
     const card = document.createElement('div'); card.className = 'job';
     const name = document.createElement('strong'); name.textContent = job.receiver + ' · ' + job.shipmentDate;
-    const info = document.createElement('p'); info.textContent = job.message || '등록 화면 준비 중';
-    const number = document.createElement('code'); number.textContent = job.numbers.join(', ');
+    const info = document.createElement('p'); info.textContent = job.carrierMissing ? '최신 조회에서 기존 접수를 찾지 못했습니다. 출고사이트의 정보확인을 눌러 주세요.' : job.message || '등록 화면 준비 중';
+    const number = document.createElement('code'); number.textContent = (job.carrierMissing ? '이전 번호 (확인 필요): ' : '') + job.numbers.join(', ');
     const button = document.createElement('button'); button.textContent = job.state === 'verified' ? '대신 목록 확인 완료' : job.numbers.length === 1 ? '실제 등록 확인' : '송장번호 가져오기'; button.disabled = (!job.registered && job.numbers.length !== 1) || job.state === 'verified';
     button.addEventListener('click', () => chrome.tabs.create({url:'https://cargo-shipping-app.vercel.app/?daesinSync=1',active:true}));
     button.textContent = '출고사이트에서 발송데이터 가져오기'; button.disabled = false;

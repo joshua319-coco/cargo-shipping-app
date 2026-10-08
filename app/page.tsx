@@ -11,7 +11,7 @@ import { supabase } from "@/lib/supabase";
 import type { Session } from "@supabase/supabase-js";
 import { CARRIERS, normalizeCarrier, isLogenQuantity, logenFare, exportCarrier, sameCarrierText, sameCarrierPhone, sameParcelAddress } from "@/lib/carriers";
 import type { Carrier, CarrierFilter } from "@/lib/carriers";
-import { daesinInputIssues, daesinRegistrationView, findDaesinCandidate, mayRegister, registrationFromJob, validDaesinDate } from "@/lib/daesin-sync";
+import { deletedDaesinConflict, daesinInputIssues, daesinRegistrationView, findDaesinCandidate, mayRegister, registrationFromJob, validDaesinDate } from "@/lib/daesin-sync";
 import type { DaesinVerification, DaesinRegistration, DaesinDailyRow, DaesinJob } from "@/lib/daesin-sync";
 import { shipmentRegistrationView } from '@/lib/registration-status';
 import { parseLogenPasteRows } from "@/lib/logen-paste";
@@ -887,6 +887,7 @@ function buildWaybillVerificationRows(
 
   shipments.forEach((shipment, shipmentIndex) => {
     uploads.forEach((upload, uploadIndex) => {
+      if (shipment.carrier === '대신' && (shipment.daesinRegistration?.carrierMissing || shipment.daesinRegistration?.retiredWaybills?.includes(upload.waybillNo))) return;
       const bound = shipment.carrier === '대신' ? shipment.daesinRegistration?.waybillNo : '';
       const owner = normalizeCarrier(upload.carrier) === '대신' ? shipments.find(row => row.carrier === '대신' && row.daesinRegistration?.waybillNo === upload.waybillNo) : undefined;
       if ((bound && (normalizeCarrier(upload.carrier) !== '대신' || upload.waybillNo !== bound)) || (owner && owner.id !== shipment.id)) return;
@@ -1876,7 +1877,7 @@ type LiveTestReply = { ok: boolean; error?: string; version?: string; jobs?: Liv
 function callLiveTestBridge(action: string, extra: Record<string, unknown> = {}): Promise<LiveTestReply> {
   return new Promise((resolve, reject) => {
     const requestId = crypto.randomUUID();
-    const timer = window.setTimeout(() => { window.removeEventListener('message', receive); reject(new Error(action === 'stage' ? '전송 결과를 받지 못했습니다. 다시 전송하지 말고 대신 화면과 확장 프로그램 상태를 확인해 주세요.' : action === 'fetch-daily' || action === 'verify' ? '발송데이터 조회 응답이 늦어지고 있습니다. 연결·결과 확인을 눌러 상태를 확인해 주세요. 다시 등록할 필요는 없습니다.' : action === 'report' ? '확인결과 응답이 10초 안에 오지 않았습니다. 연결 도구를 업데이트했다면 확장 프로그램과 이 페이지를 모두 새로고침해 주세요.' : '연결 도구에서 응답이 오지 않았습니다. 확장 프로그램이 있는 크롬인지 확인하고 이 페이지를 새로고침해 주세요.')); }, action === 'fetch-daily' ? 85000 : action === 'stage' ? 55000 : action === 'verify' ? 20000 : 10000);
+    const timer = window.setTimeout(() => { window.removeEventListener('message', receive); reject(new Error(action === 'stage' ? '전송 결과를 받지 못했습니다. 다시 전송하지 말고 대신 화면과 확장 프로그램 상태를 확인해 주세요.' : action === 'fetch-daily' || action === 'verify' ? '발송데이터 조회 응답이 늦어지고 있습니다. 연결·결과 확인을 눌러 상태를 확인해 주세요. 다시 등록할 필요는 없습니다.' : action === 'report' ? '확인결과 응답이 10초 안에 오지 않았습니다. 연결 도구를 업데이트했다면 확장 프로그램과 이 페이지를 모두 새로고침해 주세요.' : '연결 도구에서 응답이 오지 않았습니다. 확장 프로그램이 있는 크롬인지 확인하고 이 페이지를 새로고침해 주세요.')); }, action === 'fetch-daily' ? 85000 : action === 'stage' ? 100000 : action === 'verify' ? 20000 : 10000);
     function receive(event: MessageEvent) {
       if (event.source !== window || event.origin !== location.origin || event.data?.channel !== 'sanghwa-live-response' || event.data.requestId !== requestId) return;
       clearTimeout(timer); window.removeEventListener('message', receive); resolve(event.data.result);
@@ -1885,13 +1886,16 @@ function callLiveTestBridge(action: string, extra: Record<string, unknown> = {})
     window.postMessage({ channel: 'sanghwa-live-request', requestId, action, ...extra }, location.origin);
   });
 }
-function RegistrationDialog({ shipment, view, upload, busy, onClose, onEdit, onRegister, onRefresh }: {
+function RegistrationDialog({ shipment, view, upload, busy, onClose, onEdit, onRegister, onRefresh, onReregister }: {
   shipment: SavedShipment; view: ReturnType<typeof shipmentRegistrationView>; upload?: WaybillUploadRow;
-  busy: boolean; onClose: () => void; onEdit: () => void; onRegister: () => void; onRefresh: () => void;
+  busy: boolean; onClose: () => void; onEdit: () => void; onRegister: () => void; onRefresh: () => void; onReregister: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => { dialog.current?.showModal(); }, []);
   const isLogen = shipment.carrier === '로젠';
+  const missingRegistration = !isLogen && shipment.daesinRegistration?.carrierMissing && shipment.daesinRegistration?.waybillNo;
+  const [confirmedDeleted, setConfirmedDeleted] = useState(false);
+  useEffect(() => { setConfirmedDeleted(false); }, [shipment.id, shipment.daesinRegistration?.attemptId, missingRegistration]);
   const comparisons: Array<[string, string | undefined, string | undefined]> = upload ? [
     ['수화주', shipment.receiver, upload.receiver],
     ['수화주 전화', shipment.receiverPhone, upload.receiverPhone],
@@ -1930,13 +1934,19 @@ function RegistrationDialog({ shipment, view, upload, busy, onClose, onEdit, onR
     <p><strong>{displayReceiverName(shipment.sender,shipment.receiver)}</strong><br />
       <span style={{fontSize:13,color:'#64748b'}}>{shipment.shipmentDate}{view.waybillNo ? ' · 송장번호 ' + view.waybillNo : ''}</span>
     </p>
+    {missingRegistration && <div style={{background:'#fff7ed',borderRadius:8,padding:12,fontSize:13}}>
+      <div>이전 운송장번호 (확인 필요): {shipment.daesinRegistration?.waybillNo}</div>
+      <p>조회에서 빠진 번호는 현재 운송장으로 표시하지 않습니다. 대신에서 직접 삭제했다면 아래에 체크하고 다시 등록할 수 있습니다.</p>
+      <label style={{display:'flex',alignItems:'center',gap:8}}><input type="checkbox" checked={confirmedDeleted} disabled={busy} onChange={event => setConfirmedDeleted(event.target.checked)} />대신 전산에서 이 접수를 삭제했어요</label>
+      <button type="button" style={{...exportBtnPrimary,marginTop:12}} disabled={busy || !confirmedDeleted} onClick={() => closeAnd(onReregister)}>삭제 확인 후 다시 등록</button>
+    </div>}
     {isLogen ? (
       <p>{view.label === '정보확인' ? '발송데이터와 다른 항목이 있습니다. 아래 내용을 확인해 주세요.' : view.registered ? '등록용 엑셀을 다운로드한 항목입니다.' : '이 출고건 1건의 등록용 엑셀을 다운로드하면 등록완료로 표시됩니다.'}</p>
     ) : view.label === '미등록' ? (
       <p>이 출고건 1건을 <strong>등록(출력안함)</strong>으로 접수하고 발송데이터를 가져옵니다.</p>
     ) : view.label === '등록완료' ? (
       <p style={{color:'#008653'}}>대신 전산 등록과 발송정보 일치를 확인했습니다.</p>
-    ) : <p>{view.registered ? '등록된 건입니다. 아래 내용을 확인해 주세요.' : '접수 결과를 확인해야 합니다. 전산 데이터를 먼저 새로고침해 주세요.'}</p>}
+    ) : missingRegistration ? null : <p>{view.registered ? '등록된 건입니다. 아래 내용을 확인해 주세요.' : '접수 결과를 확인해야 합니다. 전산 데이터를 먼저 새로고침해 주세요.'}</p>}
     {view.reasons.length > 0 && <ul style={{paddingLeft:20,color:'#b45309',lineHeight:1.8}}>
       {view.reasons.map(reason => <li key={reason}>{reason}</li>)}
     </ul>}
@@ -1973,7 +1983,7 @@ function RegistrationDialog({ shipment, view, upload, busy, onClose, onEdit, onR
 }
 
 
-type DaesinSyncActions = { registerOne: (row: SavedShipment) => Promise<void>; refresh: () => Promise<void> };
+type DaesinSyncActions = { reregisterDeleted: (row: SavedShipment) => Promise<void>; registerOne: (row: SavedShipment) => Promise<void>; refresh: () => Promise<void> };
 function DaesinSyncPanel({ rows, allRows, mapRow, onImport, onReload, defaultDate, manualTools, actionRef, onBusyChange, verifications, compact = false }: {
   actionRef: RefObject<DaesinSyncActions | null>; onBusyChange: (busy: boolean) => void;
   verifications: Map<string, DaesinVerification>; compact?: boolean;
@@ -2016,7 +2026,7 @@ function DaesinSyncPanel({ rows, allRows, mapRow, onImport, onReload, defaultDat
   const status = async () => {
     const response = await callLiveTestBridge('status');
     if (!response.ok) throw new Error(response.error);
-    if (!['0.6.0', '0.6.1', '0.6.2'].includes(response.version || '')) throw new Error('연결 도구 0.6.2로 업데이트하고 이 페이지를 새로고침해 주세요.');
+    if (response.version !== '0.6.3') throw new Error('연결 도구 0.6.3로 업데이트하고 이 페이지를 새로고침해 주세요.');
     await saveJobs(response.jobs || []); return response.jobs || [];
   };
   const refresh = async () => {
@@ -2036,10 +2046,17 @@ function DaesinSyncPanel({ rows, allRows, mapRow, onImport, onReload, defaultDat
     const loaded = await supabase.from('shipments').select('*');
     if (loaded.error) throw new Error('출고 이력 조회 실패: ' + loaded.error.message);
     const peers = (loaded.data || []).map(normalizeShipment);
-    for (const row of peers.filter(item => item.carrier === '대신' && item.shipmentDate === date)) {
-      const candidate = findDaesinCandidate(row, response.dataset.rows, peers);
-      if (!candidate.row) continue;
+    // Store absence only after the complete export is validated/imported successfully.
+    let result = date + ' 대신 조회 0건 · 저장된 발송데이터는 유지했습니다.';
+    if (response.dataset.rows.length) result = await onImport(response.dataset);
+    for (const row of peers.filter(item => item.carrier === '대신' && (item.daesinRegistration?.shipmentDate || item.shipmentDate) === date)) {
       const existing = row.daesinRegistration;
+      const candidate = findDaesinCandidate(row, response.dataset.rows, peers);
+      if (existing?.waybillNo) {
+        const observed = await persist(row, 'observe', {attemptId:existing.attemptId,waybillNo:existing.waybillNo,shipmentDate:date,present:Boolean(candidate.row)});
+        row.daesinRegistration = observed.state;
+      }
+      if (!candidate.row) continue;
       const binding = { ...existing, attemptId: existing?.attemptId || crypto.randomUUID(), shipmentDate: date,
         state: 'registered', waybillNo: candidate.row.waybill_no,
         destinationNeedsReview: candidate.row.arrival_agencycode === '0000',
@@ -2047,8 +2064,7 @@ function DaesinSyncPanel({ rows, allRows, mapRow, onImport, onReload, defaultDat
       const saved = await persist(row, existing ? 'result' : 'adopt', binding);
       row.daesinRegistration = saved.state;
     }
-    let result = date + ' 대신 조회 0건 · 저장된 발송데이터는 유지했습니다.';
-    if (response.dataset.rows.length) result = await onImport(response.dataset);
+
     await onReload();
     return { dataset: response.dataset, peers, result };
   };
@@ -2057,7 +2073,7 @@ function DaesinSyncPanel({ rows, allRows, mapRow, onImport, onReload, defaultDat
     inFlight.current = true; setBusy(true); setMessage("대신 전산데이터 새로고침 준비 중…");
     try {
       await status();
-      const dates = [...new Set(visible.length ? visible.map(row => row.shipmentDate) : [defaultDate])];
+      const dates = [...new Set(visible.length ? visible.flatMap(row => [row.shipmentDate, row.daesinRegistration?.shipmentDate || row.shipmentDate]) : [defaultDate])];
       const results: string[] = [];
       for (const date of dates) results.push((await readDaily(date)).result);
       setMessage(results.join('\n'));
@@ -2065,26 +2081,35 @@ function DaesinSyncPanel({ rows, allRows, mapRow, onImport, onReload, defaultDat
     catch (error) { setMessage(getErrorMessage(error)); }
     finally { inFlight.current = false; setBusy(false); }
   };
-  const synchronize = async (requestedRows: SavedShipment[] = targets) => {
+  const synchronize = async (requestedRows: SavedShipment[] = targets, deleted?: DaesinRegistration) => {
     const targets = requestedRows.filter(row => row.carrier === '대신');
     if (inFlight.current) return;
     if (!targets.length) return setMessage('현재 조회목록에 미등록 건이 없습니다. 최신 정보는 대신 전산데이터 새로고침으로 확인할 수 있습니다.');
     inFlight.current = true; stopRequested.current = false; setBusy(true); setMessage("대신 연결과 기존 접수 이력을 확인 중…");
     let submitted = 0, skipped = 0, failed = 0, uncertain = 0;
-    const errors: string[] = [], dates = [...new Set(targets.map(row => row.shipmentDate))];
+    const errors: string[] = [], dates = [...new Set([...targets.map(row => row.shipmentDate), ...(deleted ? [deleted.shipmentDate] : [])])];
     try {
       await status();
       const preflight = new Map<string, Awaited<ReturnType<typeof readDaily>>>();
       // Reconcile before any registration, including records previously registered manually.
       for (const date of dates) preflight.set(date, await readDaily(date));
+      const currentRows = await supabase.from('shipments').select('*');
+      if (currentRows.error) throw new Error('최신 출고 이력을 확인하지 못했습니다.');
+      const currentPeers = (currentRows.data || []).map(normalizeShipment);
       for (let index = 0; index < targets.length; index++) {
         if (stopRequested.current || !mounted.current) break;
         const row = targets[index], inspected = preflight.get(row.shipmentDate)!;
-        const fresh = inspected.peers.find(peer => peer.id === row.id);
+        const fresh = currentPeers.find(peer => peer.id === row.id);
         if (!fresh || fresh.carrier !== '대신') { skipped++; continue; }
         const mapped = mapRow(row);
         const fingerprint = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify({id:row.id,date:row.shipmentDate,mapped})))), byte => byte.toString(16).padStart(2,'0')).join('');
-        if (!mayRegister(fresh.daesinRegistration, fingerprint, retry)) {
+        if (deleted) {
+          const current = fresh.daesinRegistration;
+          if (targets.length !== 1 || !current?.carrierMissing || current.attemptId !== deleted.attemptId || current.waybillNo !== deleted.waybillNo ||
+            [...preflight.values()].some(lookup => deletedDaesinConflict(fresh, lookup.dataset.rows, deleted))) {
+            throw new Error('기존 접수가 다시 조회되었거나 등록 이력이 바뀌었습니다. 중복 등록하지 않았습니다. 전산등록 상태를 다시 확인해 주세요.');
+          }
+        } else if (!mayRegister(fresh.daesinRegistration, fingerprint, retry)) {
           if (['pending','unknown'].includes(fresh.daesinRegistration?.state || '')) {
             uncertain++; errors.push(row.receiver + ': 이전 접수 결과 확인 필요 · 다시 등록하지 않았습니다.');
           } else if (fresh.daesinRegistration?.state === 'not-registered') {
@@ -2092,7 +2117,7 @@ function DaesinSyncPanel({ rows, allRows, mapRow, onImport, onReload, defaultDat
           } else skipped++;
           continue;
         }
-        if (findDaesinCandidate(fresh, inspected.dataset.rows, inspected.peers).possible) {
+        if (!deleted && findDaesinCandidate(fresh, inspected.dataset.rows, inspected.peers).possible) {
           uncertain++; errors.push(row.receiver + ': 같은 수화주·전화의 접수건이 있어 확인 필요'); continue;
         }
         const inputIssues = daesinInputIssues(row, mapped.우편번호, mapped.수량);
@@ -2107,11 +2132,12 @@ function DaesinSyncPanel({ rows, allRows, mapRow, onImport, onReload, defaultDat
         const payload = toShipmentDbPayload(row);
         const snapshot = Object.fromEntries(['receiver','receiver_phone','sender','sender_phone','address','branch','postal_code','item','pack','qty','fare','pay','delivery','memo','shipment_date'].map(key => [key, payload[key as keyof ShipmentDbPayload]]));
         const attemptId = crypto.randomUUID();
-        const claim = await persist(row, 'claim', { attemptId, fingerprint, snapshot, retry });
+        const claim = await persist(row, deleted ? 'claim-deleted' : 'claim', { attemptId, fingerprint, snapshot, retry,
+          ...(deleted ? {confirmedDeleted:true,previousAttemptId:deleted.attemptId,previousWaybillNo:deleted.waybillNo} : {}) });
         if (!claim.claimed) { skipped++; continue; }
         setMessage(`${index + 1}/${targets.length} · ${row.receiver} 등록(출력안함) 진행 중…`);
         try {
-          const response = await callLiveTestBridge('stage', { payload: { shipmentId:row.id, shipmentDate:row.shipmentDate, receiver:row.receiver, attemptId, fingerprint, retry, autoRegister:true, workbook:btoa(binary), source:{ postalCode:String(mapped.우편번호), address:String(mapped.주소), branch:String(mapped.도착영업소), quantity:Number(mapped.수량), fare:Number(mapped.총운임), delivery:row.delivery, receiverPhone:row.receiverPhone, pay:row.pay } } });
+          const response = await callLiveTestBridge('stage', { payload: { shipmentId:row.id, shipmentDate:row.shipmentDate, receiver:row.receiver, attemptId, fingerprint, retry, deletedRegistration:claim.state.deletedRegistration, retiredWaybills:claim.state.retiredWaybills, autoRegister:true, workbook:btoa(binary), source:{ postalCode:String(mapped.우편번호), address:String(mapped.주소), branch:String(mapped.도착영업소), quantity:Number(mapped.수량), fare:Number(mapped.총운임), delivery:row.delivery, receiverPhone:row.receiverPhone, pay:row.pay } } });
           if (!response.ok || !response.job) throw new Error(response.error || '접수 응답을 확인하지 못했습니다.');
           let job = response.job;
           const deadline = Date.now() + 80000;
@@ -2143,7 +2169,7 @@ function DaesinSyncPanel({ rows, allRows, mapRow, onImport, onReload, defaultDat
     } catch (error) { setMessage('연동을 멈췄습니다. ' + getErrorMessage(error)); }
     finally { await onReload(); inFlight.current = false; setBusy(false); }
   };
-  useImperativeHandle<DaesinSyncActions | null, DaesinSyncActions | null>(actionRef, () => enabled ? { registerOne: row => synchronize([row]), refresh: fetchDaily } : null);
+  useImperativeHandle<DaesinSyncActions | null, DaesinSyncActions | null>(actionRef, () => enabled ? { reregisterDeleted: row => row.daesinRegistration?.carrierMissing ? synchronize([row], row.daesinRegistration) : Promise.resolve(), registerOne: row => synchronize([row]), refresh: fetchDaily } : null);
   const downloadReport = async () => {
     if (reportInFlight.current) return;
     reportInFlight.current = true; setReportBusy(true); setPreparedReport(null);
@@ -2158,10 +2184,10 @@ function DaesinSyncPanel({ rows, allRows, mapRow, onImport, onReload, defaultDat
     finally { reportInFlight.current = false; setReportBusy(false); }
   };
   if (!enabled) return compact ? null : <>{manualTools}</>;
-  const registered = visible.filter(row => getState(row)?.state === 'registered');
+  const registered = visible.filter(row => getState(row)?.state === 'registered' && !getState(row)?.carrierMissing);
   const reviews = registered.filter(row => getState(row)?.destinationNeedsReview);
   const failed = visible.filter(row => getState(row)?.state === 'not-registered');
-  const uncertain = visible.filter(row => ['pending','unknown'].includes(getState(row)?.state || ''));
+  const uncertain = visible.filter(row => getState(row)?.carrierMissing || ['pending','unknown'].includes(getState(row)?.state || ''));
   const headline = message.split('\n')[0];
   if (compact) return <section aria-label="대신 전산 연동" style={{marginBottom:8}}>
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12}}>
@@ -2178,7 +2204,7 @@ function DaesinSyncPanel({ rows, allRows, mapRow, onImport, onReload, defaultDat
         <div style={{padding:'10px 0'}}>
           <div>등록 완료 {registered.length}건 · 도착지 수정 필요 {reviews.length}건 · 등록 안됨 {failed.length}건 · 접수 확인 필요 {uncertain.length}건</div>
           {message && <p style={{whiteSpace:'pre-line'}}>{message}</p>}
-          {visible.filter(row => getState(row)).map(row => { const state = getState(row)!; return <div key={row.id} style={{borderTop:'1px solid #e2e8f0',padding:'8px 0',display:'flex',gap:10,flexWrap:'wrap'}}><strong>{row.receiver}</strong><span>{state.shipmentDate}</span><span>{state.waybillNo}</span><span>{state.message}</span>{state.destinationNeedsReview && <strong style={{color:'#b45309'}}>마감관리에서 도착지 수정 필요</strong>}</div>; })}
+          {visible.filter(row => getState(row)).map(row => { const state = getState(row)!; return <div key={row.id} style={{borderTop:'1px solid #e2e8f0',padding:'8px 0',display:'flex',gap:10,flexWrap:'wrap'}}><strong>{row.receiver}</strong><span>{state.shipmentDate}</span><span>{state.carrierMissing ? '이전 번호 (확인 필요): ' + state.waybillNo : state.waybillNo}</span><span>{state.carrierMissing ? '최신 조회에서 기존 접수를 찾지 못했습니다.' : state.message}</span>{state.destinationNeedsReview && <strong style={{color:'#b45309'}}>마감관리에서 도착지 수정 필요</strong>}</div>; })}
           <button type="button" style={smallGrayBtn} disabled={busy} onClick={() => void refresh()}>연결·결과 확인</button>{' '}
           <button type="button" style={smallGrayBtn} disabled={reportBusy} onClick={() => void downloadReport()}>{reportBusy ? '준비 중…' : '확인결과 파일 저장'}</button>{' '}
           <a href="/registration-test-setup/index.html" target="_blank" rel="noreferrer">연결 도구 설치·업데이트</a>
@@ -3431,6 +3457,7 @@ export default function Home() {
 
     savedShipments.forEach(shipment => {
       const number = shipment.carrier === '대신' ? shipment.daesinRegistration?.waybillNo : '';
+      if (shipment.daesinRegistration?.carrierMissing) { result.delete(shipment.id); return; }
       if (!number || result.has(shipment.id) || !isDateKeyInRange(shipment.shipmentDate, listDateFrom, listDateTo)) return;
       result.set(shipment.id, {
         id: 'registered-waybill-' + shipment.id, waybillNo: number,
@@ -7060,6 +7087,7 @@ export default function Home() {
           }
           const upload = waybillHistoryRows.find(row => row.carrier === shipment.carrier && row.sessionDate === shipment.shipmentDate && (info?.uploadId ? row.id === info.uploadId : Boolean(view.waybillNo) && row.waybillNo === view.waybillNo));
           return <RegistrationDialog shipment={shipment} view={view} upload={upload} busy={shipment.carrier === '대신' && daesinBusy}
+            onReregister={() => { if (!daesinActions.current) { alert('연결 도구 0.6.3이 있는 크롬에서 열어 주세요.'); return; } setRegistrationDialogId(null); void daesinActions.current.reregisterDeleted(shipment); }}
             onClose={() => setRegistrationDialogId(null)}
             onEdit={() => { setRegistrationDialogId(null); openDetail(shipment); }}
             onRegister={() => { if (shipment.carrier === '로젠') { setRegistrationDialogId(null); void exportRows([shipment], '개별', '로젠'); return; } if (!daesinActions.current) { alert('대신 연결 도구가 있는 크롬에서 연동 화면을 열어 주세요.'); return; } setRegistrationDialogId(null); void daesinActions.current.registerOne(shipment); }}

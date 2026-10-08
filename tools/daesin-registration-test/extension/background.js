@@ -7,11 +7,41 @@ const KEY = 'sanghwaLiveRegistrationJobs';
 let staging = false, serial = Promise.resolve(), activeOperation = null;
 const readJobs = async () => (await chrome.storage.local.get(KEY))[KEY] || [];
 const saveJobs = jobs => chrome.storage.local.set({ [KEY]: jobs });
-const publicJob = job => job ? { id: job.id, attemptId: job.attemptId || job.id, fingerprint: job.fingerprint, shipmentId: job.shipmentId, shipmentDate: job.shipmentDate, receiver: job.receiver, state: job.state, registered: hasDaesinRegistrationSuccess(job), numbers: job.numbers || [], message: job.message || '', updatedAt: job.updatedAt, tabId: job.tabId, destinationNeedsReview: Boolean(job.destinationNeedsReview), destinationReason: job.destinationReason || '', lookupMessage: job.lookupMessage || '' } : null;
+const activeJobs = jobs => jobs.filter(job => !job.supersededBy);
+const publicJob = job => job ? { id: job.id, attemptId: job.attemptId || job.id, fingerprint: job.fingerprint, shipmentId: job.shipmentId, shipmentDate: job.shipmentDate, receiver: job.receiver, state: job.state, registered: hasDaesinRegistrationSuccess(job), numbers: job.numbers || [], message: job.message || '', updatedAt: job.updatedAt, tabId: job.tabId, destinationNeedsReview: Boolean(job.destinationNeedsReview), destinationReason: job.destinationReason || '', lookupMessage: job.lookupMessage || '', supersededBy: job.supersededBy || '', carrierMissing: Boolean(job.carrierMissing) } : null;
 function isApp(sender) { try { return sender.frameId === 0 && APP_ORIGINS.includes(new URL(sender.url).origin); } catch { return false; } }
 async function waitForTab(tabId) {
   for (let i = 0; i < 40; i++) { const tab = await chrome.tabs.get(tabId); if (tab.status === 'complete' && tab.url?.startsWith(CARRIER + '/')) return tab; await new Promise(resolve => setTimeout(resolve, 500)); }
   throw new Error('대신 화면을 여는 시간이 초과됐습니다. 접수 결과를 자동으로 재시도하지 않습니다.');
+}
+async function closeFinishedRegistrationTab(job) {
+  if (!job.tabId || !(hasDaesinRegistrationSuccess(job) || job.state === 'not-registered')) return;
+  try {
+    const tab = await chrome.tabs.get(job.tabId);
+    if (tab.active || tab.url !== REGISTER) return;
+    const [proof] = await chrome.scripting.executeScript({ target:{tabId:job.tabId}, world:'ISOLATED',
+      func: nonce => document.documentElement.dataset.sanghwaOwnedRegistration === nonce, args:[job.nonce] });
+    if (proof?.result !== true) return;
+    const latest = await chrome.tabs.get(job.tabId);
+    if (!latest.active && latest.url === REGISTER) await chrome.tabs.remove(job.tabId);
+  } catch { /* The saved registration result does not depend on tab cleanup. */ }
+}
+async function checkDeletedRegistration(p, previous, sourceTab) {
+  const proof = p.deletedRegistration;
+  if (!proof || proof.attemptId === p.attemptId || !/^[a-f0-9-]{36}$/.test(proof.attemptId || '') ||
+    !/^\d{12,13}$/.test(proof.waybillNo || '') || !proof.receiver || !proof.receiverPhone) return false;
+  const matchingPrevious = previous?.attemptId === proof.attemptId && previous.numbers?.length === 1 && previous.numbers[0] === proof.waybillNo && previous.shipmentDate === proof.shipmentDate;
+  const olderRetired = previous && hasDaesinRegistrationSuccess(previous) && previous.numbers?.length === 1 && Array.isArray(p.retiredWaybills) && p.retiredWaybills.includes(previous.numbers[0]);
+  if (previous && !matchingPrevious && !olderRetired) return false;
+  const response = await fetchDaily(proof.shipmentDate, sourceTab);
+  const text = value => String(value || '').normalize('NFKC').replace(/\s/g,'');
+  const digits = value => String(value || '').replace(/\D/g,'');
+  const identities = [[proof.receiver, proof.receiverPhone], [p.receiver, p.source?.receiverPhone]];
+  if (response.dataset.rows.some(row => row.waybill_no === proof.waybillNo || identities.some(([name, phone]) =>
+    text(row.arrival_name) === text(name) && (!digits(phone) || digits(row.arrival_phone_number1) === digits(phone))))) {
+    throw new Error('대신에 기존 접수 또는 같은 수화주의 접수가 있습니다. 중복 등록하지 않았습니다.');
+  }
+  return true;
 }
 async function stage(request, sourceTab) {
   if (staging) throw new Error('다른 전송이 진행 중입니다.');
@@ -22,11 +52,22 @@ async function stage(request, sourceTab) {
     if (!/^[a-f0-9-]{36}$/.test(p.attemptId || '') || new Date(p.shipmentDate).toISOString().slice(0,10) !== p.shipmentDate) throw new Error('공유 등록 이력을 먼저 확보한 요청만 접수합니다.');
     if (p.autoRegister !== true) throw new Error('업로드 후 등록(출력안함)까지 진행하는 출고사이트를 새로고침해 주세요.');
     let jobs = await readJobs();
-    const previous = [...jobs].reverse().find(job => job.shipmentId === p.shipmentId);
-    if (previous && !(previous.state === 'not-registered' && p.retry === true && previous.fingerprint !== p.fingerprint && previous.attemptId !== p.attemptId)) { return { ok: true, job: publicJob(previous), repeated: true }; }
+    const previous = [...activeJobs(jobs)].reverse().find(job => job.shipmentId === p.shipmentId);
+    const correctedFailure = previous?.state === 'not-registered' && p.retry === true && previous.fingerprint !== p.fingerprint && previous.attemptId !== p.attemptId;
+    let deletionConfirmed = false;
+    if ((!previous || previous.attemptId !== p.attemptId) && p.deletedRegistration && !correctedFailure) {
+      deletionConfirmed = await checkDeletedRegistration(p, previous, sourceTab);
+      if (!deletionConfirmed) throw new Error('삭제 확인한 이전 접수 정보가 다릅니다. 다시 등록하지 않았습니다.');
+      jobs = await readJobs();
+    }
+    if (previous && !correctedFailure && !deletionConfirmed) return { ok:true, job:publicJob(previous), repeated:true };
     const job = { id: crypto.randomUUID(), attemptId: p.attemptId, nonce: crypto.randomUUID(), shipmentId: p.shipmentId, shipmentDate: p.shipmentDate, fingerprint: p.fingerprint, receiver: p.receiver, autoRegister: true, state: 'opening', updatedAt: new Date().toISOString() };
     const source = p.source || {};
     job.diagnosis = { source: Object.fromEntries(['postalCode', 'address', 'branch', 'quantity', 'fare', 'delivery', 'receiverPhone', 'pay'].filter(key => ['string', 'number'].includes(typeof source[key])).map(key => [key, String(source[key]).slice(0, 500)])) };
+    if (deletionConfirmed && previous) {
+      const retired = jobs.find(item => item.id === previous.id);
+      retired.supersededBy = job.attemptId; retired.deletedConfirmedAt = new Date().toISOString();
+    }
     jobs.push(job); await saveJobs(jobs);
     try {
       const tab = await chrome.tabs.create({ url: REGISTER, active: false, ...(Number.isInteger(sourceTab?.windowId) ? { windowId: sourceTab.windowId } : {}) });
@@ -50,7 +91,7 @@ async function stage(request, sourceTab) {
 async function carrierEvent(message, sender) {
   if (sender.frameId !== 0 || !sender.url?.startsWith(CARRIER + '/issueSvl')) return { ok: false };
   const jobs = await readJobs(), job = jobs.find(item => item.id === message.jobId);
-  if (!job || job.tabId !== sender.tab?.id || job.nonce !== message.nonce) return { ok: false };
+  if (!job || job.supersededBy || job.tabId !== sender.tab?.id || job.nonce !== message.nonce) return { ok: false };
   const d = message.detail;
   if (d.kind === 'submitting') { job.submissionStarted = true; job.state = 'submitting'; job.message = '대신 최종 접수 응답을 기다리고 있습니다.'; }
   if (d.kind === 'upload-response') {
@@ -77,7 +118,9 @@ async function carrierEvent(message, sender) {
     else { job.state = 'unknown'; job.message = '접수 응답은 받았지만 송장번호를 확인하지 못했습니다. 대신 목록 확인이 필요하며 자동 재접수하지 않습니다.'; }
   }
   if (d.kind === 'unknown') { job.state = 'unknown'; job.message = '통신 결과가 불명확합니다. 대신 일자별조회에서 확인하기 전에는 다시 접수하지 마세요.'; }
-  job.updatedAt = new Date().toISOString(); await saveJobs(jobs); return { ok: true };
+  job.updatedAt = new Date().toISOString(); await saveJobs(jobs);
+  await closeFinishedRegistrationTab(job);
+  return { ok: true };
 }
 async function readDestination(job) {
   job.diagnosis ||= {};
@@ -109,7 +152,7 @@ async function fetchDaily(shipmentDate, sourceTab) {
   tabs.sort((a,b) => Number(b.active)-Number(a.active) || (b.lastAccessed||0)-(a.lastAccessed||0) || b.id-a.id);
   if (!tabs.length) { const tab = await chrome.tabs.create({ url: DAILY, active: false, ...(Number.isInteger(sourceTab?.windowId) ? { windowId: sourceTab.windowId } : {}) }); await waitForTab(tab.id); tabs.push(tab); }
   const [result] = await chrome.scripting.executeScript({target:{tabId:tabs[0].id},world:'ISOLATED',func:fetchDaesinDailyWorkbook,args:[shipmentDate]});
-  const attempt = { ...(result?.result?.diagnosis || { shipmentDate, stage: 'page' }), error: result?.result?.error || result?.error?.message || '', version: '0.6.2' };
+  const attempt = { ...(result?.result?.diagnosis || { shipmentDate, stage: 'page' }), error: result?.result?.error || result?.error?.message || '', version: '0.6.3' };
   const history = (await chrome.storage.local.get('sanghwaDailyFetchHistory')).sanghwaDailyFetchHistory || [];
   await chrome.storage.local.set({ sanghwaDailyFetchHistory: [...history, attempt].slice(-5) });
   if (result?.result?.error) {
@@ -121,13 +164,13 @@ async function fetchDaily(shipmentDate, sourceTab) {
   const dataset = result.result;
   const jobs = reconcileDaesinDailyJobs(await readJobs(), dataset.rows, shipmentDate);
   await saveJobs(jobs);
-  return {ok:true,version:'0.6.2',jobs:jobs.map(publicJob),dataset};
+  return {ok:true,version:'0.6.3',jobs:activeJobs(jobs).map(publicJob),dataset};
 }
 async function handle(message, sender) {
   if (message.type === 'carrier-event') return carrierEvent(message, sender);
   const fromPopup = sender.url === chrome.runtime.getURL('popup.html');
   if (!isApp(sender) && !fromPopup) throw new Error('허용된 출고사이트에서만 실행할 수 있습니다.');
-  if (message.action === 'ping') return { ok: true, version: '0.6.2' };
+  if (message.action === 'ping') return { ok: true, version: '0.6.3' };
   if (message.action === 'status') {
     const jobs = await readJobs(); let changed = false;
     for (const job of jobs) if (['staged', 'registering', 'submitting'].includes(job.state) && job.deadlineAt && Date.now() > job.deadlineAt) {
@@ -135,7 +178,7 @@ async function handle(message, sender) {
     }
     for (const job of jobs) changed = updateDaesinAcceptedState(job) || changed;
     if (changed) await saveJobs(jobs);
-    return { ok: true, version: '0.6.2', jobs: jobs.map(publicJob) };
+    return { ok: true, version: '0.6.3', jobs: activeJobs(jobs).map(publicJob) };
   }
   if (message.action === 'inspect') return inspect(message.jobId);
   if (message.action === 'report') {
@@ -143,7 +186,7 @@ async function handle(message, sender) {
     // Read one saved snapshot; no tab inspection, carrier request or state mutation.
     const saved = await chrome.storage.local.get([KEY, 'sanghwaDailyFetchHistory']);
     const generated = new Date();
-    return { ok: true, report: { format: 'sanghwa-live-registration/3', version: '0.6.2', generatedAt: generated.toISOString(), generatedAtSeoul: generated.toLocaleString('sv-SE', { timeZone: 'Asia/Seoul', hour12: false }) + ' (한국 시간, UTC+09:00)', collection: 'saved-extension-state', activeOperation,
+    return { ok: true, report: { format: 'sanghwa-live-registration/3', version: '0.6.3', generatedAt: generated.toISOString(), generatedAtSeoul: generated.toLocaleString('sv-SE', { timeZone: 'Asia/Seoul', hour12: false }) + ' (한국 시간, UTC+09:00)', collection: 'saved-extension-state', activeOperation,
       jobs: (saved[KEY] || []).map(job => ({ ...publicJob(job), diagnosis: job.diagnosis || {} })),
       fetchHistory: saved.sanghwaDailyFetchHistory || [] } };
   }

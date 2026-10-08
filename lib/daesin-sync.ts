@@ -1,8 +1,15 @@
+export type DeletedDaesinRegistration = {
+  attemptId: string; waybillNo: string; shipmentDate: string;
+  receiver: string; receiverPhone: string;
+};
 export type DaesinRegistration = {
   state: 'pending' | 'unknown' | 'registered' | 'not-registered';
   attemptId: string; fingerprint?: string; shipmentDate: string;
   waybillNo: string; message: string; destinationNeedsReview?: boolean;
   destinationReason?: string; updatedAt?: string;
+  carrierMissing?: boolean; carrierCheckedAt?: string; carrierCheckedDate?: string;
+  snapshot?: { receiver?: string; receiver_phone?: string };
+  retiredWaybills?: string[]; deletedRegistration?: DeletedDaesinRegistration;
 };
 export type DaesinSource = {
   id: string; carrier: string; shipmentDate: string; receiver: string; receiverPhone: string;
@@ -50,6 +57,7 @@ export function findDaesinCandidate(source: DaesinSource, rows: DaesinDailyRow[]
   const identity = (row: DaesinDailyRow, peer: DaesinSource) =>
     text(row.arrival_name) === text(peer.receiver) && Boolean(digits(peer.receiverPhone)) &&
     digits(row.arrival_phone_number1) === digits(peer.receiverPhone);
+  if (rows.some(row => source.daesinRegistration?.retiredWaybills?.includes(row.waybill_no))) return { row:undefined, possible:true };
   const candidates = rows.filter(row => identity(row, source));
   if (candidates.length !== 1) return { row: undefined, possible: candidates.length > 0 };
   const row = candidates[0];
@@ -63,8 +71,20 @@ export function findDaesinCandidate(source: DaesinSource, rows: DaesinDailyRow[]
   return { row: exact ? row : undefined, possible: true };
 }
 
+// A missing row alone never authorizes a replay. This check is used only after user confirmation.
+export function deletedDaesinConflict(source: DaesinSource, rows: DaesinDailyRow[], previous: DaesinRegistration) {
+  const identities = [[source.receiver, source.receiverPhone], [previous.snapshot?.receiver, previous.snapshot?.receiver_phone]];
+  return rows.some(row => row.waybill_no === previous.waybillNo || identities.some(([name, phone]) =>
+    Boolean(text(name)) && text(row.arrival_name) === text(name) && (!digits(phone) || digits(row.arrival_phone_number1) === digits(phone))));
+}
+
 export type DaesinVerification = { waybillNo: string; status: string; reasons: string[] };
 export function daesinRegistrationView(state?: DaesinRegistration, verification?: DaesinVerification) {
+  if (state?.carrierMissing && state.waybillNo) return {
+    label: '정보확인', registered: true, waybillNo: '',
+    reasons: ['대신 최신 조회에서 기존 접수를 찾지 못했습니다. 대신에서 삭제한 건인지 확인해 주세요.'],
+  };
+  if (verification && state?.retiredWaybills?.includes(verification.waybillNo)) verification = undefined;
   const reasons: string[] = [];
   const registered = state?.state === 'registered' || Boolean(state?.waybillNo) || Boolean(verification?.waybillNo);
   if (state?.destinationNeedsReview) reasons.push((state.destinationReason || '도착지 미지정') + ' · 대신 마감관리에서 도착영업소 수정 필요');
