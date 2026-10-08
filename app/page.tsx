@@ -7,6 +7,8 @@ import type {
   KeyboardEvent as ReactKeyboardEvent,
   RefObject,
 } from "react";
+import { requestDaesinPrint, printStatusLabel } from '@/lib/daesin-print';
+import type { PrintSummary } from '@/lib/daesin-print';
 import { supabase } from "@/lib/supabase";
 import type { Session } from "@supabase/supabase-js";
 import { CARRIERS, normalizeCarrier, isLogenQuantity, logenFare, exportCarrier, sameCarrierText, sameCarrierPhone, sameParcelAddress } from "@/lib/carriers";
@@ -44,6 +46,7 @@ type Checklist = {
 };
 
 type SavedShipment = {
+  daesinPrint?: PrintSummary;
   daesinRegistration?: DaesinRegistration;
   id: string;
   carrier: Carrier;
@@ -418,6 +421,7 @@ function normalizeShipment(raw: unknown): SavedShipment {
   return {
     id: asString(row.id) || String(Date.now()),
     carrier: normalizeCarrier(row.carrier),
+    daesinPrint: (row.daesinPrint ?? row.daesin_print ?? undefined) as PrintSummary | undefined,
     daesinRegistration: (row.daesinRegistration ?? row.daesin_registration ?? undefined) as DaesinRegistration | undefined,
     receiver: asString(row.receiver),
     receiverPhone: asString(row.receiverPhone ?? row.receiver_phone),
@@ -2023,7 +2027,7 @@ function DaesinSyncPanel({ rows, allRows, mapRow, onImport, onReload, defaultDat
   const status = async () => {
     const response = await callLiveTestBridge('status');
     if (!response.ok) throw new Error(response.error);
-    if (response.version !== '0.6.3') throw new Error('연결 도구 0.6.3로 업데이트하고 이 페이지를 새로고침해 주세요.');
+    if (!['0.6.3','0.7.0'].includes(response.version || '')) throw new Error('연결 도구 0.7.0으로 업데이트하고 이 페이지를 새로고침해 주세요.');
     await saveJobs(response.jobs || []); return response.jobs || [];
   };
   const refresh = async () => {
@@ -2272,6 +2276,8 @@ export default function Home() {
     day: "2-digit",
   }).format(new Date());
 
+  const [pdaPrintingIds,setPdaPrintingIds]=useState<string[]>([]);
+  const pdaPrintingRef=useRef(new Set<string>());
   const [session, setSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authBusy, setAuthBusy] = useState(false);
@@ -4005,6 +4011,21 @@ export default function Home() {
     if (!current) return;
 
     const nextValue = !current.checklist[key];
+    if (key === 'pda' && current.carrier === '대신') {
+      if (pdaPrintingRef.current.has(shipmentId)) return;
+      if (nextValue && shipmentRegistrationView(current,shipmentWaybillInfoById.get(shipmentId)).label !== '등록완료') {
+        setRegistrationDialogId(shipmentId); return;
+      }
+      pdaPrintingRef.current.add(shipmentId);setPdaPrintingIds([...pdaPrintingRef.current]);
+      try {
+        const state=current.daesinRegistration;
+        await requestDaesinPrint(shipmentId,nextValue,state?.waybillNo || current.daesinPrint?.waybillNo || '',state?.shipmentDate || current.shipmentDate);
+        await loadShipmentsFromDb();
+      } catch(error) {alert('PDA 자동 출력: '+getErrorMessage(error));}
+      finally {pdaPrintingRef.current.delete(shipmentId);setPdaPrintingIds([...pdaPrintingRef.current]);}
+      return;
+    }
+
 
     if (key === "closedDone") {
       if (nextValue) {
@@ -5953,7 +5974,7 @@ export default function Home() {
                       <div style={ovFare}>운임</div>
 
                       <div style={{ ...ovCheck, ...checkStartBorder }}>전산등록</div>
-                      <div style={ovCheck}><button type="button" style={headerActionBtn} onClick={() => void handleChecklistColumnToggle('pda')}>PDA</button></div>
+                      <div style={ovCheck}><button type="button" style={headerActionBtn} title="전체 체크는 체크리스트만 변경합니다. 자동 출력은 각 건의 PDA를 직접 체크해 주세요." onClick={() => void handleChecklistColumnToggle('pda')}>PDA</button></div>
                       <div style={ovCheck}><button type="button" style={headerActionBtn} onClick={() => void handleChecklistColumnToggle('closedDone')}>종결완료</button></div>
 
                       <div style={ovDelete}>삭제</div>
@@ -6046,9 +6067,15 @@ export default function Home() {
                                 style={{border:0,borderRadius:5,padding:'5px 7px',fontSize:12,fontWeight:700,whiteSpace:'nowrap',cursor:'pointer',background:registrationView.label === '등록완료' ? '#e7f6ef' : registrationView.label === '정보확인' ? '#fff1e9' : '#f1f5f9',color:registrationView.label === '등록완료' ? '#008653' : registrationView.label === '정보확인' ? '#e76c19' : '#64748b'}}
                                 onClick={() => setRegistrationDialogId(shipment.id)}>{registrationView.label}</button>
                             </div>
-                            <div style={ovCheck}>
+                            <div style={{...ovCheck,position:'relative'}}>
                               <input type="checkbox" aria-label={shipment.receiver + ' PDA'} style={checkboxStyle} checked={shipment.checklist.pda}
+                                disabled={pdaPrintingIds.includes(shipment.id)} title={shipment.carrier==='대신'?'직접 체크하면 공용 프린터로 송장을 보냅니다.':''}
                                 onChange={() => void handleChecklistToggle(shipment.id, 'pda')} />
+                              {shipment.carrier==='대신' && (pdaPrintingIds.includes(shipment.id)||shipment.daesinPrint) && <button type="button"
+                                onClick={()=>alert(shipment.daesinPrint?.message||'송장 데이터를 준비하고 있습니다.')}
+                                style={{position:'absolute',top:'100%',left:0,right:0,border:0,background:'transparent',fontSize:10,color:['blocked','unknown'].includes(shipment.daesinPrint?.state||'')?'#c2410c':'#64748b',whiteSpace:'nowrap',cursor:'pointer'}}>
+                                {pdaPrintingIds.includes(shipment.id)?'출력 준비':printStatusLabel(shipment.daesinPrint)}
+                              </button>}
                             </div>
                             <div style={ovCheck}>
                               <input type="checkbox" aria-label={shipment.receiver + ' 종결완료'} style={checkboxStyle} checked={shipment.checklist.closedDone}

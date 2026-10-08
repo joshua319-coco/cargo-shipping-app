@@ -1,4 +1,18 @@
-# Daesin integration 0.6.3
+# Daesin integration 0.7.0
+
+## Shared printer: PDA checkbox
+
+Only a direct unchecked-to-checked Daesin PDA interaction prepares a label. Historical checks, reloads, realtime updates, Logen, bulk headers and closing completion do not print. The requesting PC uses its own logged-in carrier tab to fetch the exact bound waybill, validate identity/quantity/fare/payment/destination, and capture the native label renderer's commands without invoking its printer. The printer PC does not need a carrier session or carrier cookies.
+
+Install extension 0.7.0 on each participating Chrome profile. On the printer PC, log into the shipping site, open /print-station, start the existing Daesin Printer1 program and choose 이 PC에서 자동 출력 시작. Keep the computer awake, Chrome and that page open. The local enable flag resumes when reopening the page; Windows/Chrome auto-start is an operator setup, not installed by this release. Existing 0.6.3 supports registration/refresh but needs updating for PDA printing.
+
+The shared database serializes requests, binds a queue entry to shipment+waybill, and checks the source snapshot again immediately before dispatch. A two-hour-old queue entry is held for review. PDA uncheck cancels pending/pre-dispatch jobs; sent/uncertain jobs never reset through checkbox cycling. Cancelled or safely blocked preparation may be submitted again. Station heartbeat and browser Web Locks prevent competing consumers. A five-minute stale claim can recover before dispatch; an interrupted dispatch becomes unknown and never replays automatically. Manual reprints remain on the carrier site.
+
+Native mPrint 1.07 commands go only to the fixed local Printer1 endpoint. Command whitelist, exact per-box barcode, one printBuffer per label, count/size limits and a durable extension journal guard the physical boundary. Numeric func order is restored after Chrome IPC/Postgres JSONB serialization. Completion means the local program returned success, not independent proof that paper physically emerged. On lost/unknown replies the station stops and asks for physical confirmation. Original label bodies are cleared from successful/cancelled queue entries.
+
+Validation: 82 existing/new unit checks, TypeScript, local PGlite auth/RLS/atomic queue tests, and two isolated browser profiles with the actual extension and original Daesin label renderer. Browser tests cover no Daesin session on the printer PC, exact barcode, Logen/historical exclusion, checkbox/reload idempotency, requester login expiry, data mismatch, offline queue cancellation and uncertain printer response. All external carrier/printer activity in tests is mocked; a physical first-label acceptance test is still needed on the printer PC.
+
+Apply the shared print queue migration before deploying this UI. This release adds no public anonymous printer/queue access and no service-role credentials. Company access follows existing shipments RLS.
 
 Production entry: `https://cargo-shipping-app.vercel.app/?daesinSync=1`. Local development at `http://127.0.0.1:4320` remains supported. Extension 0.6.3 allows only these exact app origins plus the Daesin partner origin; arbitrary Vercel previews and other local ports are not allowed. Update the existing extension folder in place to retain its job journal. Each PC/browser profile needs its own installation and carrier login. Shared registration identity remains in the app database. The website starts with today's Seoul date and an empty search, including old registration-test bookmarks.
 

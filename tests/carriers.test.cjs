@@ -15,7 +15,7 @@ function loadTs(file, extra = '') {
     target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX,
   }}).outputText;
   const compiledModule = { exports: {} };
-  const localRequire = (name) => name === '@/lib/supabase' ? { supabase: {} }
+  const localRequire = (name) => name === '@/lib/daesin-print' ? {} : name === '@/lib/supabase' ? { supabase: {} }
     : name === '@/lib/carriers' ? loadTs('lib/carriers.ts') : name === '@/lib/logen-paste' ? loadTs('lib/logen-paste.ts') : name === './daesin-sync' || name === '@/lib/daesin-sync' ? loadTs('lib/daesin-sync.ts') : name === '@/lib/registration-status' ? loadTs('lib/registration-status.ts') : require(name);
   vm.runInThisContext('(function(require,module,exports){' + output + '\n})', { filename: file })(localRequire, compiledModule, compiledModule.exports);
   return compiledModule.exports;
