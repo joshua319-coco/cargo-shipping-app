@@ -2,6 +2,10 @@
 // These functions execute in the carrier tab only after a reviewed one-row request.
 function installCarrierRelay(jobId, nonce) {
   if (location.origin !== 'https://partner.ds3211.co.kr') return;
+  // Per-document ownership proof; navigating or editing this page cancels automatic cleanup.
+  document.documentElement.dataset.sanghwaOwnedRegistration = nonce;
+  document.addEventListener('keydown', event => { if (event.isTrusted) delete document.documentElement.dataset.sanghwaOwnedRegistration; }, true);
+  document.addEventListener('click', event => { if (event.isTrusted) delete document.documentElement.dataset.sanghwaOwnedRegistration; }, true);
   const eventName = 'sanghwa-registration-' + nonce;
   window.addEventListener(eventName, event => {
     let detail;

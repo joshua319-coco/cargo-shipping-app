@@ -58,3 +58,24 @@ test('registered discrepancy details survive source edits and clear after matchi
  assert.equal(mayRegister(state,'changed',true),false);
  assert.equal(daesinRegistrationView(state,{...info,status:'일치',reasons:[]}).label,'등록완료');
 });
+
+test('missing carrier receipt hides active number but preserves the audit and blocks ordinary sync',()=>{
+ const saved={state:'registered',waybillNo:row().waybill_no,carrierMissing:true};
+ const view=daesinRegistrationView(saved,{waybillNo:row().waybill_no,status:'일치',reasons:[]});
+ assert.equal(view.label,'정보확인');assert.equal(view.waybillNo,'');assert.match(view.reasons[0],/기존 접수를 찾지/);
+ assert.equal(saved.waybillNo,row().waybill_no);assert.equal(mayRegister(saved,'changed',true),false);
+ assert.equal(daesinRegistrationView({...saved,carrierMissing:false},{waybillNo:row().waybill_no,status:'일치',reasons:[]}).label,'등록완료');
+});
+test('retired cached number cannot make a new attempt registered, and reappearing old carrier row blocks automatic registration',()=>{
+ const state={state:'pending',waybillNo:'',retiredWaybills:[row().waybill_no]};
+ assert.equal(daesinRegistrationView(state,{waybillNo:row().waybill_no,status:'일치',reasons:[]}).waybillNo,'');
+ const source=shipment({daesinRegistration:state});assert.deepEqual(findDaesinCandidate(source,[row()],[source]),{row:undefined,possible:true});
+});
+test('deletion confirmation checks both original and edited recipient identities and the old waybill',()=>{
+ const conflict=moduleValue.exports.deletedDaesinConflict,previous={waybillNo:row().waybill_no,snapshot:{receiver:'예시업체',receiver_phone:'01011112222'}};
+ const edited=shipment({receiver:'새 업체',receiverPhone:'01022223333'});
+ assert.equal(conflict(edited,[],previous),false);
+ assert.equal(conflict(edited,[row({arrival_name:'다른이름',arrival_phone_number1:'01099999999'})],previous),true);
+ assert.equal(conflict(edited,[row({waybill_no:'9999999999992'})],previous),true);
+ assert.equal(conflict(edited,[row({waybill_no:'9999999999992',arrival_name:'새 업체',arrival_phone_number1:'01022223333'})],previous),true);
+});

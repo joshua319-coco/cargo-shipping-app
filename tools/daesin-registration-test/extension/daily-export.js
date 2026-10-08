@@ -93,8 +93,9 @@ function reconcileDaesinDailyJobs(jobs, rows, shipmentDate) {
   const text = value => String(value || '').normalize('NFKC').replace(/\s/g, '');
   const digits = value => String(value || '').replace(/\D/g, '');
   for (const job of jobs) {
-    if (job.shipmentDate !== shipmentDate || !hasDaesinRegistrationSuccess(job)) continue;
+    if (job.supersededBy || job.shipmentDate !== shipmentDate || !hasDaesinRegistrationSuccess(job)) continue;
     const known = job.numbers?.length === 1 ? rows.filter(row => row.waybill_no === job.numbers[0]) : [];
+    job.carrierMissing = job.numbers?.length === 1 && known.length === 0;
     const source = job.diagnosis?.source || {};
     const candidates = rows.filter(row => text(row.arrival_name) === text(job.receiver));
     const row = known.length === 1 ? known[0] : candidates.length === 1 ? candidates[0] : null;
