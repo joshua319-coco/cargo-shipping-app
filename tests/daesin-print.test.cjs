@@ -13,7 +13,16 @@ function worker(mode='success'){
  const saved={},calls=[];let listener;
  const chrome={storage:{local:{get:async k=>({[k]:saved[k]}),set:async v=>Object.assign(saved,structuredClone(v))}},runtime:{getURL:p=>'chrome-extension://test/'+p,onMessage:{addListener:f=>listener=f}}};
  const sandbox=vm.createContext({URL,AbortSignal,console,chrome,structuredClone,setTimeout,clearTimeout,
-  fetch:async(url,options)=>{calls.push({url,body:options.body});if(options.body==='')return{ok:true};if(mode==='lost')throw Error('connection lost after dispatch');return{ok:true,json:async()=>({Result:mode})};}});
+  fetch:async(url,options)=>{calls.push({url,body:options.body});if(options.body==='')return{ok:true};if(mode==='lost')throw Error('connection lost after dispatch');
+   if(mode==='progress'){
+    const body=JSON.parse(options.body);
+    if(!url.endsWith('/checkStatus'))return{ok:true,json:async()=>({Result:'ready',RequestID:String(body.id),ResponseID:7321})};
+    if(typeof body.RequestID!=='number'||typeof body.ResponseID!=='string')return{ok:true,json:async()=>({Result:'error json data'})};
+    // Native checkResult retains the initial identifiers even when a progress reply omits them.
+    const polls=calls.filter(c=>c.url.endsWith('/checkStatus')).length;
+    return{ok:true,json:async()=>({Result:polls%2?'progress':'success'})};
+   }
+   return{ok:true,json:async()=>({Result:mode})};}});
  sandbox.importScripts=(...files)=>files.forEach(file=>vm.runInContext(fs.readFileSync(path.join(dir,file),'utf8'),sandbox));
  vm.runInContext(fs.readFileSync(path.join(dir,'background.js'),'utf8'),sandbox);
  const send=(action,patch={},pathname='/print-station')=>new Promise(resolve=>listener({action,...patch},{url:'https://cargo-shipping-app.vercel.app'+pathname,frameId:0,tab:{id:1,windowId:1}},resolve));
@@ -46,4 +55,22 @@ test('Chrome and JSONB property ordering is normalized before print',async()=>{
  const w=worker();await w.send('print-send',{job:{id:'00000000-0000-4000-8000-000000000009',waybill_no:bill,labels:[data]}});
  const emitted=JSON.parse(w.calls.find(c=>c.body!=='').body);
  assert.deepEqual(Object.keys(emitted.functions),Array.from({length:14},(_,i)=>'func'+i));
+});
+
+// Daesin's bxlcommon.makeResultInquiryData sends RequestID as a number and ResponseID as a string.
+test('native ready/progress protocol completes consecutive jobs and all three box labels',async()=>{
+ const w=worker('progress');
+ for(let index=0;index<2;index++){
+  const job={id:'00000000-0000-4000-8000-00000000002'+index,waybill_no:bill,labels:index===0?[label()]:[label(),label(2),label(3)]};
+  const result=await w.send('print-send',{job});
+  assert.equal(result.state,'sent',result.message);
+  assert.equal(result.completed,job.labels.length);
+  await w.send('print-send',{job});
+ }
+ const labels=w.calls.filter(c=>c.body!==''&&!c.url.endsWith('/checkStatus'));
+ assert.equal(labels.length,4,'no repeated physical dispatch while polling or reopening a completed job');
+ const polls=w.calls.filter(c=>c.url.endsWith('/checkStatus'));
+ assert.equal(polls.length,8);
+ assert.deepEqual(polls.map(c=>JSON.parse(c.body).RequestID),[101,101,101,101,102,102,103,103]);
+ assert(polls.every(c=>JSON.parse(c.body).ResponseID==='7321'));
 });
