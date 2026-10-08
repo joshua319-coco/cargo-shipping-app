@@ -79,3 +79,18 @@ test('deletion confirmation checks both original and edited recipient identities
  assert.equal(conflict(edited,[row({waybill_no:'9999999999992'})],previous),true);
  assert.equal(conflict(edited,[row({waybill_no:'9999999999992',arrival_name:'새 업체',arrival_phone_number1:'01022223333'})],previous),true);
 });
+
+test('confirmed deletion stays unregistered until a separate sync, even with identical source data',()=>{
+ const state={state:'not-registered',deletionConfirmed:true,fingerprint:'same',waybillNo:'',retiredWaybills:[row().waybill_no],message:'미등록으로 변경했습니다.'};
+ assert.equal(daesinRegistrationView(state,{waybillNo:row().waybill_no,status:'일치',reasons:[]}).label,'미등록');
+ assert.equal(mayRegister(state,'same',true),true);
+ assert.equal(mayRegister({...state,deletionConfirmed:false},'same',true),false);
+ for(const status of ['registered','pending','unknown'])assert.equal(mayRegister({...state,state:status},'same',true),false);
+});
+
+test('deletion-confirmed and pending replacement rows never borrow another customer cached verification',()=>{
+ const state={state:'not-registered',deletionConfirmed:true,waybillNo:'',retiredWaybills:[row().waybill_no]};
+ const unrelated={waybillNo:'9999999999999',status:'확인필요',reasons:['수화주명 확인']};
+ assert.equal(daesinRegistrationView(state,unrelated).label,'미등록');assert.equal(daesinRegistrationView(state,unrelated).waybillNo,'');
+ assert.equal(daesinRegistrationView({...state,state:'pending'},unrelated).waybillNo,'');
+});

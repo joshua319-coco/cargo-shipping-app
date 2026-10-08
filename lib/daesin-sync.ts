@@ -7,7 +7,7 @@ export type DaesinRegistration = {
   attemptId: string; fingerprint?: string; shipmentDate: string;
   waybillNo: string; message: string; destinationNeedsReview?: boolean;
   destinationReason?: string; updatedAt?: string;
-  carrierMissing?: boolean; carrierCheckedAt?: string; carrierCheckedDate?: string;
+  deletionConfirmed?: boolean; carrierMissing?: boolean; carrierCheckedAt?: string; carrierCheckedDate?: string;
   snapshot?: { receiver?: string; receiver_phone?: string };
   retiredWaybills?: string[]; deletedRegistration?: DeletedDaesinRegistration;
 };
@@ -48,7 +48,7 @@ export function registrationFromJob(job: DaesinJob): DaesinRegistration {
   };
 }
 export function mayRegister(state: DaesinRegistration | undefined, fingerprint: string, retry: boolean) {
-  return !state || (state.state === 'not-registered' && retry && state.fingerprint !== fingerprint);
+  return !state || (state.state === 'not-registered' && (state.deletionConfirmed === true || (retry && state.fingerprint !== fingerprint)));
 }
 // For initial linkage only. An established waybill is the identity after any edits.
 export function findDaesinCandidate(source: DaesinSource, rows: DaesinDailyRow[], peers: DaesinSource[]) {
@@ -72,8 +72,8 @@ export function findDaesinCandidate(source: DaesinSource, rows: DaesinDailyRow[]
 }
 
 // A missing row alone never authorizes a replay. This check is used only after user confirmation.
-export function deletedDaesinConflict(source: DaesinSource, rows: DaesinDailyRow[], previous: DaesinRegistration) {
-  const identities = [[source.receiver, source.receiverPhone], [previous.snapshot?.receiver, previous.snapshot?.receiver_phone]];
+export function deletedDaesinConflict(source: DaesinSource, rows: DaesinDailyRow[], previous: { waybillNo: string; snapshot?: DaesinRegistration['snapshot']; receiver?: string; receiverPhone?: string }) {
+  const identities = [[source.receiver, source.receiverPhone], [previous.snapshot?.receiver || previous.receiver, previous.snapshot?.receiver_phone || previous.receiverPhone]];
   return rows.some(row => row.waybill_no === previous.waybillNo || identities.some(([name, phone]) =>
     Boolean(text(name)) && text(row.arrival_name) === text(name) && (!digits(phone) || digits(row.arrival_phone_number1) === digits(phone))));
 }
@@ -84,7 +84,7 @@ export function daesinRegistrationView(state?: DaesinRegistration, verification?
     label: '정보확인', registered: true, waybillNo: '',
     reasons: ['대신 최신 조회에서 기존 접수를 찾지 못했습니다. 대신에서 삭제한 건인지 확인해 주세요.'],
   };
-  if (verification && state?.retiredWaybills?.includes(verification.waybillNo)) verification = undefined;
+  if (state?.retiredWaybills?.length && (!state.waybillNo || (verification && state.retiredWaybills.includes(verification.waybillNo)))) verification = undefined;
   const reasons: string[] = [];
   const registered = state?.state === 'registered' || Boolean(state?.waybillNo) || Boolean(verification?.waybillNo);
   if (state?.destinationNeedsReview) reasons.push((state.destinationReason || '도착지 미지정') + ' · 대신 마감관리에서 도착영업소 수정 필요');
